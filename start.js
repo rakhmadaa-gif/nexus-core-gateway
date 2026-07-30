@@ -1,26 +1,34 @@
 const express = require('express');
-const axios = require('axios');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 const app = express();
+const port = process.env.PORT || 3000;
 
-app.use(express.json());
+// 1. AMBIL KUNCI DARI RAILWAY
+const API_KEY = process.env.API_KEY; 
 
-const PORT = process.env.PORT || 3000;
+// 2. GEMBOKNYA: Middleware cek API Key
+app.use((req, res, next) => {
+    const requestKey = req.headers['x-api-key'];
+    
+    if (API_KEY && API_KEY === requestKey) {
+        next(); // Kuncinya bener, lanjut
+    } else {
+        res.status(401).json({ error: "API Key tidak valid atau tidak ada" }); // Ditolak
+    }
+});
 
-// Health check biar Railway tau servernya hidup
+// 3. ROUTE PROXY KE MICROSERVICE
+// Contoh: /users -> lempar ke service users
+app.use('/users', createProxyMiddleware({ 
+    target: 'http://localhost:8081', 
+    changeOrigin: true 
+}));
+
+// Route default
 app.get('/', (req, res) => {
-  res.json({ status: 'Gateway Hidup', message: 'Nexus Core Gateway Jalan' });
+    res.json({ message: "Gateway Hidup - Tapi wajib pakai API Key" });
 });
 
-// Contoh endpoint proxy ke backend lu
-app.post('/api/proxy', async (req, res) => {
-  try {
-    const response = await axios.post('https://backend-kamu.com/api', req.body);
-    res.json(response.data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Gateway jalan di port ${PORT}`);
+app.listen(port, () => {
+    console.log(`Gateway jalan di port ${port}`);
 });
