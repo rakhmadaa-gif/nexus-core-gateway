@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-stripe
-supabase
-python-dotenv
-requests
