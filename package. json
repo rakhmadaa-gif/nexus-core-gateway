@@ -1,0 +1,16 @@
+{
+  "name": "nexus-core-gateway",
+  "version": "1.0.0",
+  "description": "Gateway untuk Nexus Core",
+  "main": "start.js",
+  "scripts": {
+    "start": "node start.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
