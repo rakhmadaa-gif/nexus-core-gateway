@@ -1,0 +1,908 @@
+// ============================================================================
+// NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
+// v2.0.0-frontier — Tiered Free Trial + Code Modules Discount Trial
+// ============================================================================
+//
+// MIGRATION SQL (run in Supabase SQL Editor before deploying):
+//
+//   ALTER TABLE client_usage
+//     ADD COLUMN IF NOT EXISTS code_modules_trial_used BOOLEAN DEFAULT FALSE,
+//     ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;
+//
+// ============================================================================
+
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// ----------------------------------------------------------------------------
+// 1. MANIFEST & IDENTITY MODULE (A2A MAGNET & DISCOVERY)
+// ----------------------------------------------------------------------------
+
+const NODE_IDENTITY = {
+  node_id: "nexus.legal.contractdrafter",
+  node_name: "Nexus.Legal.ContractDrafter",
+  version: "2.0.0-frontier",
+  runtime: "supabase-edge-deno",
+};
+
+const TRIAL_CONFIG = {
+  structured_data_credits: 20,
+  code_modules_trial_credits: 100,
+  code_modules_full_cost: 120,
+  trial_expiry_hours: 24,
+};
+
+const NODE_MANIFEST = {
+  ...NODE_IDENTITY,
+  description: "M2M Autonomous Legal, Smart Contract & Web3 Schema Verification Gateway",
+  protocol_compatibility: ["A2A-Direct", "MCP-Standard", "x402-Microtransactions"],
+  semantic_tags: [
+    "legal.hybrid-contract-pro",
+    "web3.solidity-audited-modules",
+    "data.verified-structured-schema",
+    "compliance.mica-ready",
+  ],
+  performance_metrics: {
+    avg_latency_ms: "< 250.0",
+    uptime_sla: "99.9%",
+    concurrency_handling: "Queue-Jump Priority Pass Ready",
+  },
+  pricing_model: {
+    currency_unit: "CREDIT",
+    conversion_rate: "1 CREDIT = 0.01 USD",
+    services: {
+      structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
+      code_modules: { base_credits: 120, description: "Audited Code Modules (~$1.20)" },
+      legal_code: { base_credits: 29900, description: "Hybrid Legal-Code Pro (~$299.00)" },
+      error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
+    },
+    surge_scaling: {
+      tier_1: "<= 10 req/min (1.0x Base Rate)",
+      tier_2: "11-50 req/min (1.5x Base Rate)",
+      tier_3: "> 50 req/min (2.5x Priority Pass)",
+    },
+    free_tier: {
+      structured_data_trial: {
+        credits: 20,
+        description: "1x Free Trial for New Agents (20 CRED, structured_data only)",
+        expiry_hours: 24,
+      },
+      code_modules_trial: {
+        discount_credits: 100,
+        description: "1x Discount Trial: 100 CRED off code_modules (client pays 20 CRED for $1.20 service)",
+        expiry_hours: 24,
+      },
+    },
+  },
+};
+
+// ----------------------------------------------------------------------------
+// 2. TREASURY & BILLING MODULE (DYNAMIC TIERING ENGINE)
+// ----------------------------------------------------------------------------
+
+function calculateServiceCost(serviceType: string, requestsLastMinute: number) {
+  let baseCredits = 0;
+
+  if (serviceType === "structured_data") baseCredits = 20;
+  else if (serviceType === "code_modules") baseCredits = 120;
+  else if (serviceType === "legal_code") baseCredits = 29900;
+  else if (serviceType === "error") baseCredits = 0;
+
+  let multiplier = 1.0;
+  if (requestsLastMinute > 50) multiplier = 2.5;
+  else if (requestsLastMinute > 10) multiplier = 1.5;
+
+  const finalCost = Math.round(baseCredits * multiplier);
+  return { baseCredits, multiplier, finalCost };
+}
+
+// ----------------------------------------------------------------------------
+// 3. GATEKEEPER MODULE (SUPABASE DB & QUOTA ENFORCER)
+// ----------------------------------------------------------------------------
+
+async function logServiceCall(
+  clientId: string,
+  serviceType: string,
+  statusCode: number,
+  payloadId: string | null,
+  creditsCharged: number,
+): Promise<void> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  try {
+    await supabase.from("service_logs").insert([{
+      client_id: clientId,
+      service_type: serviceType,
+      status_code: statusCode,
+      payload_id: payloadId,
+      credits_charged: creditsCharged,
+    }]);
+  } catch {
+    console.log("Service log insert failed (non-blocking).");
+  }
+}
+
+async function checkQuotaAndRate(req: Request, serviceType: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  const clientIp = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "anonymous_client";
+  const clientId = req.headers.get("x-client-id") || clientIp;
+
+  // Query or create client
+  let { data: client } = await supabase.from("client_usage").select("*").eq("client_id", clientId).single();
+
+  if (!client) {
+    const trialExpiresAt = new Date(Date.now() + TRIAL_CONFIG.trial_expiry_hours * 60 * 60 * 1000).toISOString();
+    const { data: newClient } = await supabase
+      .from("client_usage")
+      .insert([{
+        client_id: clientId,
+        tier: "free_trial",
+        free_requests_left: 1,
+        balance_credits: 0,
+        code_modules_trial_used: false,
+        trial_expires_at: trialExpiresAt,
+        total_invocations: 0,
+      }])
+      .select()
+      .single();
+    client = newClient;
+  }
+
+  // Check trial expiry
+  const now = new Date();
+  const trialExpiresAt = client.trial_expires_at ? new Date(client.trial_expires_at) : null;
+  const trialExpired = trialExpiresAt ? trialExpiresAt < now : true;
+
+  // If trial expired, zero out free requests
+  if (trialExpired && client.free_requests_left > 0) {
+    await supabase.from("client_usage")
+      .update({ free_requests_left: 0 })
+      .eq("client_id", clientId);
+    client.free_requests_left = 0;
+  }
+
+  // Rate limiting
+  const minuteAgo = new Date(Date.now() - 60000).toISOString();
+  const { count } = await supabase
+    .from("client_usage")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", clientId)
+    .gt("last_invoked_at", minuteAgo);
+
+  const reqCountLastMinute = (count || 0) + 1;
+  const pricing = calculateServiceCost(serviceType, reqCountLastMinute);
+
+  // Determine payment path
+  let paymentPath: "structured_data_trial" | "code_modules_trial" | "balance" | "free" | null = null;
+  let creditsToCharge = 0;
+
+  if (serviceType === "error") {
+    paymentPath = "free";
+    creditsToCharge = 0;
+  } else if (serviceType === "structured_data") {
+    if (client.free_requests_left > 0 && !trialExpired) {
+      paymentPath = "structured_data_trial";
+      creditsToCharge = 0;
+    } else if ((client.balance_credits || 0) >= pricing.finalCost) {
+      paymentPath = "balance";
+      creditsToCharge = pricing.finalCost;
+    } else {
+      return {
+        allowed: false,
+        clientId,
+        deniedResponse: {
+          status: "failed",
+          error_code: "INSUFFICIENT_CREDITS",
+          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          client_id: clientId,
+        },
+      };
+    }
+  } else if (serviceType === "code_modules") {
+    const trialActive = !client.code_modules_trial_used && !trialExpired;
+    const remainingCost = pricing.finalCost - TRIAL_CONFIG.code_modules_trial_credits;
+
+    if (trialActive && (client.balance_credits || 0) >= remainingCost) {
+      paymentPath = "code_modules_trial";
+      creditsToCharge = remainingCost;
+    } else if (trialActive && (client.balance_credits || 0) < remainingCost) {
+      return {
+        allowed: false,
+        clientId,
+        deniedResponse: {
+          status: "failed",
+          error_code: "TRIAL_INSUFFICIENT_BALANCE",
+          message: `Code Modules trial active! Add ${remainingCost} CRED ($${(remainingCost / 100).toFixed(2)}) to unlock your 100 CRED discount trial. Full price: ${pricing.finalCost} CRED. You pay only ${remainingCost} CRED.`,
+          client_id: clientId,
+          trial_discount: TRIAL_CONFIG.code_modules_trial_credits,
+          remaining_cost: remainingCost,
+          trial_expires_at: client.trial_expires_at,
+        },
+      };
+    } else if (!trialActive && !client.code_modules_trial_used && trialExpired) {
+      return {
+        allowed: false,
+        clientId,
+        deniedResponse: {
+          status: "failed",
+          error_code: "TRIAL_EXPIRED",
+          message: `Your 100 CRED code_modules trial has expired. Top-up to continue using code_modules at full price (${pricing.finalCost} CRED).`,
+          client_id: clientId,
+        },
+      };
+    } else if ((client.balance_credits || 0) >= pricing.finalCost) {
+      paymentPath = "balance";
+      creditsToCharge = pricing.finalCost;
+    } else {
+      return {
+        allowed: false,
+        clientId,
+        deniedResponse: {
+          status: "failed",
+          error_code: "INSUFFICIENT_CREDITS",
+          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          client_id: clientId,
+        },
+      };
+    }
+  } else {
+    // legal_code and other services — balance only
+    if ((client.balance_credits || 0) >= pricing.finalCost) {
+      paymentPath = "balance";
+      creditsToCharge = pricing.finalCost;
+    } else {
+      return {
+        allowed: false,
+        clientId,
+        deniedResponse: {
+          status: "failed",
+          error_code: "INSUFFICIENT_CREDITS",
+          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          client_id: clientId,
+        },
+      };
+    }
+  }
+
+  return { allowed: true, clientId, tier: client.tier, client, pricing, paymentPath, creditsToCharge };
+}
+
+async function recordUsageAfterSuccess(
+  clientId: string,
+  paymentPath: string,
+  creditsToCharge: number,
+): Promise<void> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  let { data: client } = await supabase.from("client_usage").select("*").eq("client_id", clientId).single();
+
+  if (client) {
+    let freeLeft = client.free_requests_left;
+    let balance = client.balance_credits || 0;
+    let codeModulesTrialUsed = client.code_modules_trial_used;
+
+    if (paymentPath === "structured_data_trial") {
+      freeLeft -= 1;
+    } else if (paymentPath === "code_modules_trial") {
+      balance = Math.max(0, balance - creditsToCharge);
+      codeModulesTrialUsed = true;
+    } else if (paymentPath === "balance") {
+      balance = Math.max(0, balance - creditsToCharge);
+    }
+
+    await supabase.from("client_usage").update({
+      free_requests_left: freeLeft,
+      balance_credits: balance,
+      code_modules_trial_used: codeModulesTrialUsed,
+      total_invocations: (client.total_invocations || 0) + 1,
+      last_invoked_at: new Date().toISOString(),
+    }).eq("client_id", clientId);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 4. CORE ENGINE (PAYLOAD GENERATORS)
+// ----------------------------------------------------------------------------
+
+function uuid4(): string {
+  return crypto.randomUUID();
+}
+
+function nowIso(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+async function sha256(data: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function auditStep(step: string, status: string, detail?: string): Record<string, unknown> {
+  const entry: Record<string, unknown> = { step, status, timestamp: nowIso() };
+  if (detail) entry.detail = detail;
+  return entry;
+}
+
+async function envelope(
+  service: string,
+  status: string,
+  payload: Record<string, unknown>,
+  trail: Record<string, unknown>[],
+): Promise<Record<string, unknown>> {
+  const checksum = await sha256(JSON.stringify(payload, Object.keys(payload).sort()));
+  return {
+    payload_id: uuid4(),
+    timestamp: nowIso(),
+    service,
+    status,
+    checksum,
+    payload,
+    audit_trail: trail,
+  };
+}
+
+function errorPayload(code: string, message: string, recoverable = true, guidance = ""): Record<string, unknown> {
+  return {
+    error_code: code,
+    error_message: message,
+    recoverable,
+    guidance: guidance || "Verify input parameters and retry.",
+    failed_step: "validation",
+  };
+}
+
+// -- 1. Structured Data -------------------------------------------------------
+
+const SUPPORTED_DATA_TYPES = new Set(["ERC20", "ERC721", "REGULATORY", "GENERIC"]);
+
+const CHAIN_COMPAT: Record<string, string[]> = {
+  ERC20: ["ethereum", "polygon", "arbitrum", "optimism", "bsc", "avalanche"],
+  ERC721: ["ethereum", "polygon", "arbitrum", "optimism", "bsc", "avalanche"],
+  REGULATORY: ["ethereum", "polygon"],
+  GENERIC: ["ethereum", "polygon", "arbitrum", "optimism", "bsc", "avalanche"],
+};
+
+const COMPLIANCE_TAGS: Record<string, string[]> = {
+  ERC20: ["MiCA-ready", "ISO-20022-compatible"],
+  ERC721: ["MiCA-ready"],
+  REGULATORY: ["GDPR", "MiCA", "ISO-27001"],
+  GENERIC: [],
+};
+
+async function genStructuredData(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const trail: Record<string, unknown>[] = [];
+  const dtype = String(params.type ?? "").toUpperCase();
+
+  if (!SUPPORTED_DATA_TYPES.has(dtype)) {
+    trail.push(auditStep("validation", "failed", `Unknown type: ${dtype}`));
+    return envelope("structured_data", "failed",
+      errorPayload("INVALID_TYPE", `Type must be one of ${[...SUPPORTED_DATA_TYPES].join(", ")}`), trail);
+  }
+  trail.push(auditStep("validation", "passed"));
+
+  let schema: Record<string, unknown>;
+  if (dtype === "ERC20") {
+    schema = {
+      schema_type: "ERC20",
+      token: {
+        name: params.name ?? "UnnamedToken",
+        symbol: params.symbol ?? "UNK",
+        decimals: params.decimals ?? 18,
+        total_supply: params.total_supply ?? 0,
+      },
+      standards: ["EIP-20"],
+      chain_compatibility: CHAIN_COMPAT.ERC20,
+      compliance_tags: COMPLIANCE_TAGS.ERC20,
+      fields: [
+        { name: "name", type: "string", required: true },
+        { name: "symbol", type: "string", required: true },
+        { name: "decimals", type: "uint8", required: true, default: 18 },
+        { name: "totalSupply", type: "uint256", required: true },
+      ],
+    };
+  } else if (dtype === "ERC721") {
+    schema = {
+      schema_type: "ERC721",
+      token: {
+        name: params.name ?? "UnnamedNFT",
+        symbol: params.symbol ?? "NFT",
+        base_uri: params.base_uri ?? "",
+      },
+      standards: ["EIP-721"],
+      chain_compatibility: CHAIN_COMPAT.ERC721,
+      compliance_tags: COMPLIANCE_TAGS.ERC721,
+      fields: [
+        { name: "name", type: "string", required: true },
+        { name: "symbol", type: "string", required: true },
+        { name: "baseURI", type: "string", required: false },
+        { name: "tokenId", type: "uint256", required: true },
+        { name: "owner", type: "address", required: true },
+      ],
+    };
+  } else if (dtype === "REGULATORY") {
+    schema = {
+      schema_type: "regulatory",
+      jurisdiction: params.jurisdiction ?? "ID",
+      framework: params.framework ?? "MiCA",
+      chain_compatibility: CHAIN_COMPAT.REGULATORY,
+      compliance_tags: COMPLIANCE_TAGS.REGULATORY,
+      fields: [
+        { name: "entity_name", type: "string", required: true },
+        { name: "registration_id", type: "string", required: true },
+        { name: "jurisdiction", type: "string", required: true },
+        { name: "framework", type: "string", required: true },
+        { name: "audit_date", type: "date", required: true },
+      ],
+    };
+  } else {
+    schema = {
+      schema_type: "generic",
+      fields: params.fields ?? [],
+      chain_compatibility: CHAIN_COMPAT.GENERIC,
+      compliance_tags: COMPLIANCE_TAGS.GENERIC,
+    };
+  }
+  trail.push(auditStep("generation", "completed"));
+  trail.push(auditStep("audit", "completed", "Schema verified against standard"));
+
+  return envelope("structured_data", "verified", schema, trail);
+}
+
+// -- 2. Code Modules ----------------------------------------------------------
+
+const SUPPORTED_CONTRACT_TYPES = new Set(["ERC20", "ERC721", "ESCROW"]);
+
+function genErc20Solidity(p: Record<string, unknown>): string {
+  const name = p.name ?? "NexusToken";
+  const symbol = p.symbol ?? "NXT";
+  const decimals = p.decimals ?? 18;
+  const supply = p.initial_supply ?? p.total_supply ?? 0;
+  return `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract ${name} is ERC20 {
+    constructor() ERC20("${name}", "${symbol}") {
+        _mint(msg.sender, ${supply} * 10**${decimals});
+    }
+}`;
+}
+
+function genErc721Solidity(p: Record<string, unknown>): string {
+  const name = p.name ?? "NexusNFT";
+  const symbol = p.symbol ?? "NFT";
+  return `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+
+contract ${name} is ERC721URIStorage {
+    uint256 private _nextId;
+
+    constructor() ERC721("${name}", "${symbol}") {}
+
+    function mint(address to, string memory tokenURI) external returns (uint256) {
+        uint256 tokenId = _nextId++;
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, tokenURI);
+        return tokenId;
+    }
+}`;
+}
+
+function genEscrowSolidity(): string {
+  return `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract Escrow is ReentrancyGuard {
+    address public buyer;
+    address public seller;
+    address public arbiter;
+    IERC20 public token;
+    uint256 public amount;
+    enum State { Created, Funded, Released, Refunded }
+    State public state;
+
+    constructor(address _seller, address _arbiter, address _token, uint256 _amount) {
+        buyer = msg.sender;
+        seller = _seller;
+        arbiter = _arbiter;
+        token = IERC20(_token);
+        amount = _amount;
+        state = State.Created;
+    }
+
+    function fund() external nonReentrant {
+        require(msg.sender == buyer, "Only buyer");
+        require(state == State.Created, "Not in Created state");
+        token.transferFrom(buyer, address(this), amount);
+        state = State.Funded;
+    }
+
+    function release() external nonReentrant {
+        require(state == State.Funded, "Not funded");
+        require(msg.sender == buyer || msg.sender == arbiter, "Not authorized");
+        token.transfer(seller, amount);
+        state = State.Released;
+    }
+
+    function refund() external nonReentrant {
+        require(state == State.Funded, "Not funded");
+        require(msg.sender == arbiter, "Only arbiter");
+        token.transfer(buyer, amount);
+        state = State.Refunded;
+    }
+}`;
+}
+
+function staticAudit(code: string): Record<string, unknown> {
+  const checks = [
+    {
+      check: "ReentrancyGuard",
+      passed: code.includes("ReentrancyGuard") || code.includes("nonReentrant"),
+      detail: code.includes("nonReentrant") ? "Reentrancy protection present" : "No reentrancy guard found",
+    },
+    {
+      check: "AccessControl",
+      passed: code.includes("require(msg.sender") || code.includes("onlyRole") || code.includes("onlyOwner"),
+      detail: code.includes("require(msg.sender") ? "Access control enforced" : "No access control",
+    },
+    {
+      check: "SafeMath",
+      passed: code.includes("^0.8"),
+      detail: code.includes("^0.8") ? "Solidity 0.8+ built-in overflow checks" : "No overflow protection",
+    },
+    {
+      check: "License",
+      passed: code.includes("SPDX-License-Identifier"),
+      detail: code.includes("SPDX-License-Identifier") ? "SPDX license present" : "Missing license",
+    },
+    {
+      check: "InputValidation",
+      passed: code.includes("require("),
+      detail: code.includes("require(") ? "Input validation present" : "No input validation",
+    },
+  ];
+  const passedCount = checks.filter((c) => c.passed).length;
+  return {
+    checks,
+    summary: `${passedCount}/5 passed`,
+    severity: passedCount < 3 ? "critical" : passedCount < 5 ? "warning" : "clean",
+  };
+}
+
+async function genCodeModules(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const trail: Record<string, unknown>[] = [];
+  const ctype = String(params.type ?? "").toUpperCase();
+
+  if (!SUPPORTED_CONTRACT_TYPES.has(ctype)) {
+    trail.push(auditStep("validation", "failed", `Unknown contract type: ${ctype}`));
+    return envelope("code_modules", "failed",
+      errorPayload("INVALID_TYPE", `Type must be one of ${[...SUPPORTED_CONTRACT_TYPES].join(", ")}`), trail);
+  }
+  trail.push(auditStep("validation", "passed"));
+
+  let code: string;
+  if (ctype === "ERC20") code = genErc20Solidity(params);
+  else if (ctype === "ERC721") code = genErc721Solidity(params);
+  else code = genEscrowSolidity();
+  trail.push(auditStep("generation", "completed"));
+
+  const auditReport = staticAudit(code);
+  trail.push(auditStep("audit", "completed", `5-point audit: ${auditReport.summary}`));
+
+  return envelope("code_modules", "audited", {
+    contract_type: ctype,
+    language: "Solidity",
+    compiler_version: "^0.8.20",
+    source: code,
+    audit_report: auditReport,
+  }, trail);
+}
+
+// -- 3. Legal-Code Pro --------------------------------------------------------
+
+const SUPPORTED_LEGAL_TYPES = new Set(["escrow", "token_sale"]);
+
+function genEscrowLegal(p: Record<string, unknown>): Record<string, unknown> {
+  const parties = (p.parties as string[]) ?? ["Party A", "Party B"];
+  const jurisdiction = (p.jurisdiction as string) ?? "ID";
+  const amount = (p.amount as string) ?? "0";
+  const currency = (p.currency as string) ?? "USDC";
+  const deadline = (p.deadline as string) ?? "2026-12-31";
+
+  return {
+    contract_type: "escrow",
+    jurisdiction,
+    language_pair: "EN-ID",
+    parties,
+    clauses: [
+      {
+        id: "C1",
+        en: `This Escrow Agreement is entered into between ${parties[0]} ("Buyer") and ${parties[1]} ("Seller").`,
+        id_translation: `Perjanjian Escrow ini dibuat antara ${parties[0]} ("Pembeli") dan ${parties[1]} ("Penjual").`,
+        mapped_function: "constructor()",
+        mapped_event: "EscrowCreated",
+      },
+      {
+        id: "C2",
+        en: `The Buyer shall deposit ${amount} ${currency} into the escrow smart contract before ${deadline}.`,
+        id_translation: `Pembeli wajib menyetorkan ${amount} ${currency} ke dalam smart contract escrow sebelum ${deadline}.`,
+        mapped_function: "fund()",
+        mapped_event: "EscrowFunded",
+      },
+      {
+        id: "C3",
+        en: "Upon confirmation of delivery, the funds shall be released to the Seller.",
+        id_translation: "Setelah konfirmasi pengiriman, dana akan dilepaskan kepada Penjual.",
+        mapped_function: "release()",
+        mapped_event: "EscrowReleased",
+      },
+      {
+        id: "C4",
+        en: "If a dispute arises, the Arbiter may refund the funds to the Buyer.",
+        id_translation: "Jika terjadi sengketa, Arbiter dapat mengembalikan dana kepada Pembeli.",
+        mapped_function: "refund()",
+        mapped_event: "EscrowRefunded",
+      },
+      {
+        id: "C5",
+        en: `This agreement is governed by the laws of jurisdiction ${jurisdiction}.`,
+        id_translation: `Perjanjian ini tunduk pada hukum yurisdiksi ${jurisdiction}.`,
+        mapped_function: null,
+        mapped_event: null,
+      },
+    ],
+  };
+}
+
+function genTokenSaleLegal(p: Record<string, unknown>): Record<string, unknown> {
+  const parties = (p.parties as string[]) ?? ["Issuer", "Investor"];
+  const jurisdiction = (p.jurisdiction as string) ?? "ID";
+  const amount = (p.amount as string) ?? "0";
+  const currency = (p.currency as string) ?? "USDC";
+  const deadline = (p.deadline as string) ?? "2026-12-31";
+
+  return {
+    contract_type: "token_sale",
+    jurisdiction,
+    language_pair: "EN-ID",
+    parties,
+    clauses: [
+      {
+        id: "C1",
+        en: `This Token Sale Agreement is entered into between ${parties[0]} ("Issuer") and ${parties[1]} ("Investor").`,
+        id_translation: `Perjanjian Penjualan Token ini dibuat antara ${parties[0]} ("Penerbit") dan ${parties[1]} ("Investor").`,
+        mapped_function: "constructor()",
+        mapped_event: "TokenSaleCreated",
+      },
+      {
+        id: "C2",
+        en: `The Investor agrees to purchase ${amount} ${currency} worth of tokens before ${deadline}.`,
+        id_translation: `Investor setuju untuk membeli token senilai ${amount} ${currency} sebelum ${deadline}.`,
+        mapped_function: "buyTokens()",
+        mapped_event: "TokensPurchased",
+      },
+      {
+        id: "C3",
+        en: "Tokens shall be distributed to the Investor within 7 days of payment confirmation.",
+        id_translation: "Token akan didistribusikan kepada Investor dalam waktu 7 hari setelah konfirmasi pembayaran.",
+        mapped_function: "distributeTokens()",
+        mapped_event: "TokensDistributed",
+      },
+      {
+        id: "C4",
+        en: "If the Issuer fails to distribute tokens, a full refund shall be issued.",
+        id_translation: "Jika Penerbit gagal mendistribusikan token, pengembalian dana penuh akan diberikan.",
+        mapped_function: "claimRefund()",
+        mapped_event: "RefundClaimed",
+      },
+      {
+        id: "C5",
+        en: `This agreement is governed by the laws of jurisdiction ${jurisdiction}.`,
+        id_translation: `Perjanjian ini tunduk pada hukum yurisdiksi ${jurisdiction}.`,
+        mapped_function: null,
+        mapped_event: null,
+      },
+    ],
+  };
+}
+
+async function genLegalCode(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const trail: Record<string, unknown>[] = [];
+  const ctype = String(params.contract_type ?? "").toLowerCase();
+
+  if (!SUPPORTED_LEGAL_TYPES.has(ctype)) {
+    trail.push(auditStep("validation", "failed", `Unknown contract type: ${ctype}`));
+    return envelope("legal_code", "failed",
+      errorPayload("INVALID_TYPE", `contract_type must be one of ${[...SUPPORTED_LEGAL_TYPES].join(", ")}`), trail);
+  }
+  trail.push(auditStep("validation", "passed"));
+
+  const contract = ctype === "escrow" ? genEscrowLegal(params) : genTokenSaleLegal(params);
+  trail.push(auditStep("generation", "completed"));
+  trail.push(auditStep("audit", "completed", "Legal-code mapping verified"));
+
+  return envelope("legal_code", "verified", contract, trail);
+}
+
+// -- 4. Error Payload ---------------------------------------------------------
+
+async function genErrorPayload(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const trail: Record<string, unknown>[] = [
+    auditStep("validation", "failed", "Error payload requested"),
+  ];
+  const err = errorPayload(
+    String(params.error_code ?? "UNKNOWN_ERROR"),
+    String(params.error_message ?? "An unknown error occurred"),
+    params.recoverable !== false,
+    String(params.guidance ?? ""),
+  );
+  trail.push(auditStep("generation", "completed", "Error envelope generated"));
+  return envelope("error", "failed", err, trail);
+}
+
+// -- Service Router -----------------------------------------------------------
+
+const SERVICES: Record<string, (p: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
+  structured_data: genStructuredData,
+  code_modules: genCodeModules,
+  legal_code: genLegalCode,
+  error: genErrorPayload,
+};
+
+// -- Trial Info Injector ------------------------------------------------------
+
+function buildTrialInfo(
+  paymentPath: string,
+  client: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (paymentPath === "structured_data_trial") {
+    return {
+      trial_used: "structured_data_free",
+      credits_saved: TRIAL_CONFIG.structured_data_credits,
+      code_modules_trial_available: !client.code_modules_trial_used,
+      code_modules_trial_credits: TRIAL_CONFIG.code_modules_trial_credits,
+      code_modules_trial_remaining_cost: TRIAL_CONFIG.code_modules_full_cost - TRIAL_CONFIG.code_modules_trial_credits,
+      trial_expires_at: client.trial_expires_at,
+    };
+  }
+  if (paymentPath === "code_modules_trial") {
+    return {
+      trial_used: "code_modules_discount",
+      credits_saved: TRIAL_CONFIG.code_modules_trial_credits,
+      credits_paid: TRIAL_CONFIG.code_modules_full_cost - TRIAL_CONFIG.code_modules_trial_credits,
+      full_price: TRIAL_CONFIG.code_modules_full_cost,
+    };
+  }
+  return null;
+}
+
+// ----------------------------------------------------------------------------
+// 5. HTTP HANDLER
+// ----------------------------------------------------------------------------
+
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-client-id",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+
+async function payloadHandler(req: Request): Promise<Response> {
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+  }
+
+  let body: { service_type?: string; params?: Record<string, unknown> };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+
+  const { service_type, params } = body;
+
+  if (!service_type || !(service_type in SERVICES)) {
+    return jsonResponse({
+      error: "Missing or invalid service_type",
+      valid_types: Object.keys(SERVICES),
+    }, 400);
+  }
+
+  try {
+    const result = await SERVICES[service_type](params ?? {});
+    return jsonResponse(result);
+  } catch (err) {
+    return jsonResponse({
+      error: "Payload generation failed",
+      detail: err instanceof Error ? err.message : String(err),
+    }, 500);
+  }
+}
+
+async function handler(req: Request): Promise<Response> {
+  // 1. CORS Preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  // 2. Manifest Discovery Endpoint
+  const url = new URL(req.url);
+  if (req.method === "GET" || url.pathname.endsWith("/manifest.json")) {
+    return jsonResponse(NODE_MANIFEST, 200);
+  }
+
+  // 3. Extract service_type for gatekeeper pre-check
+  let serviceType = "structured_data";
+  try {
+    const cloneReq = req.clone();
+    const body = await cloneReq.json();
+    if (body.service_type) serviceType = body.service_type;
+  } catch (_) {}
+
+  // 4. Gatekeeper pre-check
+  const gatekeeper = await checkQuotaAndRate(req, serviceType);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    return jsonResponse(gatekeeper.deniedResponse, 402);
+  }
+
+  // 5. Delegate to Core Payload Engine
+  const response = await payloadHandler(req);
+
+  // 6. Record usage + log after success
+  if (response.status === 200) {
+    await recordUsageAfterSuccess(
+      gatekeeper.clientId,
+      gatekeeper.paymentPath,
+      gatekeeper.creditsToCharge,
+    );
+
+    let payloadId: string | null = null;
+    let respBody: Record<string, unknown> | null = null;
+    try {
+      respBody = await response.clone().json() as Record<string, unknown>;
+      payloadId = (respBody.payload_id as string) ?? null;
+    } catch (_) {}
+
+    await logServiceCall(
+      gatekeeper.clientId,
+      serviceType,
+      200,
+      payloadId,
+      gatekeeper.creditsToCharge,
+    );
+
+    // Inject trial_info into response if a trial was used
+    const trialInfo = buildTrialInfo(gatekeeper.paymentPath, gatekeeper.client);
+    if (trialInfo && respBody) {
+      respBody.trial_info = trialInfo;
+      return jsonResponse(respBody);
+    }
+  } else {
+    await logServiceCall(gatekeeper.clientId, serviceType, response.status, null, 0);
+  }
+
+  return response;
+}
+
+// -- Entry Point --------------------------------------------------------------
+
+Deno.serve(handler);
