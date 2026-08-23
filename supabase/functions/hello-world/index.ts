@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v2.0.0-frontier — Tiered Free Trial + Code Modules Discount Trial
+// v2.0.1-frontier — x-client-id mandatory + Tiered Free Trial
 // ============================================================================
 //
 // MIGRATION SQL (run in Supabase SQL Editor before deploying):
@@ -20,7 +20,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "2.0.0-frontier",
+  version: "2.0.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -127,8 +127,18 @@ async function checkQuotaAndRate(req: Request, serviceType: string) {
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const clientIp = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "anonymous_client";
-  const clientId = req.headers.get("x-client-id") || clientIp;
+  const clientId = req.headers.get("x-client-id");
+  if (!clientId) {
+    return {
+      allowed: false,
+      clientId: "missing_client_id",
+      deniedResponse: {
+        status: "failed",
+        error_code: "MISSING_CLIENT_ID",
+        message: "M2M call rejected: header x-client-id is required. Use a stable machine identifier.",
+      },
+    };
+  }
 
   // Query or create client
   let { data: client } = await supabase.from("client_usage").select("*").eq("client_id", clientId).single();
@@ -796,6 +806,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, x-client-id",
+  "X-Client-ID-Required": "true",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
