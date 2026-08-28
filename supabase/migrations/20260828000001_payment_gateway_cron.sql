@@ -1,0 +1,33 @@
+-- ============================================================================
+-- OPTIONAL: Auto-scan every minute via pg_cron + pg_net
+-- Run this AFTER deploying the payment-gateway function and setting secrets.
+-- ============================================================================
+--
+-- Prerequisites (Supabase Dashboard):
+--   1. Database → Extensions → enable pg_net (and pg_cron, usually pre-enabled)
+--   2. Set these two settings once (SQL Editor):
+--
+--      alter database postgres
+--        set app.settings.payment_gateway_url = 'https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/payment-gateway';
+--      alter database postgres
+--        set app.settings.scan_secret = '<SAME VALUE AS YOUR SCAN_SECRET EDGE SECRET>';
+--
+--   3. Then run the schedule below:
+--
+-- select cron.schedule(
+--   'nexus-payment-scan',
+--   '* * * * *',
+--   $$
+--     select net.http_post(
+--       url := current_setting('app.settings.payment_gateway_url'),
+--       headers := jsonb_build_object(
+--         'Content-Type', 'application/json',
+--         'x-scan-secret', current_setting('app.settings.scan_secret')
+--       ),
+--       body := '{"action":"scan"}'::jsonb
+--     );
+--   $$
+-- );
+--
+-- To check runs:   select * from cron.job_run_details order by start_time desc limit 20;
+-- To unschedule:   select cron.unschedule('nexus-payment-scan');
