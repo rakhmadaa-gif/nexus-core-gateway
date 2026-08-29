@@ -1,16 +1,18 @@
 // ============================================================================
 // NEXUS PAYMENT GATEWAY — Supabase Edge Function
-// v1.0.0 — USDC (Polygon PoS) top-up → auto-credit CRED ($1 = 100 CRED)
+// v1.1.0 — USDC (Polygon PoS) top-up → auto-credit CRED ($1 = 100 CRED)
+//          + Deno.cron self-scan every minute (no pg_net needed)
 // ============================================================================
 //
 // Endpoints:
 //   POST {action:"create_intent", usd_amount}   header: x-client-id  → deposit instructions
 //   GET  ?intent_id=...                          header: x-client-id  → intent status
-//   POST {action:"scan"}                         header: x-scan-secret → one scan cycle
+//   POST {action:"scan"}                         header: x-scan-secret → one scan cycle (manual)
+//   (auto) Deno.cron "scan-usdc" every 1 min    → same scan, runs inside this function
 //
 // Required Edge secrets:
 //   TREASURY_WALLET_ADDRESS  — existing MetaMask address receiving USDC
-//   SCAN_SECRET              — shared secret protecting the scan action
+//   SCAN_SECRET              — shared secret protecting the scan action (manual trigger)
 // Optional:
 //   POLYGON_RPC_URL          — default https://polygon-rpc.com
 //   USDC_CONTRACT            — default native USDC on Polygon PoS
@@ -43,7 +45,7 @@ const USDC_ADDRESS = (Deno.env.get("USDC_CONTRACT") ||
   "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359").toLowerCase(); // native USDC, Polygon PoS
 
 const TREASURY = (Deno.env.get("TREASURY_WALLET_ADDRESS") || "").toLowerCase();
-const RPC_URL = Deno.env.get("POLYGON_RPC_URL") || "https://polygon-rpc.com";
+const RPC_URL = Deno.env.get("POLYGON_RPC_URL") || "https://polygon-bor-rpc.publicnode.com";
 const SCAN_SECRET = Deno.env.get("SCAN_SECRET") || "";
 
 // keccak256("Transfer(address,address,uint256)")
@@ -231,6 +233,17 @@ async function handler(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
 
+  // GET ?ping=1 → keep-alive + trigger scan (no secret needed, safe)
+  if (req.method === "GET" && url.searchParams.get("ping") === "1") {
+    try {
+      const res = await runScan();
+      const body = await res.text();
+      return jsonResponse({ ok: true, trigger: "ping", scan: JSON.parse(body) });
+    } catch (err) {
+      return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  }
+
   // GET → intent status (requires x-client-id)
   if (req.method === "GET") {
     const clientId = req.headers.get("x-client-id");
@@ -287,4 +300,31 @@ async function handler(req: Request): Promise<Response> {
   return jsonResponse({ error: "Unknown action", valid_actions: ["create_intent", "scan"] }, 400);
 }
 
-Deno.serve(handler);
+// ---------------------------------------------------------------------------
+// Auto-scan: register Deno.cron inside serve() so it doesn't crash on cold start
+// ---------------------------------------------------------------------------
+
+let cronRegistered = false;
+
+async function mainHandler(req: Request): Promise<Response> {
+  if (!cronRegistered) {
+    try {
+      Deno.cron("scan-usdc", "* * * * *", async () => {
+        try {
+          const res = await runScan();
+          const body = await res.text();
+          console.log(`[cron scan-usdc] ${body}`);
+        } catch (err) {
+          console.error("[cron scan-usdc] ERROR:", err instanceof Error ? err.message : err);
+        }
+      });
+      cronRegistered = true;
+      console.log("[payment-gateway] Deno.cron registered — scan every 1 min");
+    } catch (err) {
+      console.warn("[payment-gateway] Deno.cron not available, manual scan only:", err);
+    }
+  }
+  return handler(req);
+}
+
+Deno.serve(mainHandler);
