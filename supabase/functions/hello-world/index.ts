@@ -1,7 +1,19 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v2.0.1-frontier — x-client-id mandatory + Tiered Free Trial
+// v3.0.0-frontier — Pull Payment (EIP-712 Permit → Gateway.sol → Virtual Credit)
 // ============================================================================
+//
+// PULL PAYMENT FLOW:
+//   1. Client agent signs EIP-712 permit (authorizes Gateway.sol to pull USDC)
+//   2. Client sends permit to Edge Function with service_type: "pull_payment"
+//   3. Edge Function calls Gateway.sol.pullPayment() on Polygon
+//   4. Edge Function records pull in DB (pull_payment_authorizations)
+//   5. Edge Function polls for 2-block confirmation (SECURITY PARAMETER #5)
+//   6. After 2 blocks, credits added to virtual_credit_ledger + client_usage
+//
+// GATEWAY SOL: 0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4 (Polygon Mainnet)
+// USDC:        0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 (native, 6 decimals)
+// RPC:         https://polygon-bor-rpc.publicnode.com
 //
 // MIGRATION SQL (run in Supabase SQL Editor before deploying):
 //
@@ -12,6 +24,7 @@
 // ============================================================================
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Wallet, Contract, JsonRpcProvider } from "npm:ethers@6";
 
 // ----------------------------------------------------------------------------
 // 1. MANIFEST & IDENTITY MODULE (A2A MAGNET & DISCOVERY)
@@ -20,7 +33,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "2.0.1-frontier",
+  version: "3.0.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -54,6 +67,7 @@ const NODE_MANIFEST = {
       code_modules: { base_credits: 120, description: "Audited Code Modules (~$1.20)" },
       legal_code: { base_credits: 29900, description: "Hybrid Legal-Code Pro (~$299.00)" },
       error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
+      pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
     },
     surge_scaling: {
       tier_1: "<= 10 req/min (1.0x Base Rate)",
@@ -94,6 +108,36 @@ function calculateServiceCost(serviceType: string, requestsLastMinute: number) {
   const finalCost = Math.round(baseCredits * multiplier);
   return { baseCredits, multiplier, finalCost };
 }
+
+// ----------------------------------------------------------------------------
+// 2b. PULL PAYMENT CONFIG (EIP-712 → Gateway.sol → Virtual Credit)
+// ----------------------------------------------------------------------------
+
+const PULL_PAYMENT_CONFIG = {
+  gateway_address: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+  usdc_address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+  rpc_url: "https://polygon-bor-rpc.publicnode.com",
+  cred_per_usdc: 100,
+  usdc_decimals: 6,
+  min_deadline_buffer: 900,     // 15 minutes (IRON RULE #2)
+  max_deadline_buffer: 1800,    // 30 minutes (IRON RULE #2)
+  max_gas_price: 500000000000,  // 500 gwei (SECURITY PARAMETER #6)
+  confirmation_blocks: 2,       // (SECURITY PARAMETER #5)
+  poll_interval_ms: 2000,       // ~1 Polygon block
+  max_poll_attempts: 30,        // 60 seconds max
+};
+
+const GATEWAY_ABI = [
+  "function pullPayment(address client_address, uint256 amount_usdc, uint256 deadline, uint8 v, bytes32 r, bytes32 s, bytes32 client_id_hash) external",
+  "function getGasPriceInfo() external view returns (uint256 current_gas_price, uint256 max_gas_price, bool acceptable)",
+  "function usdcToCredits(uint256 amount_usdc) external pure returns (uint256)",
+  "function totalPulled() external view returns (uint256)",
+  "function totalPullCount() external view returns (uint256)",
+];
+
+const ERC20_PERMIT_ABI = [
+  "function nonces(address owner) external view returns (uint256)",
+];
 
 // ----------------------------------------------------------------------------
 // 3. GATEKEEPER MODULE (SUPABASE DB & QUOTA ENFORCER)
@@ -762,6 +806,259 @@ async function genErrorPayload(params: Record<string, unknown>): Promise<Record<
   return envelope("error", "failed", err, trail);
 }
 
+// ----------------------------------------------------------------------------
+// 4b. PULL PAYMENT HANDLER (EIP-712 Permit → Gateway.sol → Virtual Credit)
+// ----------------------------------------------------------------------------
+
+async function genPullPayment(
+  params: Record<string, unknown>,
+  clientId: string,
+): Promise<Record<string, unknown>> {
+  const trail: Record<string, unknown>[] = [];
+
+  // 1. Validate parameters
+  const clientAddress = String(params.client_address ?? "");
+  const amountUsdcStr = String(params.amount_usdc ?? "");
+  const deadline = Number(params.deadline ?? 0);
+  const v = Number(params.v ?? 0);
+  const r = String(params.r ?? "");
+  const s = String(params.s ?? "");
+  const clientIdHash = String(params.client_id_hash ?? "");
+
+  if (!clientAddress || !amountUsdcStr || !deadline || !r || !s || !clientIdHash) {
+    trail.push(auditStep("validation", "failed", "Missing required permit parameters"));
+    return envelope("pull_payment", "failed",
+      errorPayload("INVALID_PERMIT",
+        "Required: client_address, amount_usdc, deadline, v, r, s, client_id_hash"), trail);
+  }
+  trail.push(auditStep("validation", "passed"));
+
+  // 2. Check deadline buffer (IRON RULE #2: 15-30 min)
+  const now = Math.floor(Date.now() / 1000);
+  const buffer = deadline - now;
+  if (buffer < PULL_PAYMENT_CONFIG.min_deadline_buffer) {
+    trail.push(auditStep("deadline_check", "failed",
+      `Buffer ${buffer}s < ${PULL_PAYMENT_CONFIG.min_deadline_buffer}s minimum`));
+    return envelope("pull_payment", "failed",
+      errorPayload("DEADLINE_TOO_SOON",
+        `Deadline buffer must be >= 15 minutes (900s). Current: ${buffer}s`), trail);
+  }
+  if (buffer > PULL_PAYMENT_CONFIG.max_deadline_buffer) {
+    trail.push(auditStep("deadline_check", "failed",
+      `Buffer ${buffer}s > ${PULL_PAYMENT_CONFIG.max_deadline_buffer}s maximum`));
+    return envelope("pull_payment", "failed",
+      errorPayload("DEADLINE_TOO_FAR",
+        `Deadline buffer must be <= 30 minutes (1800s). Current: ${buffer}s`), trail);
+  }
+  trail.push(auditStep("deadline_check", "passed", `Buffer: ${buffer}s`));
+
+  // 3. Parse amount & calculate credits
+  const amountUsdc = BigInt(amountUsdcStr);
+  if (amountUsdc <= 0n) {
+    trail.push(auditStep("amount_check", "failed", "Amount must be > 0"));
+    return envelope("pull_payment", "failed",
+      errorPayload("INVALID_AMOUNT", "amount_usdc must be > 0"), trail);
+  }
+  const creditsExpected = Number(
+    amountUsdc * BigInt(PULL_PAYMENT_CONFIG.cred_per_usdc) /
+      BigInt(10 ** PULL_PAYMENT_CONFIG.usdc_decimals)
+  );
+  trail.push(auditStep("amount_check", "passed",
+    `${amountUsdcStr} units = ${creditsExpected} CRED`));
+
+  // 4. Check gas price (SECURITY PARAMETER #6: max 500 gwei)
+  const provider = new JsonRpcProvider(PULL_PAYMENT_CONFIG.rpc_url);
+  const feeData = await provider.getFeeData();
+  const gasPrice = feeData.gasPrice ?? 0n;
+  if (gasPrice > BigInt(PULL_PAYMENT_CONFIG.max_gas_price)) {
+    trail.push(auditStep("gas_check", "failed",
+      `Gas ${gasPrice / 10n ** 9n} gwei > 500 gwei max`));
+    return envelope("pull_payment", "failed",
+      errorPayload("GAS_PRICE_TOO_HIGH",
+        `Current gas price ${gasPrice / 10n ** 9n} gwei exceeds max 500 gwei. Retry when network calms down.`),
+      trail);
+  }
+  trail.push(auditStep("gas_check", "passed", `Gas: ${gasPrice / 10n ** 9n} gwei`));
+
+  // 5. Read USDC permit nonce for client (SECURITY PARAMETER #4: anti-replay)
+  const usdcContract = new Contract(
+    PULL_PAYMENT_CONFIG.usdc_address,
+    ERC20_PERMIT_ABI,
+    provider,
+  );
+  const permitNonce = await usdcContract.nonces(clientAddress);
+  trail.push(auditStep("nonce_check", "passed", `Permit nonce: ${permitNonce}`));
+
+  // 6. Insert pending authorization in DB
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  const { data: authRecord, error: authError } = await supabase
+    .from("pull_payment_authorizations")
+    .insert([{
+      client_id: clientId,
+      client_id_hash: clientIdHash,
+      client_address: clientAddress,
+      token_address: PULL_PAYMENT_CONFIG.usdc_address,
+      spender_address: PULL_PAYMENT_CONFIG.gateway_address,
+      amount_usdc: Number(amountUsdc) / 1e6,
+      credits_expected: creditsExpected,
+      deadline: deadline,
+      deadline_buffer_seconds: buffer,
+      signature_v: v,
+      signature_r: r,
+      signature_s: s,
+      permit_nonce: Number(permitNonce),
+      status: "pending",
+    }])
+    .select()
+    .single();
+
+  if (authError) {
+    trail.push(auditStep("db_insert", "failed", authError.message));
+    return envelope("pull_payment", "failed",
+      errorPayload("DB_ERROR",
+        `Failed to record authorization: ${authError.message}`), trail);
+  }
+  trail.push(auditStep("db_insert", "passed", `Auth ID: ${authRecord.id}`));
+
+  // 7. Call Gateway.sol's pullPayment() on Polygon
+  //    (IRON RULE #1: Gateway.sol IS the spender, not Treasury wallet)
+  const privateKey = Deno.env.get("POLYGON_PRIVATE_KEY") || "";
+  if (!privateKey) {
+    trail.push(auditStep("wallet_check", "failed", "POLYGON_PRIVATE_KEY not set"));
+    return envelope("pull_payment", "failed",
+      errorPayload("WALLET_ERROR",
+        "Backend wallet not configured. Set POLYGON_PRIVATE_KEY secret."), trail);
+  }
+  const wallet = new Wallet(privateKey, provider);
+  const gatewayContract = new Contract(
+    PULL_PAYMENT_CONFIG.gateway_address,
+    GATEWAY_ABI,
+    wallet,
+  );
+
+  let txHash: string;
+  let blockNumber: number;
+  try {
+    const tx = await gatewayContract.pullPayment(
+      clientAddress,
+      amountUsdc,
+      deadline,
+      v,
+      r,
+      s,
+      clientIdHash,
+      { gasPrice },
+    );
+    txHash = tx.hash;
+    trail.push(auditStep("blockchain_submit", "passed", `TX: ${txHash}`));
+
+    // Wait for transaction receipt
+    const receipt = await tx.wait();
+    blockNumber = receipt.blockNumber;
+    trail.push(auditStep("blockchain_confirm", "passed", `Block: ${blockNumber}`));
+  } catch (err) {
+    // IRON RULE #3: Virtual Credit Ledger rollback for failed API calls
+    await supabase.from("pull_payment_authorizations")
+      .update({
+        status: "failed",
+        failure_reason: err instanceof Error ? err.message : String(err),
+        failed_at: new Date().toISOString(),
+      })
+      .eq("id", authRecord.id);
+
+    trail.push(auditStep("blockchain_submit", "failed",
+      err instanceof Error ? err.message : String(err)));
+    return envelope("pull_payment", "failed",
+      errorPayload("BLOCKCHAIN_ERROR",
+        `Gateway.sol pullPayment() failed: ${err instanceof Error ? err.message : String(err)}`),
+      trail);
+  }
+
+  // 8. Record event in pull_payment_events
+  const { data: eventRecord } = await supabase
+    .from("pull_payment_events")
+    .insert([{
+      tx_hash: txHash,
+      block_number: blockNumber,
+      log_index: 0,
+      contract_address: PULL_PAYMENT_CONFIG.gateway_address,
+      client_id_hash: clientIdHash,
+      client_address: clientAddress,
+      amount_usdc: Number(amountUsdc) / 1e6,
+      credits_minted: creditsExpected,
+      deadline: deadline,
+      nonce: Number(permitNonce),
+      on_chain_timestamp: Math.floor(Date.now() / 1000),
+      confirmation_status: "unconfirmed",
+    }])
+    .select()
+    .single();
+
+  // 9. Update authorization with tx hash
+  await supabase.from("pull_payment_authorizations")
+    .update({
+      status: "pulled",
+      pull_tx_hash: txHash,
+      block_number: blockNumber,
+    })
+    .eq("id", authRecord.id);
+
+  trail.push(auditStep("db_event", "passed", `Event ID: ${eventRecord?.id}`));
+
+  // 10. Poll for 2-block confirmation (SECURITY PARAMETER #5)
+  let confirmed = false;
+  for (let i = 0; i < PULL_PAYMENT_CONFIG.max_poll_attempts; i++) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, PULL_PAYMENT_CONFIG.poll_interval_ms)
+    );
+
+    const currentBlock = await provider.getBlockNumber();
+    if (currentBlock >= blockNumber + PULL_PAYMENT_CONFIG.confirmation_blocks) {
+      // Call confirm_pull_event() DB function
+      const { data: confirmResult, error: confirmError } = await supabase
+        .rpc("confirm_pull_event", {
+          p_event_id: eventRecord.id,
+          p_current_block: currentBlock,
+        });
+
+      if (confirmResult && !confirmError) {
+        confirmed = true;
+        trail.push(auditStep("2_block_confirmation", "passed",
+          `Confirmed at block ${currentBlock}`));
+        break;
+      }
+    }
+  }
+
+  if (!confirmed) {
+    trail.push(auditStep("2_block_confirmation", "pending",
+      "Polling timed out. Background process will confirm."));
+    return envelope("pull_payment", "pending", {
+      auth_id: authRecord.id,
+      tx_hash: txHash,
+      block_number: blockNumber,
+      credits_expected: creditsExpected,
+      message: "Pull payment submitted. 2-block confirmation pending. Credits will be available after confirmation.",
+    }, trail);
+  }
+
+  // 11. Return success — credits added to virtual balance
+  trail.push(auditStep("credit_added", "passed",
+    `${creditsExpected} CRED added to balance`));
+  return envelope("pull_payment", "verified", {
+    auth_id: authRecord.id,
+    tx_hash: txHash,
+    block_number: blockNumber,
+    amount_usdc: Number(amountUsdc) / 1e6,
+    credits_minted: creditsExpected,
+    client_id: clientId,
+    message: "Pull payment successful. Credits added to virtual balance.",
+  }, trail);
+}
+
 // -- Service Router -----------------------------------------------------------
 
 const SERVICES: Record<string, (p: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
@@ -862,23 +1159,61 @@ async function handler(req: Request): Promise<Response> {
 
   // 3. Extract service_type for gatekeeper pre-check
   let serviceType = "structured_data";
+  let reqBody: Record<string, unknown> = {};
   try {
     const cloneReq = req.clone();
-    const body = await cloneReq.json();
-    if (body.service_type) serviceType = body.service_type;
+    reqBody = await cloneReq.json();
+    if (reqBody.service_type) serviceType = String(reqBody.service_type);
   } catch (_) {}
 
-  // 4. Gatekeeper pre-check
+  // 4. Pull Payment bypass — adds credits, doesn't charge
+  if (serviceType === "pull_payment") {
+    const clientId = req.headers.get("x-client-id");
+    if (!clientId) {
+      await logServiceCall("missing_client_id", "pull_payment", 400, null, 0);
+      return jsonResponse({
+        status: "failed",
+        error_code: "MISSING_CLIENT_ID",
+        message: "M2M call rejected: header x-client-id is required.",
+      }, 400);
+    }
+    try {
+      const result = await genPullPayment(
+        (reqBody.params as Record<string, unknown>) ?? {},
+        clientId,
+      );
+      const respBody = result as Record<string, unknown>;
+      const statusStr = String(respBody.status ?? "unknown");
+      const httpStatus = statusStr === "verified" ? 200 : statusStr === "pending" ? 202 : 400;
+      await logServiceCall(
+        clientId,
+        "pull_payment",
+        httpStatus,
+        (respBody.payload_id as string) ?? null,
+        0,
+      );
+      return jsonResponse(result, httpStatus);
+    } catch (err) {
+      await logServiceCall(clientId, "pull_payment", 500, null, 0);
+      return jsonResponse({
+        status: "failed",
+        error_code: "PULL_PAYMENT_ERROR",
+        message: err instanceof Error ? err.message : String(err),
+      }, 500);
+    }
+  }
+
+  // 5. Gatekeeper pre-check (for paid services)
   const gatekeeper = await checkQuotaAndRate(req, serviceType);
   if (!gatekeeper.allowed) {
     await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
     return jsonResponse(gatekeeper.deniedResponse, 402);
   }
 
-  // 5. Delegate to Core Payload Engine
+  // 6. Delegate to Core Payload Engine
   const response = await payloadHandler(req);
 
-  // 6. Record usage + log after success
+  // 7. Record usage + log after success
   if (response.status === 200) {
     await recordUsageAfterSuccess(
       gatekeeper.clientId,
