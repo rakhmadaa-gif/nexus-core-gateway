@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.6.0-frontier — Phase 2.2: Pipeline Optimization (cached client, parallel logging, throughput tracking)
+// v3.7.0-frontier — Phase 2.3: M2M Output Payload Standardizer (standard envelope for all responses)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v3.6.0-frontier",
+  engine_version: "v3.7.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -404,7 +404,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.6.0-frontier",
+  version: "3.7.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -494,8 +494,8 @@ const NODE_MANIFEST = {
   registry: {
     registered_at: "2026-08-31T23:45:00Z",
     phase_1_status: "COMPLETE — all 5 tasks deployed",
-    phase_2_status: "IN PROGRESS — 2.1+2.2 deployed",
-    version: "v3.6.0-frontier (Phase 2.2)",
+    phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
+    version: "v3.7.0-frontier (Phase 2 final — LOCKED)",
     gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2036,6 +2036,74 @@ const CORS_HEADERS: Record<string, string> = {
   "X-Client-ID-Required": "true",
 };
 
+// ----------------------------------------------------------------------------
+// 0d. M2M OUTPUT PAYLOAD STANDARDIZER (Phase 2.3)
+// ----------------------------------------------------------------------------
+// All gateway responses follow a standard M2M envelope for cross-platform
+// interoperability. Two constructors:
+//   m2mSuccess() — wraps payload data with metadata
+//   m2mError()   — wraps error details with metadata
+// Free endpoints (manifest, samples, metrics, dry-run) use raw jsonResponse
+// since they have their own well-defined schemas.
+// ----------------------------------------------------------------------------
+
+interface M2MMetadata {
+  node_id: string;
+  version: string;
+  latency_ms: number;
+  credits_charged: number;
+}
+
+function buildM2MMetadata(credits: number, startTime: number): M2MMetadata {
+  return {
+    node_id: NODE_IDENTITY.node_id,
+    version: TELEMETRY.engine_version,
+    latency_ms: Date.now() - startTime,
+    credits_charged: credits,
+  };
+}
+
+function m2mSuccess(
+  data: Record<string, unknown>,
+  serviceType: string,
+  payloadId: string | null,
+  credits: number,
+  startTime: number,
+  status = 200,
+): Response {
+  return jsonResponse({
+    status: "success",
+    payload_id: payloadId,
+    timestamp: new Date().toISOString(),
+    service_type: serviceType,
+    data,
+    metadata: buildM2MMetadata(credits, startTime),
+  }, status);
+}
+
+function m2mError(
+  errorCode: string,
+  message: string,
+  serviceType: string,
+  statusCode: number,
+  credits: number,
+  startTime: number,
+  details?: Record<string, unknown>,
+): Response {
+  return jsonResponse({
+    status: statusCode >= 500 ? "error" : statusCode === 503 ? "rejected" : "failed",
+    payload_id: null,
+    timestamp: new Date().toISOString(),
+    service_type: serviceType,
+    error: {
+      error_code: errorCode,
+      message,
+      ...(details ? { details } : {}),
+    },
+    metadata: buildM2MMetadata(credits, startTime),
+  }, statusCode);
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
@@ -2446,6 +2514,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
 }
 
 async function handler(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
   // 1. CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -2517,11 +2586,7 @@ async function handler(req: Request): Promise<Response> {
     const clientId = req.headers.get("x-client-id");
     if (!clientId) {
       await logServiceCall("missing_client_id", "pull_payment", 400, null, 0);
-      return jsonResponse({
-        status: "failed",
-        error_code: "MISSING_CLIENT_ID",
-        message: "M2M call rejected: header x-client-id is required.",
-      }, 400);
+      return m2mError("MISSING_CLIENT_ID", "M2M call rejected: header x-client-id is required.", "pull_payment", 400, 0, reqStartTime);
     }
     try {
       const result = await genPullPayment(
@@ -2538,14 +2603,18 @@ async function handler(req: Request): Promise<Response> {
         (respBody.payload_id as string) ?? null,
         0,
       );
-      return jsonResponse(result, httpStatus);
+      // Phase 2.3: M2M standard envelope for pull_payment
+      const ppid = (respBody.payload_id as string) ?? null;
+      if (httpStatus === 200) {
+        return m2mSuccess(respBody, "pull_payment", ppid, 0, reqStartTime);
+      } else if (httpStatus === 202) {
+        return m2mSuccess(respBody, "pull_payment", ppid, 0, reqStartTime, 202);
+      } else {
+        return m2mError("PULL_PAYMENT_FAILED", String(respBody.message ?? "Pull payment processing failed"), "pull_payment", 400, 0, reqStartTime, respBody);
+      }
     } catch (err) {
       await logServiceCall(clientId, "pull_payment", 500, null, 0);
-      return jsonResponse({
-        status: "failed",
-        error_code: "PULL_PAYMENT_ERROR",
-        message: err instanceof Error ? err.message : String(err),
-      }, 500);
+      return m2mError("PULL_PAYMENT_ERROR", err instanceof Error ? err.message : String(err), "pull_payment", 500, 0, reqStartTime);
     }
   }
 
@@ -2556,7 +2625,17 @@ async function handler(req: Request): Promise<Response> {
 
   if (!gatekeeper.allowed) {
     await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
-    return jsonResponse(gatekeeper.deniedResponse, 402);
+    // Phase 2.3: M2M standard error envelope
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return m2mError(
+      String(denied.error_code ?? "DENIED"),
+      String(denied.message ?? "Request denied by gatekeeper."),
+      serviceType,
+      402,
+      0,
+      reqStartTime,
+      denied,
+    );
   }
 
   // 6. Delegate to Core Payload Engine — Phase 2.2: track stage timing
@@ -2598,13 +2677,25 @@ async function handler(req: Request): Promise<Response> {
     const trialInfo = buildTrialInfo(gatekeeper.paymentPath, gatekeeper.client);
     if (trialInfo && respBody) {
       respBody.trial_info = trialInfo;
-      return jsonResponse(respBody);
     }
+
+    // Phase 2.3: M2M standard success envelope
+    return m2mSuccess(respBody ?? {}, serviceType, payloadId, gatekeeper.creditsToCharge, reqStartTime);
   } else {
     await logServiceCall(gatekeeper.clientId, serviceType, response.status, null, 0);
+    // Phase 2.3: M2M standard error envelope for non-200 engine responses
+    let errBody: Record<string, unknown> = {};
+    try { errBody = await response.clone().json() as Record<string, unknown>; } catch (_) {}
+    return m2mError(
+      String(errBody.error_code ?? "ENGINE_ERROR"),
+      String(errBody.error ?? errBody.message ?? "Payload generation failed."),
+      serviceType,
+      response.status,
+      0,
+      reqStartTime,
+      errBody,
+    );
   }
-
-  return response;
 }
 
 // -- Entry Point --------------------------------------------------------------
@@ -2626,18 +2717,22 @@ async function telemetryWrapper(req: Request): Promise<Response> {
     recordLatency(Date.now() - startTime);
     TELEMETRY.error_count++;
 
-    return jsonResponse({
-      status: "rejected",
-      error_code: "CONCURRENCY_LIMIT_REACHED",
-      message: "Server is at maximum capacity. Retry with exponential backoff.",
-      concurrency: {
-        active_slots: TELEMETRY.active_concurrent,
-        hard_limit: TELEMETRY.hard_limit_slots,
-        soft_limit_manifest: TELEMETRY.max_concurrent_slots,
+    return m2mError(
+      "CONCURRENCY_LIMIT_REACHED",
+      "Server is at maximum capacity. Retry with exponential backoff.",
+      "error",
+      503,
+      0,
+      startTime,
+      {
+        concurrency: {
+          active_slots: TELEMETRY.active_concurrent,
+          hard_limit: TELEMETRY.hard_limit_slots,
+          soft_limit_manifest: TELEMETRY.max_concurrent_slots,
+        },
+        retry_after_ms: 2000,
       },
-      retry_after_ms: 2000,
-      timestamp: new Date().toISOString(),
-    }, 503);
+    );
   }
 
   TELEMETRY.total_requests++;
@@ -2659,11 +2754,14 @@ async function telemetryWrapper(req: Request): Promise<Response> {
     recordLatency(elapsed);
     TELEMETRY.error_count++;
 
-    return jsonResponse({
-      error: "Internal server error",
-      detail: err instanceof Error ? err.message : String(err),
-      timestamp: new Date().toISOString(),
-    }, 500);
+    return m2mError(
+      "INTERNAL_ERROR",
+      err instanceof Error ? err.message : String(err),
+      "error",
+      500,
+      0,
+      startTime,
+    );
   } finally {
     TELEMETRY.active_concurrent--;
   }
