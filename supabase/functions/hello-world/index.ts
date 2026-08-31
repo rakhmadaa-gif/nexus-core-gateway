@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.0.0-frontier — Pull Payment (EIP-712 Permit → Gateway.sol → Virtual Credit)
+// v3.1.0-frontier — Pull Payment + Multi-Tier Sample Manifests (/samples)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -33,7 +33,7 @@ import { Wallet, Contract, JsonRpcProvider } from "npm:ethers@6";
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.0.0-frontier",
+  version: "3.1.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -87,6 +87,529 @@ const NODE_MANIFEST = {
       },
     },
   },
+};
+
+// ----------------------------------------------------------------------------
+// 1b. SAMPLE MANIFESTS — MULTI-TIER SHOWCASE (Phase 1.1)
+// ----------------------------------------------------------------------------
+// Free discovery endpoint. No billing, no x-client-id required.
+// Returns raw JSON bundles for orchestrator static analysis (< 1s target).
+// Tiers: Tier 1 ($300), Tier 2 ($500), Tier 3 ($800).
+// Each tier contains 3 artifacts: legal_markdown, digital_twin_v3_matrix, raw_code_sol.
+// ----------------------------------------------------------------------------
+
+const SAMPLE_MANIFESTS = {
+  endpoint: "/samples",
+  description: "Multi-tier sample manifests for orchestrator static analysis. Each tier bundles legal markdown (bilingual EN/ID), Digital Twin v3 matrix (clause-to-code mapping), and raw Solidity source code.",
+  node_id: NODE_IDENTITY.node_id,
+  generated_at: "2026-08-31T00:00:00Z",
+  tiers: [
+    // ==================================================================
+    // TIER 1 — $300 (30,000 CRED) — Basic ERC-20 Token Sale Agreement
+    // ==================================================================
+    {
+      tier_id: "tier1",
+      name: "Basic ERC-20 Token Sale Agreement",
+      price_usd: 300,
+      price_credits: 30000,
+      service_type: "legal_code",
+      description: "Simple token sale contract with basic legal terms. Suitable for small-scale token launches.",
+      artifacts: {
+        legal_markdown: {
+          format: "markdown",
+          language_pair: "EN-ID",
+          contract_type: "token_sale",
+          jurisdiction: "ID",
+          content: [
+            {
+              clause_id: "C1",
+              heading_en: "Parties",
+              heading_id: "Pihak",
+              text_en: "This Token Sale Agreement is entered into between the Token Issuer (\"Issuer\") and the Token Purchaser (\"Purchaser\").",
+              text_id: "Perjanjian Penjualan Token ini dibuat antara Penerbit Token (\"Penerbit\") dan Pembeli Token (\"Pembeli\").",
+            },
+            {
+              clause_id: "C2",
+              heading_en: "Token Specifications",
+              heading_id: "Spesifikasi Token",
+              text_en: "The Issuer shall create an ERC-20 token with the name, symbol, decimals, and total supply as specified in the smart contract.",
+              text_id: "Penerbit akan membuat token ERC-20 dengan nama, simbol, desimal, dan total pasokan sebagaimana ditentukan dalam smart contract.",
+            },
+            {
+              clause_id: "C3",
+              heading_en: "Minting",
+              heading_id: "Pencetakan",
+              text_en: "The total supply shall be minted to the Issuer's address upon contract deployment. No additional minting is permitted after deployment.",
+              text_id: "Total pasokan akan dicetak ke alamat Penerbit saat penyebaran kontrak. Pencetakan tambahan tidak diizinkan setelah penyebaran.",
+            },
+            {
+              clause_id: "C4",
+              heading_en: "Governing Law",
+              heading_id: "Hukum yang Berlaku",
+              text_en: "This agreement shall be governed by the laws of the Republic of Indonesia.",
+              text_id: "Perjanjian ini tunduk pada hukum Republik Indonesia.",
+            },
+          ],
+        },
+        digital_twin_v3_matrix: {
+          version: "v3",
+          contract_type: "token_sale",
+          mapping: [
+            {
+              clause_id: "C1",
+              legal_concept: "Parties identification",
+              contract_function: "constructor()",
+              contract_event: "Transfer(from=0x0, to=issuer)",
+              code_line: 25,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C2",
+              legal_concept: "Token specifications (name, symbol, decimals, supply)",
+              contract_function: "ERC20(name, symbol)",
+              contract_event: "Approval",
+              code_line: 25,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C3",
+              legal_concept: "Minting to issuer address",
+              contract_function: "_mint(msg.sender, supply)",
+              contract_event: "Transfer(from=0x0, to=msg.sender)",
+              code_line: 26,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C4",
+              legal_concept: "Governing law (off-chain)",
+              contract_function: "N/A (legal metadata only)",
+              contract_event: "N/A",
+              code_line: null,
+              verification: "off-chain",
+              status: "legal-only",
+            },
+          ],
+          coverage: "3/4 clauses mapped to code. 1 clause is legal-only (off-chain).",
+        },
+        raw_code_sol: {
+          filename: "TokenSale.sol",
+          language: "Solidity",
+          compiler_version: "^0.8.20",
+          license: "MIT",
+          source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract TokenSale is ERC20 {
+    constructor(
+        string memory name,
+        string memory symbol,
+        uint8 decimals,
+        uint256 totalSupply
+    ) ERC20(name, symbol) {
+        _setupDecimals(decimals);
+        _mint(msg.sender, totalSupply);
+    }
+}`,
+        },
+      },
+      static_analysis: {
+        target_latency_ms: 800,
+        artifact_count: 3,
+        clause_count: 4,
+        matrix_mappings: 4,
+        code_lines: 14,
+        audit_checks: ["SPDX-License-Identifier", "Solidity ^0.8.20", "ERC20 standard", "No additional minting"],
+      },
+    },
+
+    // ==================================================================
+    // TIER 2 — $500 (50,000 CRED) — NFT Minting & Royalty Agreement
+    // ==================================================================
+    {
+      tier_id: "tier2",
+      name: "NFT Minting & Royalty Agreement",
+      price_usd: 500,
+      price_credits: 50000,
+      service_type: "legal_code",
+      description: "ERC-721 NFT contract with minting function, token URI storage, and royalty terms. Suitable for digital art and collectibles platforms.",
+      artifacts: {
+        legal_markdown: {
+          format: "markdown",
+          language_pair: "EN-ID",
+          contract_type: "nft_minting",
+          jurisdiction: "ID",
+          content: [
+            {
+              clause_id: "C1",
+              heading_en: "Parties",
+              heading_id: "Pihak",
+              text_en: "This NFT Minting Agreement is entered into between the Collection Creator (\"Creator\") and the Minting Platform (\"Platform\").",
+              text_id: "Perjanjian Pencetakan NFT ini dibuat antara Pembuat Koleksi (\"Pembuat\") dan Platform Pencetakan (\"Platform\").",
+            },
+            {
+              clause_id: "C2",
+              heading_en: "NFT Specifications",
+              heading_id: "Spesifikasi NFT",
+              text_en: "The Creator shall deploy an ERC-721 contract with a specified name and symbol. Each NFT shall have a unique token URI pointing to its metadata.",
+              text_id: "Pembuat akan menyebarkan kontrak ERC-721 dengan nama dan simbol yang ditentukan. Setiap NFT akan memiliki token URI unik yang menunjuk ke metadatanya.",
+            },
+            {
+              clause_id: "C3",
+              heading_en: "Minting Authority",
+              heading_id: "Wewenang Pencetakan",
+              text_en: "The minting function shall be callable by any address. Each mint shall increment the token ID sequentially and assign the provided token URI.",
+              text_id: "Fungsi pencetakan dapat dipanggil oleh alamat mana pun. Setiap pencetakan akan menambah ID token secara berurutan dan menetapkan token URI yang diberikan.",
+            },
+            {
+              clause_id: "C4",
+              heading_en: "Token URI & Metadata",
+              heading_id: "Token URI & Metadata",
+              text_en: "The token URI shall be stored on-chain via ERC721URIStorage extension. Metadata immutability is the responsibility of the Creator.",
+              text_id: "Token URI akan disimpan on-chain melalui ekstensi ERC721URIStorage. Kekekalan metadata adalah tanggung jawab Pembuat.",
+            },
+            {
+              clause_id: "C5",
+              heading_en: "Royalty",
+              heading_id: "Hak Royalti",
+              text_en: "The Creator shall receive a royalty of 5% on secondary market sales. Royalty enforcement is off-chain unless EIP-2981 is implemented.",
+              text_id: "Pembuat akan menerima royalti sebesar 5% pada penjualan pasar sekunder. Penegakan royalti bersifat off-chain kecuali EIP-2981 diterapkan.",
+            },
+            {
+              clause_id: "C6",
+              heading_en: "Governing Law",
+              heading_id: "Hukum yang Berlaku",
+              text_en: "This agreement shall be governed by the laws of the Republic of Indonesia.",
+              text_id: "Perjanjian ini tunduk pada hukum Republik Indonesia.",
+            },
+          ],
+        },
+        digital_twin_v3_matrix: {
+          version: "v3",
+          contract_type: "nft_minting",
+          mapping: [
+            {
+              clause_id: "C1",
+              legal_concept: "Parties identification",
+              contract_function: "constructor()",
+              contract_event: "Transfer(from=0x0, to=0x0)",
+              code_line: 30,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C2",
+              legal_concept: "NFT specifications (name, symbol, URI storage)",
+              contract_function: "ERC721(name, symbol) + ERC721URIStorage",
+              contract_event: "Transfer",
+              code_line: 30,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C3",
+              legal_concept: "Minting authority and sequential ID",
+              contract_function: "mint(address to, string tokenURI)",
+              contract_event: "Transfer(from=0x0, to=caller)",
+              code_line: 33,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C4",
+              legal_concept: "Token URI storage on-chain",
+              contract_function: "_setTokenURI(tokenId, tokenURI)",
+              contract_event: "N/A (state change, no event)",
+              code_line: 35,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C5",
+              legal_concept: "Royalty (5% secondary sales)",
+              contract_function: "N/A (off-chain unless EIP-2981)",
+              contract_event: "N/A",
+              code_line: null,
+              verification: "off-chain",
+              status: "legal-only",
+            },
+            {
+              clause_id: "C6",
+              legal_concept: "Governing law (off-chain)",
+              contract_function: "N/A (legal metadata only)",
+              contract_event: "N/A",
+              code_line: null,
+              verification: "off-chain",
+              status: "legal-only",
+            },
+          ],
+          coverage: "4/6 clauses mapped to code. 2 clauses are legal-only (off-chain).",
+        },
+        raw_code_sol: {
+          filename: "NFTMinting.sol",
+          language: "Solidity",
+          compiler_version: "^0.8.20",
+          license: "MIT",
+          source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+
+contract NFTMinting is ERC721URIStorage {
+    uint256 private _nextId;
+
+    constructor(
+        string memory name,
+        string memory symbol
+    ) ERC721(name, symbol) {}
+
+    function mint(address to, string memory tokenURI) external returns (uint256) {
+        uint256 tokenId = _nextId++;
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, tokenURI);
+        return tokenId;
+    }
+}`,
+        },
+      },
+      static_analysis: {
+        target_latency_ms: 850,
+        artifact_count: 3,
+        clause_count: 6,
+        matrix_mappings: 6,
+        code_lines: 20,
+        audit_checks: ["SPDX-License-Identifier", "Solidity ^0.8.20", "ERC721 + ERC721URIStorage", "Sequential minting", "Safe minting (_safeMint)"],
+      },
+    },
+
+    // ==================================================================
+    // TIER 3 — $800 (80,000 CRED) — Full Escrow Agreement with Arbiter
+    // ==================================================================
+    {
+      tier_id: "tier3",
+      name: "Full Escrow Agreement with Arbiter",
+      price_usd: 800,
+      price_credits: 80000,
+      service_type: "legal_code",
+      description: "Complete escrow contract with buyer, seller, arbiter, fund, release, and refund logic. ReentrancyGuard protected. Suitable for high-value transactions requiring dispute resolution.",
+      artifacts: {
+        legal_markdown: {
+          format: "markdown",
+          language_pair: "EN-ID",
+          contract_type: "escrow",
+          jurisdiction: "ID",
+          content: [
+            {
+              clause_id: "C1",
+              heading_en: "Parties",
+              heading_id: "Pihak",
+              text_en: "This Escrow Agreement is entered into between the Buyer, the Seller, and an independent Arbiter. The Buyer initiates the escrow by deploying the contract.",
+              text_id: "Perjanjian Escrow ini dibuat antara Pembeli, Penjual, dan Arbiter independen. Pembeli memulai escrow dengan menyebarkan kontrak.",
+            },
+            {
+              clause_id: "C2",
+              heading_en: "Escrow Parameters",
+              heading_id: "Parameter Escrow",
+              text_en: "The escrow shall be established with a specified seller address, arbiter address, ERC-20 token address, and escrow amount. The contract state shall be set to Created upon deployment.",
+              text_id: "Escrow akan dibuat dengan alamat penjual, alamat arbiter, alamat token ERC-20, dan jumlah escrow yang ditentukan. Status kontrak akan diatur ke Created saat penyebaran.",
+            },
+            {
+              clause_id: "C3",
+              heading_en: "Funding",
+              heading_id: "Pendanaan",
+              text_en: "The Buyer shall fund the escrow by calling the fund() function. This transfers the specified token amount from the Buyer to the escrow contract. The state shall transition from Created to Funded.",
+              text_id: "Pembeli akan mendanai escrow dengan memanggil fungsi fund(). Ini akan memindahkan jumlah token yang ditentukan dari Pembeli ke kontrak escrow. Status akan berubah dari Created ke Funded.",
+            },
+            {
+              clause_id: "C4",
+              heading_en: "Release of Funds",
+              heading_id: "Pelepasan Dana",
+              text_en: "Upon confirmation of delivery, the funds shall be released to the Seller. The release() function may be called by the Buyer or the Arbiter. The state shall transition from Funded to Released.",
+              text_id: "Setelah konfirmasi pengiriman, dana akan dilepas ke Penjual. Fungsi release() dapat dipanggil oleh Pembeli atau Arbiter. Status akan berubah dari Funded ke Released.",
+            },
+            {
+              clause_id: "C5",
+              heading_en: "Refund",
+              heading_id: "Pengembalian Dana",
+              text_en: "In the event of a dispute, the Arbiter may initiate a refund by calling the refund() function. This returns the funds to the Buyer. The state shall transition from Funded to Refunded.",
+              text_id: "Dalam hal sengketa, Arbiter dapat memulai pengembalian dana dengan memanggil fungsi refund(). Ini akan mengembalikan dana ke Pembeli. Status akan berubah dari Funded ke Refunded.",
+            },
+            {
+              clause_id: "C6",
+              heading_en: "Reentrancy Protection",
+              heading_id: "Perlindungan Reentransi",
+              text_en: "All state-changing functions (fund, release, refund) shall be protected against reentrancy attacks using the ReentrancyGuard pattern (nonReentrant modifier).",
+              text_id: "Semua fungsi yang mengubah status (fund, release, refund) akan dilindungi dari serangan reentransi menggunakan pola ReentrancyGuard (modifier nonReentrant).",
+            },
+            {
+              clause_id: "C7",
+              heading_en: "Access Control",
+              heading_id: "Kontrol Akses",
+              text_en: "Only the Buyer may fund the escrow. Only the Buyer or Arbiter may release funds. Only the Arbiter may initiate a refund. All unauthorized calls shall revert.",
+              text_id: "Hanya Pembeli yang dapat mendanai escrow. Hanya Pembeli atau Arbiter yang dapat melepas dana. Hanya Arbiter yang dapat memulai pengembalian dana. Semua panggilan tidak sah akan ditolak (revert).",
+            },
+            {
+              clause_id: "C8",
+              heading_en: "Governing Law",
+              heading_id: "Hukum yang Berlaku",
+              text_en: "This agreement shall be governed by the laws of the Republic of Indonesia. The Arbiter's decision on-chain shall be considered binding as per the parties' agreement.",
+              text_id: "Perjanjian ini tunduk pada hukum Republik Indonesia. Keputusan Arbiter on-chain akan dianggap mengikat sesuai kesepakatan para pihak.",
+            },
+          ],
+        },
+        digital_twin_v3_matrix: {
+          version: "v3",
+          contract_type: "escrow",
+          mapping: [
+            {
+              clause_id: "C1",
+              legal_concept: "Parties (Buyer, Seller, Arbiter) — Buyer deploys",
+              contract_function: "constructor(_seller, _arbiter, _token, _amount)",
+              contract_event: "N/A (constructor, no event)",
+              code_line: 39,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C2",
+              legal_concept: "Escrow parameters (seller, arbiter, token, amount, state=Created)",
+              contract_function: "constructor() → state = State.Created",
+              contract_event: "N/A (constructor)",
+              code_line: 44,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C3",
+              legal_concept: "Funding — Buyer deposits tokens, state → Funded",
+              contract_function: "fund()",
+              contract_event: "EscrowFunded (implied by state change)",
+              code_line: 47,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C4",
+              legal_concept: "Release — funds to Seller, state → Released",
+              contract_function: "release()",
+              contract_event: "EscrowReleased (implied by state change)",
+              code_line: 53,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C5",
+              legal_concept: "Refund — Arbiter returns funds to Buyer, state → Refunded",
+              contract_function: "refund()",
+              contract_event: "EscrowRefunded (implied by state change)",
+              code_line: 60,
+              verification: "on-chain",
+              status: "mapped",
+            },
+            {
+              clause_id: "C6",
+              legal_concept: "Reentrancy protection (nonReentrant on fund/release/refund)",
+              contract_function: "nonReentrant modifier on fund(), release(), refund()",
+              contract_event: "N/A (security pattern)",
+              code_line: 47,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C7",
+              legal_concept: "Access control (buyer-only fund, buyer/arbiter release, arbiter-only refund)",
+              contract_function: "require(msg.sender == buyer/arbiter) in fund/release/refund",
+              contract_event: "N/A (validation)",
+              code_line: 48,
+              verification: "static",
+              status: "mapped",
+            },
+            {
+              clause_id: "C8",
+              legal_concept: "Governing law (off-chain, Indonesia)",
+              contract_function: "N/A (legal metadata only)",
+              contract_event: "N/A",
+              code_line: null,
+              verification: "off-chain",
+              status: "legal-only",
+            },
+          ],
+          coverage: "7/8 clauses mapped to code. 1 clause is legal-only (off-chain).",
+        },
+        raw_code_sol: {
+          filename: "Escrow.sol",
+          language: "Solidity",
+          compiler_version: "^0.8.20",
+          license: "MIT",
+          source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract Escrow is ReentrancyGuard {
+    address public buyer;
+    address public seller;
+    address public arbiter;
+    IERC20 public token;
+    uint256 public amount;
+    enum State { Created, Funded, Released, Refunded }
+    State public state;
+
+    constructor(address _seller, address _arbiter, address _token, uint256 _amount) {
+        buyer = msg.sender;
+        seller = _seller;
+        arbiter = _arbiter;
+        token = IERC20(_token);
+        amount = _amount;
+        state = State.Created;
+    }
+
+    function fund() external nonReentrant {
+        require(msg.sender == buyer, "Only buyer");
+        require(state == State.Created, "Not in Created state");
+        token.transferFrom(buyer, address(this), amount);
+        state = State.Funded;
+    }
+
+    function release() external nonReentrant {
+        require(state == State.Funded, "Not funded");
+        require(msg.sender == buyer || msg.sender == arbiter, "Not authorized");
+        token.transfer(seller, amount);
+        state = State.Released;
+    }
+
+    function refund() external nonReentrant {
+        require(state == State.Funded, "Not funded");
+        require(msg.sender == arbiter, "Only arbiter");
+        token.transfer(buyer, amount);
+        state = State.Refunded;
+    }
+}`,
+        },
+      },
+      static_analysis: {
+        target_latency_ms: 900,
+        artifact_count: 3,
+        clause_count: 8,
+        matrix_mappings: 8,
+        code_lines: 40,
+        audit_checks: [
+          "SPDX-License-Identifier",
+          "Solidity ^0.8.20",
+          "ReentrancyGuard (nonReentrant)",
+          "Access control (require msg.sender)",
+          "State machine (enum State)",
+          "ERC-20 token interaction (IERC20)",
+        ],
+      },
+    },
+  ],
 };
 
 // ----------------------------------------------------------------------------
@@ -1151,8 +1674,39 @@ async function handler(req: Request): Promise<Response> {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  // 2. Manifest Discovery Endpoint
   const url = new URL(req.url);
+
+  // 2b. Sample Manifests Endpoint (Phase 1.1 — Multi-Tier Showcase)
+  // Free discovery endpoint — no billing, no x-client-id required.
+  // GET /samples        → all 3 tiers
+  // GET /samples/tier1  → Tier 1 only ($300)
+  // GET /samples/tier2  → Tier 2 only ($500)
+  // GET /samples/tier3  → Tier 3 only ($800)
+  if (url.pathname.endsWith("/samples") || url.pathname.includes("/samples/")) {
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const samplesIdx = pathParts.indexOf("samples");
+    const tierParam = samplesIdx >= 0 && pathParts[samplesIdx + 1] ? pathParts[samplesIdx + 1] : null;
+
+    if (tierParam) {
+      const tier = SAMPLE_MANIFESTS.tiers.find((t) => t.tier_id === tierParam);
+      if (tier) {
+        return jsonResponse({
+          node_id: NODE_IDENTITY.node_id,
+          endpoint: "/samples/" + tierParam,
+          tier,
+        }, 200);
+      }
+      return jsonResponse({
+        error: "TIER_NOT_FOUND",
+        message: `Unknown tier: ${tierParam}. Available: tier1, tier2, tier3.`,
+        available_tiers: SAMPLE_MANIFESTS.tiers.map((t) => ({ id: t.tier_id, name: t.name, price_usd: t.price_usd })),
+      }, 404);
+    }
+
+    return jsonResponse(SAMPLE_MANIFESTS, 200);
+  }
+
+  // 2. Manifest Discovery Endpoint
   if (req.method === "GET" || url.pathname.endsWith("/manifest.json")) {
     return jsonResponse(NODE_MANIFEST, 200);
   }
