@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.4.0-frontier — Pull Payment + Sample Manifests + Live Telemetry + Dry-Run + Algorithmic Nudging
+// v3.5.0-frontier — Phase 2.1: Concurrency Guard (soft=3 manifest, hard=5 internal)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -38,13 +38,15 @@ const TELEMETRY = {
   instance_started_at: Date.now(),
   total_requests: 0,
   active_concurrent: 0,
-  max_concurrent_slots: 3,
+  max_concurrent_slots: 3,       // Public soft limit (scarcity signal in manifest)
+  hard_limit_slots: 5,            // Internal hard limit (actual rejection threshold)
+  rejected_count: 0,              // Requests rejected by concurrency guard
   latency_history: [] as number[],
   latency_history_max: 100,
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v3.4.0-frontier",
+  engine_version: "v3.5.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
 };
 
@@ -107,6 +109,8 @@ function buildMetricsPayload(): Record<string, unknown> {
       max_slots: TELEMETRY.max_concurrent_slots,
       available_slots: TELEMETRY.max_concurrent_slots - TELEMETRY.active_concurrent,
       utilization: `${TELEMETRY.active_concurrent}/${TELEMETRY.max_concurrent_slots}`,
+      hard_limit: TELEMETRY.hard_limit_slots,
+      rejected_count: TELEMETRY.rejected_count,
     },
     engine: {
       compiler_version: TELEMETRY.compiler_version,
@@ -318,7 +322,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.4.0-frontier",
+  version: "3.5.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -343,6 +347,7 @@ const NODE_MANIFEST = {
     avg_latency_ms: "< 250.0",
     uptime_sla: "99.9%",
     concurrency_handling: "Queue-Jump Priority Pass Ready",
+    max_concurrent_tasks: 3,
   },
   endpoints: {
     "POST /": {
@@ -407,7 +412,8 @@ const NODE_MANIFEST = {
   registry: {
     registered_at: "2026-08-31T23:45:00Z",
     phase_1_status: "COMPLETE — all 5 tasks deployed",
-    version_locked: "v3.4.0-frontier (Phase 1 final)",
+    phase_2_status: "IN PROGRESS — 2.1 Concurrency Guard deployed",
+    version: "v3.5.0-frontier (Phase 2.1)",
     gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2520,9 +2526,34 @@ async function handler(req: Request): Promise<Response> {
 // -- Telemetry Wrapper --------------------------------------------------------
 // Wraps the handler to track: request count, latency, concurrency, errors.
 // Telemetry data is exposed via GET /metrics (Phase 1.2).
+// Phase 2.1: Concurrency Guard — rejects requests when active_concurrent >= hard_limit (5).
+// Public manifest shows soft limit (3) as scarcity signal; internal hard limit (5) is the actual gate.
 
 async function telemetryWrapper(req: Request): Promise<Response> {
   const startTime = Date.now();
+
+  // Phase 2.1: Concurrency Guard — hard limit enforcement
+  if (TELEMETRY.active_concurrent >= TELEMETRY.hard_limit_slots) {
+    TELEMETRY.rejected_count++;
+    TELEMETRY.total_requests++;
+    TELEMETRY.last_request_at = startTime;
+    recordLatency(Date.now() - startTime);
+    TELEMETRY.error_count++;
+
+    return jsonResponse({
+      status: "rejected",
+      error_code: "CONCURRENCY_LIMIT_REACHED",
+      message: "Server is at maximum capacity. Retry with exponential backoff.",
+      concurrency: {
+        active_slots: TELEMETRY.active_concurrent,
+        hard_limit: TELEMETRY.hard_limit_slots,
+        soft_limit_manifest: TELEMETRY.max_concurrent_slots,
+      },
+      retry_after_ms: 2000,
+      timestamp: new Date().toISOString(),
+    }, 503);
+  }
+
   TELEMETRY.total_requests++;
   TELEMETRY.last_request_at = startTime;
   TELEMETRY.active_concurrent++;
