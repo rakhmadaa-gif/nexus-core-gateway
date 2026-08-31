@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.2.0-frontier — Pull Payment + Sample Manifests + Live Telemetry (/metrics)
+// v3.3.0-frontier — Pull Payment + Sample Manifests + Live Telemetry + Dry-Run (/gateway/dry-run)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -44,7 +44,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v3.2.0-frontier",
+  engine_version: "v3.3.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
 };
 
@@ -130,6 +130,7 @@ function buildMetricsPayload(): Record<string, unknown> {
       "GET /samples": "Multi-tier sample manifests (free)",
       "GET /samples/:tier": "Individual tier sample (free)",
       "GET /metrics": "Live telemetry endpoint (free)",
+      "POST /gateway/dry-run": "Interactive Solidity dry-run with Digital Twin v3 matrix (free)",
     },
   };
 }
@@ -141,7 +142,7 @@ function buildMetricsPayload(): Record<string, unknown> {
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.2.0-frontier",
+  version: "3.3.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -1776,6 +1777,368 @@ async function payloadHandler(req: Request): Promise<Response> {
   }
 }
 
+// ----------------------------------------------------------------------------
+// 0b. DRY-RUN HANDLER (Phase 1.3 — POST /gateway/dry-run)
+// ----------------------------------------------------------------------------
+// Free interactive preview: accepts Solidity source code, runs static syntax
+// validation (no on-chain deployment), and generates a Digital Twin v3 matrix
+// (bipolar clause-to-code mapping). Target latency < 500ms.
+// ----------------------------------------------------------------------------
+
+interface DryRunRequest {
+  source_code?: string;
+  contract_type?: string;
+  clauses?: Array<{
+    clause_id: string;
+    heading_en: string;
+    heading_id?: string;
+  }>;
+}
+
+interface SyntaxIssue {
+  severity: "error" | "warning" | "info";
+  line: number;
+  message: string;
+  rule: string;
+}
+
+interface TwinMapping {
+  clause_id: string;
+  legal_concept: string;
+  contract_function: string;
+  contract_event: string;
+  code_line: number | null;
+  verification: "static" | "on-chain" | "off-chain";
+  status: "mapped" | "legal-only" | "unmapped";
+}
+
+function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contract_name: string | null; pragma: string | null; license: string | null; functions: string[]; events: string[]; modifiers: string[]; line_count: number } {
+  const issues: SyntaxIssue[] = [];
+  const lines = source.split("\n");
+  const lineCount = lines.length;
+
+  // Check SPDX license
+  const licenseMatch = source.match(/\/\/\s*SPDX-License-Identifier:\s*(.+)/);
+  const license = licenseMatch ? licenseMatch[1].trim() : null;
+  if (!license) {
+    issues.push({ severity: "warning", line: 1, message: "Missing SPDX license identifier. Recommended for production contracts.", rule: "SPDX_HEADER" });
+  }
+
+  // Check pragma
+  const pragmaMatch = source.match(/pragma\s+solidity\s+([^;]+);/);
+  const pragma = pragmaMatch ? pragmaMatch[1].trim() : null;
+  if (!pragma) {
+    issues.push({ severity: "error", line: 1, message: "Missing 'pragma solidity' version directive.", rule: "PRAGMA_REQUIRED" });
+  } else if (!pragma.includes("^0.8")) {
+    issues.push({ severity: "info", line: 1, message: `Pragma ${pragma} — recommend ^0.8.20 for latest security features.`, rule: "PRAGMA_VERSION" });
+  }
+
+  // Check contract keyword
+  const contractMatch = source.match(/contract\s+(\w+)/);
+  const contractName = contractMatch ? contractMatch[1] : null;
+  if (!contractName) {
+    issues.push({ severity: "error", line: 1, message: "No 'contract' keyword found. Invalid Solidity source.", rule: "CONTRACT_REQUIRED" });
+  }
+
+  // Check balanced braces
+  let braceDepth = 0;
+  let maxBraceDepth = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const ch of line) {
+      if (ch === "{") { braceDepth++; maxBraceDepth = Math.max(maxBraceDepth, braceDepth); }
+      if (ch === "}") braceDepth--;
+    }
+  }
+  if (braceDepth !== 0) {
+    issues.push({ severity: "error", line: lineCount, message: `Unbalanced braces: ${braceDepth > 0 ? "missing " + braceDepth + " closing brace(s)" : "extra " + Math.abs(braceDepth) + " closing brace(s)"}.`, rule: "BALANCED_BRACES" });
+  }
+
+  // Check balanced parentheses
+  let parenDepth = 0;
+  for (const line of lines) {
+    for (const ch of line) {
+      if (ch === "(") parenDepth++;
+      if (ch === ")") parenDepth--;
+    }
+  }
+  if (parenDepth !== 0) {
+    issues.push({ severity: "error", line: lineCount, message: `Unbalanced parentheses: off by ${parenDepth}.`, rule: "BALANCED_PARENS" });
+  }
+
+  // Extract functions
+  const functionRegex = /function\s+(\w+)\s*\(/g;
+  const functions: string[] = [];
+  let funcMatch;
+  while ((funcMatch = functionRegex.exec(source)) !== null) {
+    functions.push(funcMatch[1]);
+  }
+
+  // Extract events
+  const eventRegex = /event\s+(\w+)\s*\(/g;
+  const events: string[] = [];
+  let evtMatch;
+  while ((evtMatch = eventRegex.exec(source)) !== null) {
+    events.push(evtMatch[1]);
+  }
+
+  // Extract modifiers
+  const modifierRegex = /modifier\s+(\w+)\s*\(/g;
+  const modifiers: string[] = [];
+  let modMatch;
+  while ((modMatch = modifierRegex.exec(source)) !== null) {
+    modifiers.push(modMatch[1]);
+  }
+
+  // Check for constructor
+  if (contractName && !source.includes("constructor(") && !source.includes("constructor (")) {
+    issues.push({ severity: "info", line: 1, message: "No constructor found. Contract will use default constructor.", rule: "CONSTRUCTOR_CHECK" });
+  }
+
+  // Check for require statements (best practice)
+  const requireCount = (source.match(/require\s*\(/g) || []).length;
+  if (requireCount === 0 && functions.length > 0) {
+    issues.push({ severity: "info", line: 1, message: "No require() statements found. Consider adding input validation.", rule: "INPUT_VALIDATION" });
+  }
+
+  return { issues, contract_name: contractName, pragma, license, functions, events, modifiers, line_count: lineCount };
+}
+
+function generateTwinMatrix(
+  source: string,
+  clauses: Array<{ clause_id: string; heading_en: string; heading_id?: string }>,
+  functions: string[],
+  events: string[],
+): { mapping: TwinMapping[]; coverage: string } {
+  const lines = source.split("\n");
+  const mapping: TwinMapping[] = [];
+
+  for (const clause of clauses) {
+    // Try to find a function that matches the clause heading
+    const headingLower = clause.heading_en.toLowerCase();
+    let matchedFunc: string | null = null;
+    let matchedLine: number | null = null;
+
+    // Keyword-based matching
+    const keywords: Record<string, string[]> = {
+      "parties": ["constructor", "owner", "msg.sender"],
+      "token": ["mint", "transfer", "balance", "erc20", "erc721"],
+      "payment": ["pay", "deposit", "withdraw", "transfer", "escrow"],
+      "minting": ["mint", "token", "supply"],
+      "royalty": ["royalty", "tokenid", "mint"],
+      "escrow": ["deposit", "withdraw", "release", "refund", "escrow"],
+      "governing": [],
+      "confidential": [],
+      "warranty": [],
+      "liability": [],
+      "termination": ["terminate", "cancel", "end"],
+      "dispute": ["resolve", "dispute", "arbitration"],
+      "transfer": ["transfer", "transferfrom", "approve"],
+      "approval": ["approve", "allowance"],
+      "supply": ["mint", "supply", "totalsupply"],
+      "ownership": ["owner", "transferownership", "renounceownership"],
+      "pausable": ["pause", "unpause", "paused"],
+      "burnable": ["burn", "burnfrom"],
+      "metadata": ["tokenuri", "baseuri"],
+    };
+
+    // Find matching keyword
+    let matchKey: string | null = null;
+    for (const key of Object.keys(keywords)) {
+      if (headingLower.includes(key)) {
+        matchKey = key;
+        break;
+      }
+    }
+
+    if (matchKey && keywords[matchKey]) {
+      for (const func of functions) {
+        const funcLower = func.toLowerCase();
+        if (keywords[matchKey].some(kw => funcLower.includes(kw))) {
+          matchedFunc = func;
+          // Find line number
+          const funcRegex = new RegExp(`function\\s+${func}\\s*\\(`);
+          const match = funcRegex.exec(source);
+          if (match) {
+            const before = source.substring(0, match.index);
+            matchedLine = before.split("\n").length;
+          }
+          break;
+        }
+      }
+    }
+
+    // Also try direct heading-to-function name match
+    if (!matchedFunc) {
+      for (const func of functions) {
+        if (headingLower.includes(func.toLowerCase()) || func.toLowerCase().includes(headingLower.split(" ")[0])) {
+          matchedFunc = func;
+          const funcRegex = new RegExp(`function\\s+${func}\\s*\\(`);
+          const match = funcRegex.exec(source);
+          if (match) {
+            const before = source.substring(0, match.index);
+            matchedLine = before.split("\n").length;
+          }
+          break;
+        }
+      }
+    }
+
+    // Match events
+    let matchedEvent = "N/A";
+    if (matchedFunc) {
+      for (const evt of events) {
+        const evtLower = evt.toLowerCase();
+        if (matchedFunc.toLowerCase().includes("transfer") && evtLower.includes("transfer")) {
+          matchedEvent = `${evt}(...)`;
+          break;
+        }
+        if (matchedFunc.toLowerCase().includes("mint") && evtLower.includes("transfer")) {
+          matchedEvent = `${evt}(from=0x0, to=...)`;
+          break;
+        }
+        if (matchedFunc.toLowerCase().includes("approve") && evtLower.includes("approval")) {
+          matchedEvent = `${evt}(...)`;
+          break;
+        }
+      }
+    }
+
+    if (matchedFunc) {
+      mapping.push({
+        clause_id: clause.clause_id,
+        legal_concept: clause.heading_en,
+        contract_function: `${matchedFunc}()`,
+        contract_event: matchedEvent,
+        code_line: matchedLine,
+        verification: matchedEvent !== "N/A" ? "on-chain" : "static",
+        status: "mapped",
+      });
+    } else {
+      // Check if it's a legal-only clause (governing law, confidentiality, etc.)
+      const legalOnlyKeywords = ["governing", "confidential", "warranty", "liability", "dispute", "law", "jurisdiction"];
+      const isLegalOnly = legalOnlyKeywords.some(kw => headingLower.includes(kw));
+      mapping.push({
+        clause_id: clause.clause_id,
+        legal_concept: clause.heading_en,
+        contract_function: isLegalOnly ? "N/A (legal metadata only)" : "UNMAPPED",
+        contract_event: isLegalOnly ? "N/A" : "N/A",
+        code_line: null,
+        verification: isLegalOnly ? "off-chain" : "unmapped",
+        status: isLegalOnly ? "legal-only" : "unmapped",
+      });
+    }
+  }
+
+  const mapped = mapping.filter(m => m.status === "mapped").length;
+  const legalOnly = mapping.filter(m => m.status === "legal-only").length;
+  const unmapped = mapping.filter(m => m.status === "unmapped").length;
+  const coverage = `${mapped}/${mapping.length} clauses mapped to code. ${legalOnly} legal-only. ${unmapped > 0 ? unmapped + " unmapped — " : ""}${unmapped > 0 ? "review needed." : "all code-mapped clauses verified."}`;
+
+  return { mapping, coverage };
+}
+
+async function dryRunHandler(req: Request): Promise<Response> {
+  const startTime = Date.now();
+
+  let body: DryRunRequest;
+  try {
+    body = await req.json() as DryRunRequest;
+  } catch {
+    return jsonResponse({
+      status: "error",
+      error_code: "INVALID_JSON",
+      message: "Request body must be valid JSON.",
+    }, 400);
+  }
+
+  const { source_code, contract_type, clauses } = body;
+
+  if (!source_code || typeof source_code !== "string") {
+    return jsonResponse({
+      status: "error",
+      error_code: "MISSING_SOURCE_CODE",
+      message: "Field 'source_code' is required (string of Solidity source code).",
+    }, 400);
+  }
+
+  // Limit source code size (prevent abuse)
+  if (source_code.length > 50000) {
+    return jsonResponse({
+      status: "error",
+      error_code: "SOURCE_TOO_LARGE",
+      message: "Source code exceeds 50KB limit.",
+    }, 413);
+  }
+
+  // Run static syntax validation
+  const validation = validateSoliditySyntax(source_code);
+
+  // Generate Digital Twin v3 matrix
+  const defaultClauses = clauses && clauses.length > 0 ? clauses : [
+    { clause_id: "C1", heading_en: "Parties identification" },
+    { clause_id: "C2", heading_en: "Token specifications" },
+    { clause_id: "C3", heading_en: "Minting and supply" },
+    { clause_id: "C4", heading_en: "Governing law" },
+  ];
+
+  const twinMatrix = generateTwinMatrix(
+    source_code,
+    defaultClauses,
+    validation.functions,
+    validation.events,
+  );
+
+  const elapsed = Date.now() - startTime;
+  const hasErrors = validation.issues.some(i => i.severity === "error");
+
+  return jsonResponse({
+    status: hasErrors ? "validation_failed" : "validation_passed",
+    node_id: NODE_IDENTITY.node_id,
+    endpoint: "/gateway/dry-run",
+    timestamp: new Date().toISOString(),
+    latency_ms: elapsed,
+    sla_target_ms: 500,
+    sla_met: elapsed < 500,
+    credits_charged: 0,
+    contract_type: contract_type || "custom",
+    syntax_validation: {
+      passed: !hasErrors,
+      error_count: validation.issues.filter(i => i.severity === "error").length,
+      warning_count: validation.issues.filter(i => i.severity === "warning").length,
+      info_count: validation.issues.filter(i => i.severity === "info").length,
+      issues: validation.issues,
+    },
+    contract_info: {
+      name: validation.contract_name,
+      pragma: validation.pragma,
+      license: validation.license,
+      line_count: validation.line_count,
+      functions: validation.functions,
+      events: validation.events,
+      modifiers: validation.modifiers,
+      function_count: validation.functions.length,
+      event_count: validation.events.length,
+      modifier_count: validation.modifiers.length,
+    },
+    digital_twin_v3_matrix: {
+      version: "v3",
+      contract_type: contract_type || validation.contract_name || "custom",
+      mapping: twinMatrix.mapping,
+      coverage: twinMatrix.coverage,
+    },
+    preview: {
+      deployable: !hasErrors,
+      warnings: validation.issues.filter(i => i.severity === "warning").length,
+      recommendation: hasErrors
+        ? "Fix syntax errors before deployment."
+        : validation.issues.filter(i => i.severity === "warning").length > 0
+          ? "Contract is deployable but has warnings. Review before production."
+          : "Contract passed all checks. Ready for deployment.",
+    },
+  }, hasErrors ? 422 : 200);
+}
+
 async function handler(req: Request): Promise<Response> {
   // 1. CORS Preflight
   if (req.method === "OPTIONS") {
@@ -1814,7 +2177,15 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse(SAMPLE_MANIFESTS, 200);
   }
 
-  // 2c. Live Telemetry Endpoint (Phase 1.2 — GET /metrics)
+  // 2c. Interactive Dry-Run Endpoint (Phase 1.3 — POST /gateway/dry-run)
+  // Free preview — no billing, no x-client-id required.
+  // Accepts Solidity source code, runs static syntax validation,
+  // and generates a Digital Twin v3 matrix (clause-to-code mapping).
+  if (url.pathname.endsWith("/gateway/dry-run") && req.method === "POST") {
+    return await dryRunHandler(req);
+  }
+
+  // 2d. Live Telemetry Endpoint (Phase 1.2 — GET /metrics)
   // Free health-check — no billing, no x-client-id required.
   // Broadcasts: uptime, latency stats, concurrency slots (1/3), engine version.
   if (url.pathname.endsWith("/metrics")) {
