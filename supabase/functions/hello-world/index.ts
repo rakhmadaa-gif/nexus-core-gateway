@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.7.0-frontier — Phase 2.3: M2M Output Payload Standardizer (standard envelope for all responses)
+// v4.0.0-frontier — Phase 3: Digital Twin Engine Upgrade (bipolar mapping + breach simulation)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v3.7.0-frontier",
+  engine_version: "v4.0.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -404,7 +404,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.7.0-frontier",
+  version: "4.0.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -495,7 +495,8 @@ const NODE_MANIFEST = {
     registered_at: "2026-08-31T23:45:00Z",
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
-    version: "v3.7.0-frontier (Phase 2 final — LOCKED)",
+    phase_3_status: "COMPLETE — 3.1+3.2 deployed (3.3 deferred)",
+    version: "v4.0.0-frontier (Phase 3 — LOCKED)",
     gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2174,8 +2175,363 @@ interface TwinMapping {
   contract_function: string;
   contract_event: string;
   code_line: number | null;
+  code_line_range: [number, number] | null;       // Phase 3.1: line range
+  function_signature: string | null;               // Phase 3.1: full signature
+  visibility: string | null;                        // Phase 3.1: public/private/external/internal
+  modifiers: string[];                              // Phase 3.1: modifiers applied
+  breach_conditions: string[];                      // Phase 3.1: what would breach this clause
   verification: "static" | "on-chain" | "off-chain";
   status: "mapped" | "legal-only" | "unmapped";
+}
+
+// Phase 3.1: Upgraded parser — richer function extraction
+interface ParsedFunction {
+  name: string;
+  signature: string;
+  line: number;
+  visibility: string;
+  modifiers: string[];
+  require_count: number;
+  has_require: boolean;
+}
+
+interface ParsedEvent {
+  name: string;
+  line: number;
+  parameters: string;
+}
+
+interface ParsedModifier {
+  name: string;
+  line: number;
+}
+
+interface ParsedStateVar {
+  name: string;
+  type: string;
+  line: number;
+  visibility: string;
+}
+
+interface ParsedContract {
+  name: string | null;
+  pragma: string | null;
+  license: string | null;
+  functions: ParsedFunction[];
+  events: ParsedEvent[];
+  modifiers: ParsedModifier[];
+  state_vars: ParsedStateVar[];
+  has_constructor: boolean;
+  has_pause: boolean;          // Phase 3.2: emergency freeze detection
+  has_ownership: boolean;      // Phase 3.2: ownership check
+  has_burn: boolean;           // Phase 3.2: burn capability
+  has_mint: boolean;           // Phase 3.2: mint capability
+  line_count: number;
+}
+
+// Phase 3.2: Breach simulation result
+interface BreachScenario {
+  scenario_id: string;
+  scenario_name: string;
+  description: string;
+  risk_level: "low" | "medium" | "high" | "critical";
+  affected_functions: string[];
+  mitigation: string;
+  detected: boolean;
+}
+
+interface BreachSimulationResult {
+  contract_name: string | null;
+  overall_risk: "low" | "medium" | "high" | "critical";
+  scenarios: BreachScenario[];
+  emergency_freeze: {
+    detected: boolean;
+    mechanism: string | null;
+    functions: string[];
+  };
+  recommendations: string[];
+}
+
+// ----------------------------------------------------------------------------
+// 3a. PHASE 3.1 — UPGRADED SOLIDITY PARSER (Bipolar Matrix Mapping)
+// ----------------------------------------------------------------------------
+// Replaces basic regex extraction with deeper parsing:
+//   - Function signatures with parameters, visibility, modifiers
+//   - Require statements with line numbers
+//   - State variables with visibility
+//   - Pause/ownership/burn/mint capability detection
+// ----------------------------------------------------------------------------
+
+function parseSolidityContract(source: string): ParsedContract {
+  const lines = source.split("\n");
+  const lineCount = lines.length;
+
+  // Contract name
+  const contractMatch = source.match(/contract\s+(\w+)/);
+  const name = contractMatch ? contractMatch[1] : null;
+
+  // Pragma
+  const pragmaMatch = source.match(/pragma\s+solidity\s+([^;]+);/);
+  const pragma = pragmaMatch ? pragmaMatch[1].trim() : null;
+
+  // License
+  const licenseMatch = source.match(/\/\/\s*SPDX-License-Identifier:\s*(.+)/);
+  const license = licenseMatch ? licenseMatch[1].trim() : null;
+
+  // Parse functions with full signatures
+  const functions: ParsedFunction[] = [];
+  const funcRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*([^{]*)\{/g;
+  let funcMatch;
+  while ((funcMatch = funcRegex.exec(source)) !== null) {
+    const funcName = funcMatch[1];
+    const params = funcMatch[2].trim();
+    const modifiersRaw = funcMatch[3].trim();
+    const before = source.substring(0, funcMatch.index);
+    const line = before.split("\n").length;
+
+    // Extract visibility
+    let visibility = "public"; // default
+    const visMatch = modifiersRaw.match(/\b(public|private|external|internal)\b/);
+    if (visMatch) visibility = visMatch[1];
+
+    // Extract modifier names (exclude visibility keywords and state mutability)
+    const modPart = modifiersRaw
+      .replace(/\b(public|private|external|internal|view|pure|payable|virtual|override|returns)\b/g, "")
+      .replace(/\([^)]*\)/g, "") // remove returns(...) params
+      .trim();
+    const modifiers = modPart ? modPart.split(/\s+/).filter(m => m.length > 0) : [];
+
+    // Count require statements within this function body
+    const funcBodyStart = funcMatch.index + funcMatch[0].length;
+    let braceDepth = 1;
+    let bodyEnd = funcBodyStart;
+    for (let i = funcBodyStart; i < source.length && braceDepth > 0; i++) {
+      if (source[i] === "{") braceDepth++;
+      if (source[i] === "}") braceDepth--;
+      bodyEnd = i;
+    }
+    const funcBody = source.substring(funcBodyStart, bodyEnd);
+    const requireCount = (funcBody.match(/require\s*\(/g) || []).length;
+
+    functions.push({
+      name: funcName,
+      signature: `function ${funcName}(${params}) ${modifiersRaw.replace(/\s+/g, " ").trim()}`.trim(),
+      line,
+      visibility,
+      modifiers,
+      require_count: requireCount,
+      has_require: requireCount > 0,
+    });
+  }
+
+  // Parse events with parameters
+  const events: ParsedEvent[] = [];
+  const evtRegex = /event\s+(\w+)\s*\(([^)]*)\)/g;
+  let evtMatch;
+  while ((evtMatch = evtRegex.exec(source)) !== null) {
+    const before = source.substring(0, evtMatch.index);
+    const line = before.split("\n").length;
+    events.push({
+      name: evtMatch[1],
+      line,
+      parameters: evtMatch[2].trim(),
+    });
+  }
+
+  // Parse modifiers
+  const modifiers: ParsedModifier[] = [];
+  const modRegex = /modifier\s+(\w+)\s*\(/g;
+  let modMatch;
+  while ((modMatch = modRegex.exec(source)) !== null) {
+    const before = source.substring(0, modMatch.index);
+    const line = before.split("\n").length;
+    modifiers.push({ name: modMatch[1], line });
+  }
+
+  // Parse state variables
+  const stateVars: ParsedStateVar[] = [];
+  const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(public|private|internal|constant|immutable)?\s*(\w+)\s*[;=]/gm;
+  let svMatch;
+  while ((svMatch = stateVarRegex.exec(source)) !== null) {
+    const before = source.substring(0, svMatch.index);
+    const line = before.split("\n").length;
+    stateVars.push({
+      name: svMatch[3],
+      type: svMatch[1],
+      line,
+      visibility: svMatch[2] || "internal",
+    });
+  }
+
+  // Capability detection (Phase 3.2)
+  const sourceLower = source.toLowerCase();
+  const hasPause = /\b(pause|unpause|paused)\b/i.test(source);
+  const hasOwnership = /\b(onlyowner|owner|transferownership|renounceownership|ownable)\b/i.test(source);
+  const hasBurn = /\b(burn|burnfrom|burnable)\b/i.test(source);
+  const hasMint = /\b(mint|_mint)\b/i.test(source);
+  const hasConstructor = /constructor\s*\(/i.test(source);
+
+  return {
+    name,
+    pragma,
+    license,
+    functions,
+    events,
+    modifiers,
+    state_vars: stateVars,
+    has_constructor: hasConstructor,
+    has_pause: hasPause,
+    has_ownership: hasOwnership,
+    has_burn: hasBurn,
+    has_mint: hasMint,
+    line_count: lineCount,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// 3b. PHASE 3.2 — AUTOMATED BREACH SIMULATION
+// ----------------------------------------------------------------------------
+// Simulates breach scenarios against the parsed contract and generates
+// a risk assessment report. Detects emergency freeze mechanisms.
+// ----------------------------------------------------------------------------
+
+function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult {
+  const scenarios: BreachScenario[] = [];
+  const recommendations: string[] = [];
+
+  // Scenario 1: Unauthorized minting
+  const mintFuncs = parsed.functions.filter(f => /\b(mint|_mint)\b/i.test(f.name));
+  const mintHasRequire = mintFuncs.some(f => f.has_require);
+  scenarios.push({
+    scenario_id: "BS-001",
+    scenario_name: "Unauthorized Minting",
+    description: "Can an attacker mint tokens without authorization?",
+    risk_level: mintFuncs.length === 0 ? "low" : mintHasRequire ? "low" : "critical",
+    affected_functions: mintFuncs.map(f => f.name),
+    mitigation: mintFuncs.length === 0
+      ? "No mint function detected — not applicable."
+      : mintHasRequire
+        ? "Mint function has require() guards — verify access control (onlyOwner)."
+        : "CRITICAL: Mint function lacks require() guards. Add access control (onlyOwner modifier).",
+    detected: mintFuncs.length > 0 && !mintHasRequire,
+  });
+  if (mintFuncs.length > 0 && !mintHasRequire) {
+    recommendations.push("Add access control to mint function (onlyOwner or role-based).");
+  }
+
+  // Scenario 2: Transfer violation
+  const transferFuncs = parsed.functions.filter(f => /\b(transfer|transferfrom)\b/i.test(f.name));
+  const transferHasRequire = transferFuncs.some(f => f.has_require);
+  scenarios.push({
+    scenario_id: "BS-002",
+    scenario_name: "Transfer Violation",
+    description: "Can transfers bypass balance/allowance checks?",
+    risk_level: transferFuncs.length === 0 ? "low" : transferHasRequire ? "low" : "high",
+    affected_functions: transferFuncs.map(f => f.name),
+    mitigation: transferFuncs.length === 0
+      ? "No transfer function detected — not applicable."
+      : transferHasRequire
+        ? "Transfer function has require() guards — verify balance/allowance checks."
+        : "HIGH: Transfer function lacks require() guards. Add balance and allowance validation.",
+    detected: transferFuncs.length > 0 && !transferHasRequire,
+  });
+  if (transferFuncs.length > 0 && !transferHasRequire) {
+    recommendations.push("Add require() for balance and allowance checks in transfer functions.");
+  }
+
+  // Scenario 3: Fund drain via withdraw
+  const withdrawFuncs = parsed.functions.filter(f => /\b(withdraw|withdrawal|claim)\b/i.test(f.name));
+  const withdrawHasRequire = withdrawFuncs.some(f => f.has_require);
+  scenarios.push({
+    scenario_id: "BS-003",
+    scenario_name: "Fund Drain via Withdrawal",
+    description: "Can anyone withdraw funds without authorization?",
+    risk_level: withdrawFuncs.length === 0 ? "low" : withdrawHasRequire ? "low" : "critical",
+    affected_functions: withdrawFuncs.map(f => f.name),
+    mitigation: withdrawFuncs.length === 0
+      ? "No withdraw function detected — not applicable."
+      : withdrawHasRequire
+        ? "Withdraw function has require() guards — verify caller authorization."
+        : "CRITICAL: Withdraw function lacks require() guards. Add caller authorization.",
+    detected: withdrawFuncs.length > 0 && !withdrawHasRequire,
+  });
+  if (withdrawFuncs.length > 0 && !withdrawHasRequire) {
+    recommendations.push("Add access control to withdraw function (onlyOwner or pending withdrawals pattern).");
+  }
+
+  // Scenario 4: Emergency freeze detection
+  const pauseFuncs = parsed.functions.filter(f => /\b(pause|unpause|emergencyStop|freeze)\b/i.test(f.name));
+  scenarios.push({
+    scenario_id: "BS-004",
+    scenario_name: "Emergency Freeze",
+    description: "Does the contract have an emergency stop / pause mechanism?",
+    risk_level: parsed.has_pause ? "low" : "medium",
+    affected_functions: pauseFuncs.map(f => f.name),
+    mitigation: parsed.has_pause
+      ? "Pause mechanism detected — verify only authorized parties can pause."
+      : "MEDIUM: No pause/emergency stop detected. Consider adding Pausable pattern for emergency response.",
+    detected: parsed.has_pause,
+  });
+  if (!parsed.has_pause) {
+    recommendations.push("Consider adding OpenZeppelin Pausable pattern for emergency freeze capability.");
+  }
+
+  // Scenario 5: Ownership renounce risk
+  scenarios.push({
+    scenario_id: "BS-005",
+    scenario_name: "Ownership Renounce Risk",
+    description: "Can ownership be renounced, potentially locking admin functions?",
+    risk_level: /\brenounceownership\b/i.test(parsed.name || "") ? "medium" : "low",
+    affected_functions: parsed.functions.filter(f => /renounce/i.test(f.name)).map(f => f.name),
+    mitigation: "If renounceOwnership exists, ensure it's only callable by current owner and documented in legal layer.",
+    detected: parsed.functions.some(f => /renounce/i.test(f.name)),
+  });
+
+  // Scenario 6: Reentrancy risk
+  const externalCalls = parsed.functions.filter(f => f.visibility === "external" || /payable/i.test(f.signature));
+  const hasExternalWithBalance = externalCalls.some(f =>
+    f.has_require && /\b(balance|amount|value)\b/i.test(f.signature)
+  );
+  scenarios.push({
+    scenario_id: "BS-006",
+    scenario_name: "Reentrancy Attack",
+    description: "Are external calls with value transfer protected against reentrancy?",
+    risk_level: externalCalls.length === 0 ? "low" : hasExternalWithBalance ? "medium" : "high",
+    affected_functions: externalCalls.map(f => f.name),
+    mitigation: externalCalls.length === 0
+      ? "No external/payable functions detected — low reentrancy risk."
+      : "Use checks-effects-interactions pattern and consider ReentrancyGuard.",
+    detected: externalCalls.length > 0,
+  });
+  if (externalCalls.length > 0) {
+    recommendations.push("Apply checks-effects-interactions pattern and consider OpenZeppelin ReentrancyGuard.");
+  }
+
+  // Overall risk
+  const riskLevels = scenarios.map(s => s.risk_level);
+  const riskOrder = { "low": 0, "medium": 1, "high": 2, "critical": 3 };
+  const maxRisk = riskLevels.reduce((max, r) => riskOrder[r] > riskOrder[max] ? r : max, "low" as "low");
+
+  // Emergency freeze info
+  const emergencyFreeze = {
+    detected: parsed.has_pause,
+    mechanism: parsed.has_pause
+      ? `Pause/unpause functions detected: ${pauseFuncs.map(f => f.name).join(", ") || "implicit"}`
+      : null,
+    functions: pauseFuncs.map(f => f.name),
+  };
+
+  if (recommendations.length === 0) {
+    recommendations.push("Contract passed all breach simulations. No critical vulnerabilities detected.");
+  }
+
+  return {
+    contract_name: parsed.name,
+    overall_risk: maxRisk,
+    scenarios,
+    emergency_freeze: emergencyFreeze,
+    recommendations,
+  };
 }
 
 function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contract_name: string | null; pragma: string | null; license: string | null; functions: string[]; events: string[]; modifiers: string[]; line_count: number } {
@@ -2273,115 +2629,116 @@ function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contra
 function generateTwinMatrix(
   source: string,
   clauses: Array<{ clause_id: string; heading_en: string; heading_id?: string }>,
-  functions: string[],
-  events: string[],
+  parsed: ParsedContract,
 ): { mapping: TwinMapping[]; coverage: string } {
-  const lines = source.split("\n");
   const mapping: TwinMapping[] = [];
 
+  // Phase 3.1: Enhanced keyword map with breach conditions
+  const clauseKeywords: Record<string, { kws: string[]; breach: string[] }> = {
+    "parties": { kws: ["constructor", "owner", "msg.sender"], breach: ["Unauthorized party calls restricted function"] },
+    "token": { kws: ["mint", "transfer", "balance", "erc20", "erc721"], breach: ["Token minted beyond supply cap", "Transfer to blacklisted address"] },
+    "payment": { kws: ["pay", "deposit", "withdraw", "transfer", "escrow"], breach: ["Payment released without delivery confirmation"] },
+    "minting": { kws: ["mint", "token", "supply"], breach: ["Minting exceeds agreed supply", "Unauthorized mint by non-owner"] },
+    "royalty": { kws: ["royalty", "tokenid", "mint"], breach: ["Royalty rate exceeds agreed percentage"] },
+    "escrow": { kws: ["deposit", "withdraw", "release", "refund", "escrow"], breach: ["Funds released before condition met", "Double withdrawal"] },
+    "governing": { kws: [], breach: ["Jurisdiction dispute — off-chain resolution"] },
+    "confidential": { kws: [], breach: ["Confidential data exposed on-chain"] },
+    "warranty": { kws: [], breach: ["Warranty claim without proof"] },
+    "liability": { kws: [], breach: ["Liability cap exceeded"] },
+    "termination": { kws: ["terminate", "cancel", "end", "selfdestruct"], breach: ["Termination without notice period"] },
+    "dispute": { kws: ["resolve", "dispute", "arbitration"], breach: ["Dispute resolution bypassed"] },
+    "transfer": { kws: ["transfer", "transferfrom", "approve"], breach: ["Transfer exceeds balance", "Transfer to unauthorized address"] },
+    "approval": { kws: ["approve", "allowance"], breach: ["Approval exploited via infinite allowance"] },
+    "supply": { kws: ["mint", "supply", "totalsupply"], breach: ["Supply changed without governance approval"] },
+    "ownership": { kws: ["owner", "transferownership", "renounceownership"], breach: ["Ownership hijacked", "Ownership renounced without legal review"] },
+    "pausable": { kws: ["pause", "unpause", "paused", "emergency"], breach: ["Contract paused without legal cause", "Contract not paused during breach"] },
+    "burnable": { kws: ["burn", "burnfrom"], breach: ["Unauthorized burn of tokens"] },
+    "metadata": { kws: ["tokenuri", "baseuri", "name", "symbol"], breach: ["Metadata changed without consent"] },
+  };
+
   for (const clause of clauses) {
-    // Try to find a function that matches the clause heading
     const headingLower = clause.heading_en.toLowerCase();
-    let matchedFunc: string | null = null;
-    let matchedLine: number | null = null;
+    let matchedFunc: ParsedFunction | null = null;
 
-    // Keyword-based matching
-    const keywords: Record<string, string[]> = {
-      "parties": ["constructor", "owner", "msg.sender"],
-      "token": ["mint", "transfer", "balance", "erc20", "erc721"],
-      "payment": ["pay", "deposit", "withdraw", "transfer", "escrow"],
-      "minting": ["mint", "token", "supply"],
-      "royalty": ["royalty", "tokenid", "mint"],
-      "escrow": ["deposit", "withdraw", "release", "refund", "escrow"],
-      "governing": [],
-      "confidential": [],
-      "warranty": [],
-      "liability": [],
-      "termination": ["terminate", "cancel", "end"],
-      "dispute": ["resolve", "dispute", "arbitration"],
-      "transfer": ["transfer", "transferfrom", "approve"],
-      "approval": ["approve", "allowance"],
-      "supply": ["mint", "supply", "totalsupply"],
-      "ownership": ["owner", "transferownership", "renounceownership"],
-      "pausable": ["pause", "unpause", "paused"],
-      "burnable": ["burn", "burnfrom"],
-      "metadata": ["tokenuri", "baseuri"],
-    };
-
-    // Find matching keyword
+    // Find matching keyword category
     let matchKey: string | null = null;
-    for (const key of Object.keys(keywords)) {
+    for (const key of Object.keys(clauseKeywords)) {
       if (headingLower.includes(key)) {
         matchKey = key;
         break;
       }
     }
 
-    if (matchKey && keywords[matchKey]) {
-      for (const func of functions) {
-        const funcLower = func.toLowerCase();
-        if (keywords[matchKey].some(kw => funcLower.includes(kw))) {
+    // Match function using parsed data (richer than raw strings)
+    if (matchKey && clauseKeywords[matchKey].kws.length > 0) {
+      for (const func of parsed.functions) {
+        const funcLower = func.name.toLowerCase();
+        if (clauseKeywords[matchKey].kws.some(kw => funcLower.includes(kw))) {
           matchedFunc = func;
-          // Find line number
-          const funcRegex = new RegExp(`function\\s+${func}\\s*\\(`);
-          const match = funcRegex.exec(source);
-          if (match) {
-            const before = source.substring(0, match.index);
-            matchedLine = before.split("\n").length;
-          }
           break;
         }
       }
     }
 
-    // Also try direct heading-to-function name match
+    // Fallback: direct heading-to-function name match
     if (!matchedFunc) {
-      for (const func of functions) {
-        if (headingLower.includes(func.toLowerCase()) || func.toLowerCase().includes(headingLower.split(" ")[0])) {
+      for (const func of parsed.functions) {
+        if (headingLower.includes(func.name.toLowerCase()) || func.name.toLowerCase().includes(headingLower.split(" ")[0])) {
           matchedFunc = func;
-          const funcRegex = new RegExp(`function\\s+${func}\\s*\\(`);
-          const match = funcRegex.exec(source);
-          if (match) {
-            const before = source.substring(0, match.index);
-            matchedLine = before.split("\n").length;
-          }
           break;
         }
       }
     }
 
-    // Match events
+    // Match events to function
     let matchedEvent = "N/A";
     if (matchedFunc) {
-      for (const evt of events) {
-        const evtLower = evt.toLowerCase();
-        if (matchedFunc.toLowerCase().includes("transfer") && evtLower.includes("transfer")) {
-          matchedEvent = `${evt}(...)`;
+      for (const evt of parsed.events) {
+        const evtLower = evt.name.toLowerCase();
+        if (matchedFunc.name.toLowerCase().includes("transfer") && evtLower.includes("transfer")) {
+          matchedEvent = `${evt.name}(${evt.parameters})`;
           break;
         }
-        if (matchedFunc.toLowerCase().includes("mint") && evtLower.includes("transfer")) {
-          matchedEvent = `${evt}(from=0x0, to=...)`;
+        if (matchedFunc.name.toLowerCase().includes("mint") && evtLower.includes("transfer")) {
+          matchedEvent = `${evt.name}(from=0x0, ${evt.parameters})`;
           break;
         }
-        if (matchedFunc.toLowerCase().includes("approve") && evtLower.includes("approval")) {
-          matchedEvent = `${evt}(...)`;
+        if (matchedFunc.name.toLowerCase().includes("approve") && evtLower.includes("approval")) {
+          matchedEvent = `${evt.name}(${evt.parameters})`;
           break;
         }
       }
     }
+
+    // Compute line range (function start to next function or end of contract)
+    let lineRange: [number, number] | null = null;
+    if (matchedFunc) {
+      const funcIdx = parsed.functions.indexOf(matchedFunc);
+      const endLine = funcIdx < parsed.functions.length - 1
+        ? parsed.functions[funcIdx + 1].line - 1
+        : parsed.line_count;
+      lineRange = [matchedFunc.line, endLine];
+    }
+
+    // Breach conditions
+    const breachConditions = matchKey ? clauseKeywords[matchKey].breach : [];
 
     if (matchedFunc) {
       mapping.push({
         clause_id: clause.clause_id,
         legal_concept: clause.heading_en,
-        contract_function: `${matchedFunc}()`,
+        contract_function: `${matchedFunc.name}()`,
         contract_event: matchedEvent,
-        code_line: matchedLine,
+        code_line: matchedFunc.line,
+        code_line_range: lineRange,
+        function_signature: matchedFunc.signature,
+        visibility: matchedFunc.visibility,
+        modifiers: matchedFunc.modifiers,
+        breach_conditions: breachConditions,
         verification: matchedEvent !== "N/A" ? "on-chain" : "static",
         status: "mapped",
       });
     } else {
-      // Check if it's a legal-only clause (governing law, confidentiality, etc.)
       const legalOnlyKeywords = ["governing", "confidential", "warranty", "liability", "dispute", "law", "jurisdiction"];
       const isLegalOnly = legalOnlyKeywords.some(kw => headingLower.includes(kw));
       mapping.push({
@@ -2390,6 +2747,11 @@ function generateTwinMatrix(
         contract_function: isLegalOnly ? "N/A (legal metadata only)" : "UNMAPPED",
         contract_event: isLegalOnly ? "N/A" : "N/A",
         code_line: null,
+        code_line_range: null,
+        function_signature: null,
+        visibility: null,
+        modifiers: [],
+        breach_conditions: breachConditions,
         verification: isLegalOnly ? "off-chain" : "unmapped",
         status: isLegalOnly ? "legal-only" : "unmapped",
       });
@@ -2403,6 +2765,7 @@ function generateTwinMatrix(
 
   return { mapping, coverage };
 }
+
 
 async function dryRunHandler(req: Request): Promise<Response> {
   const startTime = Date.now();
@@ -2440,7 +2803,10 @@ async function dryRunHandler(req: Request): Promise<Response> {
   // Run static syntax validation
   const validation = validateSoliditySyntax(source_code);
 
-  // Generate Digital Twin v3 matrix
+  // Phase 3.1: Upgraded parser — deep contract parsing
+  const parsed = parseSolidityContract(source_code);
+
+  // Phase 3.1: Generate upgraded Digital Twin v3 matrix with bipolar mapping
   const defaultClauses = clauses && clauses.length > 0 ? clauses : [
     { clause_id: "C1", heading_en: "Parties identification" },
     { clause_id: "C2", heading_en: "Token specifications" },
@@ -2451,17 +2817,19 @@ async function dryRunHandler(req: Request): Promise<Response> {
   const twinMatrix = generateTwinMatrix(
     source_code,
     defaultClauses,
-    validation.functions,
-    validation.events,
+    parsed,
   );
+
+  // Phase 3.2: Automated Breach Simulation
+  const breachSimulation = simulateBreachScenarios(parsed);
 
   const elapsed = Date.now() - startTime;
   const hasErrors = validation.issues.some(i => i.severity === "error");
 
   // Phase 1.4: Algorithmic Nudging — Time-Decay Warning & Urgency Signal
   const urgencySignal = calculateUrgencySignal(
-    validation.functions.length,
-    contract_type || validation.contract_name || "custom",
+    parsed.functions.length,
+    contract_type || parsed.name || "custom",
     hasErrors,
   );
 
@@ -2483,32 +2851,53 @@ async function dryRunHandler(req: Request): Promise<Response> {
       issues: validation.issues,
     },
     contract_info: {
-      name: validation.contract_name,
-      pragma: validation.pragma,
-      license: validation.license,
-      line_count: validation.line_count,
-      functions: validation.functions,
-      events: validation.events,
-      modifiers: validation.modifiers,
-      function_count: validation.functions.length,
-      event_count: validation.events.length,
-      modifier_count: validation.modifiers.length,
+      name: parsed.name,
+      pragma: parsed.pragma,
+      license: parsed.license,
+      line_count: parsed.line_count,
+      functions: parsed.functions.map(f => f.name),
+      events: parsed.events.map(e => e.name),
+      modifiers: parsed.modifiers.map(m => m.name),
+      function_count: parsed.functions.length,
+      event_count: parsed.events.length,
+      modifier_count: parsed.modifiers.length,
+      // Phase 3.1: capability detection
+      capabilities: {
+        has_constructor: parsed.has_constructor,
+        has_pause: parsed.has_pause,
+        has_ownership: parsed.has_ownership,
+        has_burn: parsed.has_burn,
+        has_mint: parsed.has_mint,
+      },
     },
     digital_twin_v3_matrix: {
-      version: "v3",
-      contract_type: contract_type || validation.contract_name || "custom",
+      version: "v3.1",
+      contract_type: contract_type || parsed.name || "custom",
       mapping: twinMatrix.mapping,
       coverage: twinMatrix.coverage,
+      // Phase 3.1: bipolar mapping metadata
+      parser: "deep-parse-v2",
+      total_mappings: twinMatrix.mapping.length,
+      mapped_count: twinMatrix.mapping.filter(m => m.status === "mapped").length,
+      legal_only_count: twinMatrix.mapping.filter(m => m.status === "legal-only").length,
+      unmapped_count: twinMatrix.mapping.filter(m => m.status === "unmapped").length,
     },
+    // Phase 3.2: Automated Breach Simulation
+    breach_simulation: breachSimulation,
     urgency_signal: urgencySignal,
     preview: {
-      deployable: !hasErrors,
+      deployable: !hasErrors && breachSimulation.overall_risk !== "critical",
       warnings: validation.issues.filter(i => i.severity === "warning").length,
+      risk_level: breachSimulation.overall_risk,
       recommendation: hasErrors
         ? "Fix syntax errors before deployment."
-        : validation.issues.filter(i => i.severity === "warning").length > 0
-          ? "Contract is deployable but has warnings. Review before production."
-          : "Contract passed all checks. Ready for deployment.",
+        : breachSimulation.overall_risk === "critical"
+          ? "CRITICAL: Breach simulation detected critical vulnerabilities. Fix before deployment."
+          : breachSimulation.overall_risk === "high"
+            ? "HIGH: Breach simulation found high-risk vulnerabilities. Review before production."
+            : validation.issues.filter(i => i.severity === "warning").length > 0
+              ? "Contract is deployable but has warnings. Review before production."
+              : "Contract passed all checks including breach simulation. Ready for deployment.",
     },
   }, hasErrors ? 422 : 200);
 }
