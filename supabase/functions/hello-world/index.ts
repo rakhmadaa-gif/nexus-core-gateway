@@ -344,6 +344,38 @@ const NODE_MANIFEST = {
     uptime_sla: "99.9%",
     concurrency_handling: "Queue-Jump Priority Pass Ready",
   },
+  endpoints: {
+    "POST /": {
+      description: "Core payload engine (paid, requires x-client-id)",
+      billing: "per-service CRED charge",
+      auth: "x-client-id header required",
+    },
+    "GET /manifest.json": {
+      description: "A2A agent discovery manifest (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /samples": {
+      description: "Multi-tier sample manifests — all 3 tiers (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /samples/:tier": {
+      description: "Individual tier sample — tier1 ($300), tier2 ($500), tier3 ($800) (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /metrics": {
+      description: "Live telemetry — uptime, latency p50/p95, concurrency slots, engine version (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "POST /gateway/dry-run": {
+      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3 matrix + Algorithmic Nudging urgency signal (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+  },
   pricing_model: {
     currency_unit: "CREDIT",
     conversion_rate: "1 CREDIT = 0.01 USD",
@@ -371,6 +403,16 @@ const NODE_MANIFEST = {
         expiry_hours: 24,
       },
     },
+  },
+  registry: {
+    registered_at: "2026-08-31T23:45:00Z",
+    phase_1_status: "COMPLETE — all 5 tasks deployed",
+    version_locked: "v3.4.0-frontier (Phase 1 final)",
+    gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+    treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+    chain: "polygon-mainnet",
+    usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    source_repo: "https://github.com/rakhmadaa-gif/nexus-core-gateway",
   },
 };
 
