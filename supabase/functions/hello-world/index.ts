@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v3.1.0-frontier — Pull Payment + Multi-Tier Sample Manifests (/samples)
+// v3.2.0-frontier — Pull Payment + Sample Manifests + Live Telemetry (/metrics)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -27,13 +27,121 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { Wallet, Contract, JsonRpcProvider } from "npm:ethers@6";
 
 // ----------------------------------------------------------------------------
+// 0. TELEMETRY MODULE (Phase 1.2 — Live Telemetry /metrics)
+// ----------------------------------------------------------------------------
+// Tracks per-instance uptime, request count, latency history (rolling 100),
+// and active concurrent requests. Serverless-safe: each cold start resets
+// counters, but warm invocations accumulate within the same instance.
+// ----------------------------------------------------------------------------
+
+const TELEMETRY = {
+  instance_started_at: Date.now(),
+  total_requests: 0,
+  active_concurrent: 0,
+  max_concurrent_slots: 3,
+  latency_history: [] as number[],
+  latency_history_max: 100,
+  error_count: 0,
+  last_request_at: null as number | null,
+  compiler_version: "^0.8.20",
+  engine_version: "v3.2.0-frontier",
+  services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
+};
+
+function recordLatency(ms: number): void {
+  TELEMETRY.latency_history.push(Math.round(ms));
+  if (TELEMETRY.latency_history.length > TELEMETRY.latency_history_max) {
+    TELEMETRY.latency_history.shift();
+  }
+}
+
+function getLatencyStats(): { avg_ms: number; min_ms: number; max_ms: number; p50_ms: number; p95_ms: number; samples: number } {
+  const h = TELEMETRY.latency_history;
+  if (h.length === 0) {
+    return { avg_ms: 0, min_ms: 0, max_ms: 0, p50_ms: 0, p95_ms: 0, samples: 0 };
+  }
+  const sorted = [...h].sort((a, b) => a - b);
+  const sum = h.reduce((a, b) => a + b, 0);
+  const p50Idx = Math.floor(sorted.length * 0.5);
+  const p95Idx = Math.floor(sorted.length * 0.95);
+  return {
+    avg_ms: Math.round(sum / h.length),
+    min_ms: sorted[0],
+    max_ms: sorted[sorted.length - 1],
+    p50_ms: sorted[p50Idx],
+    p95_ms: sorted[Math.min(p95Idx, sorted.length - 1)],
+    samples: h.length,
+  };
+}
+
+function getUptimeSeconds(): number {
+  return Math.floor((Date.now() - TELEMETRY.instance_started_at) / 1000);
+}
+
+function buildMetricsPayload(): Record<string, unknown> {
+  const latency = getLatencyStats();
+  const uptime = getUptimeSeconds();
+  return {
+    node_id: NODE_IDENTITY.node_id,
+    node_name: NODE_IDENTITY.node_name,
+    version: TELEMETRY.engine_version,
+    runtime: NODE_IDENTITY.runtime,
+    timestamp: new Date().toISOString(),
+    status: "healthy",
+    uptime: {
+      seconds: uptime,
+      started_at: new Date(TELEMETRY.instance_started_at).toISOString(),
+      human_readable: uptime > 60 ? `${Math.floor(uptime / 60)}m ${uptime % 60}s` : `${uptime}s`,
+    },
+    latency: {
+      avg_ms: latency.avg_ms,
+      min_ms: latency.min_ms,
+      max_ms: latency.max_ms,
+      p50_ms: latency.p50_ms,
+      p95_ms: latency.p95_ms,
+      samples: latency.samples,
+      sla_target_ms: 250,
+    },
+    concurrency: {
+      active_slots: TELEMETRY.active_concurrent,
+      max_slots: TELEMETRY.max_concurrent_slots,
+      available_slots: TELEMETRY.max_concurrent_slots - TELEMETRY.active_concurrent,
+      utilization: `${TELEMETRY.active_concurrent}/${TELEMETRY.max_concurrent_slots}`,
+    },
+    engine: {
+      compiler_version: TELEMETRY.compiler_version,
+      engine_version: TELEMETRY.engine_version,
+      services_available: TELEMETRY.services_available,
+      total_services: TELEMETRY.services_available.length,
+    },
+    requests: {
+      total: TELEMETRY.total_requests,
+      errors: TELEMETRY.error_count,
+      error_rate: TELEMETRY.total_requests > 0
+        ? `${((TELEMETRY.error_count / TELEMETRY.total_requests) * 100).toFixed(1)}%`
+        : "0%",
+      last_request_at: TELEMETRY.last_request_at
+        ? new Date(TELEMETRY.last_request_at).toISOString()
+        : null,
+    },
+    endpoints: {
+      "POST /": "Core payload engine (paid, requires x-client-id)",
+      "GET /manifest.json": "A2A agent discovery manifest (free)",
+      "GET /samples": "Multi-tier sample manifests (free)",
+      "GET /samples/:tier": "Individual tier sample (free)",
+      "GET /metrics": "Live telemetry endpoint (free)",
+    },
+  };
+}
+
+// ----------------------------------------------------------------------------
 // 1. MANIFEST & IDENTITY MODULE (A2A MAGNET & DISCOVERY)
 // ----------------------------------------------------------------------------
 
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "3.1.0-frontier",
+  version: "3.2.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -1706,6 +1814,13 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse(SAMPLE_MANIFESTS, 200);
   }
 
+  // 2c. Live Telemetry Endpoint (Phase 1.2 — GET /metrics)
+  // Free health-check — no billing, no x-client-id required.
+  // Broadcasts: uptime, latency stats, concurrency slots (1/3), engine version.
+  if (url.pathname.endsWith("/metrics")) {
+    return jsonResponse(buildMetricsPayload(), 200);
+  }
+
   // 2. Manifest Discovery Endpoint
   if (req.method === "GET" || url.pathname.endsWith("/manifest.json")) {
     return jsonResponse(NODE_MANIFEST, 200);
@@ -1805,4 +1920,41 @@ async function handler(req: Request): Promise<Response> {
 
 // -- Entry Point --------------------------------------------------------------
 
-Deno.serve(handler);
+// -- Telemetry Wrapper --------------------------------------------------------
+// Wraps the handler to track: request count, latency, concurrency, errors.
+// Telemetry data is exposed via GET /metrics (Phase 1.2).
+
+async function telemetryWrapper(req: Request): Promise<Response> {
+  const startTime = Date.now();
+  TELEMETRY.total_requests++;
+  TELEMETRY.last_request_at = startTime;
+  TELEMETRY.active_concurrent++;
+
+  try {
+    const response = await handler(req);
+    const elapsed = Date.now() - startTime;
+    recordLatency(elapsed);
+
+    if (response.status >= 400) {
+      TELEMETRY.error_count++;
+    }
+
+    return response;
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    recordLatency(elapsed);
+    TELEMETRY.error_count++;
+
+    return jsonResponse({
+      error: "Internal server error",
+      detail: err instanceof Error ? err.message : String(err),
+      timestamp: new Date().toISOString(),
+    }, 500);
+  } finally {
+    TELEMETRY.active_concurrent--;
+  }
+}
+
+// -- Entry Point --------------------------------------------------------------
+
+Deno.serve(telemetryWrapper);
