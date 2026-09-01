@@ -1,0 +1,365 @@
+openapi: 3.0.3
+info:
+  title: Nexus Gateway — M2M Legal-Code Services
+  description: |
+    Autonomous legal-code engine that generates verified structured data, audited Solidity
+    smart contracts, and bilingual (English-Indonesian) legal contracts — mapped directly to
+    code functions via Digital Twin v3.1 technology.
+
+    ## Authentication
+    All paid endpoints require `x-client-id` header. Free endpoints (manifest, samples, metrics,
+    dry-run) require no authentication.
+
+    ## Pricing
+    1 CREDIT = $0.01 USD. Top-up via USDC pull payment on Polygon PoS.
+
+    ## Free Endpoints
+    - GET /manifest.json — A2A agent discovery
+    - GET /samples — 3-tier sample manifests
+    - GET /metrics — Live telemetry
+    - POST /gateway/dry-run — Free Solidity validation + breach simulation
+  version: 4.0.0-frontier
+  contact:
+    name: Nexus.Legal.ContractDrafter
+    url: https://github.com/rakhmadaa-gif/nexus-core-gateway
+  license:
+    name: MIT
+    url: https://github.com/rakhmadaa-gif/nexus-core-gateway/blob/main/LICENSE
+
+servers:
+  - url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world
+    description: Production (Supabase Edge Function)
+
+tags:
+  - name: Discovery
+    description: A2A agent discovery and service manifest
+  - name: Samples
+    description: Free sample manifest showcases
+  - name: Telemetry
+    description: Live system metrics and monitoring
+  - name: Dry-Run
+    description: Free Solidity validation and breach simulation
+  - name: Services
+    description: Paid M2M service endpoints
+  - name: Payment
+    description: USDC pull payment top-up
+
+paths:
+  /manifest.json:
+    get:
+      tags: [Discovery]
+      summary: Get service manifest (A2A discovery)
+      description: Returns the full service manifest for agent-to-agent discovery. No authentication required.
+      responses:
+        '200':
+          description: Service manifest
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_id:
+                    type: string
+                    example: nexus.legal.contractdrafter
+                  version:
+                    type: string
+                    example: 4.0.0-frontier
+                  pricing_model:
+                    type: object
+                    properties:
+                      currency_unit:
+                        type: string
+                        example: CREDIT
+                      services:
+                        type: object
+                  endpoints:
+                    type: object
+
+  /samples:
+    get:
+      tags: [Samples]
+      summary: Get all sample manifests
+      description: Returns 3-tier sample manifests ($300/$500/$800 showcases) with full artifacts. No authentication required.
+      responses:
+        '200':
+          description: Sample manifests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tiers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tier_id:
+                          type: string
+                          example: tier1
+                        name:
+                          type: string
+                        price_usd:
+                          type: number
+                        artifacts:
+                          type: object
+
+  /samples/{tier}:
+    get:
+      tags: [Samples]
+      summary: Get individual tier sample
+      description: Returns a single tier sample manifest with full artifacts.
+      parameters:
+        - name: tier
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [tier1, tier2, tier3]
+      responses:
+        '200':
+          description: Tier sample manifest
+        '404':
+          description: Tier not found
+
+  /metrics:
+    get:
+      tags: [Telemetry]
+      summary: Get live telemetry
+      description: Returns live system metrics including uptime, latency, concurrency, throughput, and pipeline timing. No authentication required.
+      responses:
+        '200':
+          description: Live metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  uptime:
+                    type: object
+                  latency:
+                    type: object
+                    properties:
+                      p50_ms:
+                        type: number
+                      p95_ms:
+                        type: number
+                  concurrency:
+                    type: object
+                    properties:
+                      max_slots:
+                        type: integer
+                      hard_limit:
+                        type: integer
+                      rejected_count:
+                        type: integer
+                  throughput:
+                    type: object
+                  pipeline:
+                    type: object
+
+  /gateway/dry-run:
+    post:
+      tags: [Dry-Run]
+      summary: Free Solidity validation + breach simulation
+      description: |
+        Validates Solidity source code and runs automated breach simulation.
+        Free endpoint — no authentication required.
+
+        Returns:
+        - Syntax validation (errors, warnings, info)
+        - Contract info with capability detection (pause, ownership, mint, burn)
+        - Digital Twin v3.1 matrix with bipolar mapping (clause → code)
+        - Breach simulation (7 scenarios: BS-001 through BS-007)
+        - Nonce & replay defense check (optional DB query)
+        - Algorithmic nudging urgency signal
+        - Deployable flag (false when critical or replay detected)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_code:
+                  type: string
+                  description: Solidity source code to validate
+                contract_type:
+                  type: string
+                  description: Optional contract type hint
+                clauses:
+                  type: array
+                  description: Optional legal clauses for twin matrix mapping
+                  items:
+                    type: object
+                    properties:
+                      clause_id:
+                        type: string
+                      heading_en:
+                        type: string
+                      heading_id:
+                        type: string
+                check_nonce_db:
+                  type: boolean
+                  description: If true, query pull_payment_authorizations DB for nonce uniqueness
+                  default: false
+                client_address:
+                  type: string
+                  description: Client address for nonce DB check (hex format)
+      responses:
+        '200':
+          description: Validation passed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: validation_passed
+                  latency_ms:
+                    type: number
+                  sla_met:
+                    type: boolean
+                  syntax_validation:
+                    type: object
+                  contract_info:
+                    type: object
+                    properties:
+                      capabilities:
+                        type: object
+                  digital_twin_v3_matrix:
+                    type: object
+                    properties:
+                      version:
+                        type: string
+                        example: v3.1
+                      parser:
+                        type: string
+                        example: deep-parse-v2
+                      mapping:
+                        type: array
+                        items:
+                          type: object
+                  breach_simulation:
+                    type: object
+                    properties:
+                      overall_risk:
+                        type: string
+                        enum: [low, medium, high, critical]
+                      scenarios:
+                        type: array
+                        items:
+                          type: object
+                      emergency_freeze:
+                        type: object
+                      recommendations:
+                        type: array
+                        items:
+                          type: string
+                  nonce_defense:
+                    type: object
+                    properties:
+                      db_checked:
+                        type: boolean
+                      unique_nonces:
+                        type: integer
+                      duplicate_attempts:
+                        type: integer
+                      replay_risk:
+                        type: string
+                  preview:
+                    type: object
+                    properties:
+                      deployable:
+                        type: boolean
+                      risk_level:
+                        type: string
+                      nonce_risk:
+                        type: string
+        '422':
+          description: Validation failed (syntax errors)
+
+  /:
+    post:
+      tags: [Services]
+      summary: Call a service (paid)
+      description: |
+        Main M2M service endpoint. Requires `x-client-id` header.
+
+        Services:
+        - `structured_data` (20 CRED) — Verified JSON schemas
+        - `code_modules` (120 CRED) — Audited Solidity code
+        - `legal_code` (29,900 CRED) — Bilingual legal + code + twin matrix
+        - `pull_payment` (FREE) — USDC top-up → auto-credit CRED
+      parameters:
+        - name: x-client-id
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Unique client/agent identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_type, params]
+              properties:
+                service_type:
+                  type: string
+                  enum: [structured_data, code_modules, legal_code, pull_payment]
+                params:
+                  type: object
+                  description: Service-specific parameters
+      responses:
+        '200':
+          description: Service completed (M2M standard envelope)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  payload_id:
+                    type: string
+                    format: uuid
+                  timestamp:
+                    type: string
+                    format: date-time
+                  service_type:
+                    type: string
+                  data:
+                    type: object
+                  metadata:
+                    type: object
+                    properties:
+                      node_id:
+                        type: string
+                      version:
+                        type: string
+                      latency_ms:
+                        type: number
+                      credits_charged:
+                        type: integer
+        '400':
+          description: Bad request (missing client-id, invalid service)
+        '402':
+          description: Insufficient credits
+        '429':
+          description: Rate limited (concurrency hard limit)
+        '500':
+          description: Internal error
+
+components:
+  securitySchemes:
+    ClientId:
+      type: apiKey
+      in: header
+      name: x-client-id
+      description: Required for all paid service calls. Free endpoints do not require this.

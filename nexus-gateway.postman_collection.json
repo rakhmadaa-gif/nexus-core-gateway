@@ -1,0 +1,214 @@
+{
+  "info": {
+    "name": "Nexus Gateway — M2M Legal-Code Services",
+    "description": "Autonomous legal-code engine for Web3. Generates verified structured data, audited Solidity smart contracts, and bilingual (EN/ID) legal contracts with Digital Twin v3.1 mapping.\n\nBase URL: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world\n\nFree endpoints (no auth): /manifest.json, /samples, /metrics, /gateway/dry-run\nPaid endpoints (x-client-id required): POST /",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
+      "type": "string"
+    },
+    {
+      "key": "client_id",
+      "value": "my-agent-001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Discovery — Manifest",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/manifest.json",
+          "host": ["{{base_url}}"],
+          "path": ["manifest.json"]
+        },
+        "description": "A2A agent discovery. Returns service manifest with 5 services, pricing, endpoints, and blockchain addresses. No auth required."
+      }
+    },
+    {
+      "name": "Discovery — Sample Manifests (All Tiers)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/samples",
+          "host": ["{{base_url}}"],
+          "path": ["samples"]
+        },
+        "description": "Returns 3-tier sample manifests ($300/$500/$800 showcases) with full artifacts including legal_markdown, digital_twin_v3_matrix, and raw_code_sol. No auth required."
+      }
+    },
+    {
+      "name": "Discovery — Sample Tier 1 ($300)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/samples/tier1",
+          "host": ["{{base_url}}"],
+          "path": ["samples", "tier1"]
+        },
+        "description": "Basic ERC-20 Token Sale Agreement sample. No auth required."
+      }
+    },
+    {
+      "name": "Discovery — Sample Tier 2 ($500)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/samples/tier2",
+          "host": ["{{base_url}}"],
+          "path": ["samples", "tier2"]
+        },
+        "description": "NFT Minting & Royalty Agreement sample. No auth required."
+      }
+    },
+    {
+      "name": "Discovery — Sample Tier 3 ($800)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/samples/tier3",
+          "host": ["{{base_url}}"],
+          "path": ["samples", "tier3"]
+        },
+        "description": "Full Escrow Agreement with Arbiter sample. No auth required."
+      }
+    },
+    {
+      "name": "Telemetry — Live Metrics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/metrics",
+          "host": ["{{base_url}}"],
+          "path": ["metrics"]
+        },
+        "description": "Live system telemetry: uptime, latency (p50/p95), concurrency (soft=3/hard=5), throughput, pipeline stage timing, SLA targets. No auth required."
+      }
+    },
+    {
+      "name": "Dry-Run — Basic Solidity Validation",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source_code\": \"// SPDX-License-Identifier: MIT\\npragma solidity ^0.8.20;\\n\\ncontract Token {\\n  string public name = 'TestToken';\\n  address public owner;\\n  mapping(address => uint256) public balanceOf;\\n  \\n  constructor() { owner = msg.sender; }\\n  \\n  function mint(address to, uint256 amount) public {\\n    balanceOf[to] += amount;\\n  }\\n  \\n  function transfer(address to, uint256 amount) public returns (bool) {\\n    balanceOf[msg.sender] -= amount;\\n    balanceOf[to] += amount;\\n    return true;\\n  }\\n}\"
+}"
+        },
+        "url": {
+          "raw": "{{base_url}}/gateway/dry-run",
+          "host": ["{{base_url}}"],
+          "path": ["gateway", "dry-run"]
+        },
+        "description": "Free Solidity validation with 7 breach scenarios, Digital Twin v3.1 bipolar mapping, and algorithmic nudging. No auth required."
+      }
+    },
+    {
+      "name": "Dry-Run — With Nonce DB Check",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source_code\": \"// SPDX-License-Identifier: MIT\\npragma solidity ^0.8.20;\\n\\ncontract PullPaymentGateway {\\n  address public owner;\\n  mapping(address => uint256) public nonces;\\n  bool public paused;\\n  \\n  constructor() { owner = msg.sender; }\\n  \\n  function pullPayment(address client, uint256 amount) public {\\n    require(!paused);\\n    require(msg.sender == owner);\\n    uint256 nonce = nonces[client]++;\\n  }\\n  \\n  function pause() public {\\n    require(msg.sender == owner);\\n    paused = true;\\n  }\\n}\",\n  \"check_nonce_db\": true,\n  \"client_address\": \"0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/gateway/dry-run",
+          "host": ["{{base_url}}"],
+          "path": ["gateway", "dry-run"]
+        },
+        "description": "Free Solidity validation with nonce & replay defense alignment. Queries pull_payment_authorizations DB for nonce uniqueness. No auth required."
+      }
+    },
+    {
+      "name": "Service — Structured Data (20 CRED)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-client-id", "value": "{{client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_type\": \"structured_data\",\n  \"params\": {\n    \"schema_type\": \"erc20_metadata\",\n    \"name\": \"MyToken\",\n    \"symbol\": \"MTK\",\n    \"decimals\": 18\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Generate verified structured JSON data for Web3/regulatory compliance. 20 CRED = $0.20. Free trial available (20 CRED, 1x, 24hr expiry)."
+      }
+    },
+    {
+      "name": "Service — Code Modules (120 CRED)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-client-id", "value": "{{client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_type\": \"code_modules\",\n  \"params\": {\n    \"contract_type\": \"erc20\",\n    \"name\": \"MyToken\",\n    \"symbol\": \"MTK\",\n    \"decimals\": 18,\n    \"total_supply\": 1000000\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Generate security-checked Solidity smart contract code. 120 CRED = $1.20. Discount trial available (100 CRED off, 1x, 24hr expiry)."
+      }
+    },
+    {
+      "name": "Service — Legal-Code Hybrid (29,900 CRED)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-client-id", "value": "{{client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_type\": \"legal_code\",\n  \"params\": {\n    \"contract_type\": \"token_sale\",\n    \"jurisdiction\": \"ID\",\n    \"language_pair\": \"EN-ID\",\n    \"parties\": {\n      \"issuer\": \"0x...\",\n      \"purchaser\": \"0x...\"\n    },\n    \"token\": {\n      \"name\": \"MyToken\",\n      \"symbol\": \"MTK\",\n      \"decimals\": 18,\n      \"total_supply\": 1000000\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Generate bilingual (EN/ID) legal contract + Solidity code + Digital Twin v3.1 matrix. 29,900 CRED = $299.00."
+      }
+    },
+    {
+      "name": "Payment — Pull Payment Top-Up (FREE)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-client-id", "value": "{{client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_type\": \"pull_payment\",\n  \"params\": {\n    \"client_address\": \"0x...\",\n    \"amount_usdc\": 10,\n    \"deadline\": 1200,\n    \"v\": 27,\n    \"r\": \"0x...\",\n    \"s\": \"0x...\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "USDC pull payment top-up via EIP-712 Permit. Signs permit → Gateway.sol pulls USDC → auto-credits CRED. FREE call (adds credits, no charge). 1 USDC = 100 CRED."
+      }
+    }
+  ]
+}
