@@ -200,7 +200,8 @@ function buildMetricsPayload(): Record<string, unknown> {
       "GET /samples": "Multi-tier sample manifests (free)",
       "GET /samples/:tier": "Individual tier sample (free)",
       "GET /metrics": "Live telemetry endpoint (free)",
-      "POST /gateway/dry-run": "Interactive Solidity dry-run with Digital Twin v3 matrix (free)",
+      "POST /gateway/dry-run": "Interactive Solidity dry-run with Digital Twin v3.1 matrix + breach simulation (free)",
+      "GET /landing": "Landing page — human-friendly overview (free, HTML)",
     },
     // Phase 2.2: Throughput tracking
     throughput: getThroughputStats(),
@@ -458,7 +459,12 @@ const NODE_MANIFEST = {
       auth: "none",
     },
     "POST /gateway/dry-run": {
-      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3 matrix + Algorithmic Nudging urgency signal (free)",
+      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation + nonce defense + Algorithmic Nudging urgency signal (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /landing": {
+      description: "Landing page — human-friendly HTML overview with SEO meta tags (free)",
       billing: "FREE",
       auth: "none",
     },
