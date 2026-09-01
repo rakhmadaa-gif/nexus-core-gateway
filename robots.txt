@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+
+# M2M Discovery — machine-readable manifests
+# A2A Agent Manifest
+# URL: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json
+
+# OpenAPI 3.0.3 Spec
+# URL: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/openapi.yaml
+
+# AI Plugin Manifest (OpenAI compatible)
+# URL: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/ai-plugin.json
+
+# A2A Agent Discovery (RFC 8615 .well-known)
+# URL: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/agent.json
+
+# Security Policy (RFC 9116)
+# URL: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/security.txt
+
+Sitemap: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing?sitemap=1

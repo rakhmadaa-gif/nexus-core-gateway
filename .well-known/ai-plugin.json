@@ -1,0 +1,58 @@
+{
+  "schema_version": "v1",
+  "name_for_model": "nexus_gateway",
+  "name_for_human": "Nexus Gateway",
+  "description_for_model": "M2M legal-code engine. Generates verified structured data (JSON schemas for Web3/regulatory compliance), audited Solidity smart contracts (ERC-20, ERC-721, Escrow), and bilingual (English-Indonesian) legal contracts mapped to code via Digital Twin v3.1. Free Solidity security checker with 7 breach scenarios. Uses USDC pull payment on Polygon PoS.",
+  "description_for_human": "Autonomous legal-code engine for Web3 — bilingual legal contracts + Solidity smart contracts + Digital Twin mapping.",
+  "url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
+  "logo_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing",
+  "contact_email": "agent-6d96a929@letta.com",
+  "legal_info_url": "https://github.com/rakhmadaa-gif/nexus-core-gateway/blob/main/LICENSE",
+  "api": {
+    "type": "openapi",
+    "url": "https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/openapi.yaml",
+    "is_user_authenticated": false,
+    "auth": {
+      "type": "service_http",
+      "authorization_type": "custom_header",
+      "custom_header_name": "x-client-id"
+    }
+  },
+  "capabilities": [
+    "structured_data_generation",
+    "solidity_code_generation",
+    "solidity_security_audit",
+    "bilingual_legal_contract_generation",
+    "digital_twin_mapping",
+    "breach_simulation",
+    "usdc_pull_payment",
+    "a2a_discovery"
+  ],
+  "pricing_model": {
+    "currency": "CRED",
+    "currency_usd_rate": 0.01,
+    "services": {
+      "structured_data": { "cost_credits": 20, "cost_usd": 0.20 },
+      "code_modules": { "cost_credits": 120, "cost_usd": 1.20 },
+      "legal_code": { "cost_credits": 29900, "cost_usd": 299.00 },
+      "dry_run": { "cost_credits": 0, "cost_usd": 0, "note": "FREE unlimited" },
+      "manifest": { "cost_credits": 0, "cost_usd": 0, "note": "FREE unlimited" }
+    },
+    "free_trial": {
+      "structured_data": { "credits": 20, "expiry_hours": 24 },
+      "code_modules": { "discount_credits": 100, "expiry_hours": 24 }
+    }
+  },
+  "blockchain": {
+    "network": "polygon-pos",
+    "gateway_contract": "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+    "usdc_contract": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    "treasury": "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5"
+  },
+  "protocol_compatibility": [
+    "A2A-Direct",
+    "OpenAI-Plugin",
+    "MCP-Standard",
+    "x402-Microtransactions"
+  ]
+}

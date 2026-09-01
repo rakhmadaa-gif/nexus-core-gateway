@@ -1,0 +1,6 @@
+# Nexus Gateway Security Policy
+# RFC 9116 compliant
+
+Contact: https://github.com/rakhmadaa-gif/nexus-core-gateway/issues
+Preferred-Languages: en, id
+Canonical: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/security.txt

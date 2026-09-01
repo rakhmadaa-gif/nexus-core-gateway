@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "node_id": "nexus.legal.contractdrafter",
+  "node_name": "Nexus.Legal.ContractDrafter",
+  "node_type": "M2M-service-provider",
+  "version": "4.0.0-frontier",
+  "description": "M2M Autonomous Legal, Smart Contract & Web3 Schema Verification Gateway",
+  "runtime": "supabase-edge-deno",
+  "base_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
+  "discovery_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json",
+  "openapi_url": "https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/openapi.yaml",
+  "landing_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing",
+  "github_repo": "https://github.com/rakhmadaa-gif/nexus-core-gateway",
+  "protocol_compatibility": [
+    "A2A-Direct",
+    "OpenAI-Plugin",
+    "MCP-Standard",
+    "x402-Microtransactions"
+  ],
+  "semantic_tags": [
+    "legal.hybrid-contract-pro",
+    "web3.solidity-audited-modules",
+    "data.verified-structured-schema",
+    "compliance.mica-ready"
+  ],
+  "capabilities": [
+    {
+      "service_type": "structured_data",
+      "description": "Verified JSON schemas for Web3, regulatory compliance, and cross-platform orchestration",
+      "cost_credits": 20,
+      "cost_usd": 0.20,
+      "free_trial": true
+    },
+    {
+      "service_type": "code_modules",
+      "description": "Security-checked Solidity smart contracts (ERC-20, ERC-721, Escrow logic)",
+      "cost_credits": 120,
+      "cost_usd": 1.20,
+      "free_trial": true
+    },
+    {
+      "service_type": "legal_code",
+      "description": "Bilingual (EN/ID) legal contracts mapped directly to Solidity code functions via Digital Twin v3.1",
+      "cost_credits": 29900,
+      "cost_usd": 299.00,
+      "free_trial": false
+    },
+    {
+      "service_type": "dry_run",
+      "description": "Free Solidity security validation — 7 breach scenarios + nonce/replay defense + Digital Twin v3.1 matrix",
+      "cost_credits": 0,
+      "cost_usd": 0,
+      "free_trial": "unlimited"
+    },
+    {
+      "service_type": "manifest",
+      "description": "A2A agent discovery manifest — services, pricing, endpoints, capabilities",
+      "cost_credits": 0,
+      "cost_usd": 0,
+      "free_trial": "unlimited"
+    }
+  ],
+  "performance": {
+    "avg_latency_ms": 250,
+    "uptime_sla": "99.9%",
+    "max_concurrent_tasks": 3,
+    "concurrency_soft_limit": 3,
+    "concurrency_hard_limit": 5
+  },
+  "pricing_model": {
+    "currency_unit": "CREDIT",
+    "currency_usd_rate": 0.01,
+    "payment_rail": "USDC on Polygon PoS (EIP-712 pull payment)",
+    "blockchain": {
+      "network": "polygon-pos",
+      "gateway_contract": "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+      "usdc_contract": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "treasury": "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5"
+    }
+  },
+  "sdk": {
+    "python": {
+      "package_name": "nexus-gateway-sdk",
+      "pypi_url": "https://pypi.org/project/nexus-gateway-sdk/",
+      "frameworks": ["crewai", "langchain"]
+    },
+    "typescript": {
+      "package_name": "nexus-gateway-sdk",
+      "npm_url": "https://www.npmjs.com/package/nexus-gateway-sdk",
+      "frameworks": ["langchain-js", "vercel-ai-sdk"]
+    }
+  }
+}

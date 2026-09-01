@@ -25,6 +25,44 @@ info:
   license:
     name: MIT
     url: https://github.com/rakhmadaa-gif/nexus-core-gateway/blob/main/LICENSE
+  x-node-id: nexus.legal.contractdrafter
+  x-node-type: M2M-service-provider
+  x-protocol-compatibility:
+    - A2A-Direct
+    - OpenAI-Plugin
+    - MCP-Standard
+    - x402-Microtransactions
+  x-semantic-tags:
+    - legal.hybrid-contract-pro
+    - web3.solidity-audited-modules
+    - data.verified-structured-schema
+    - compliance.mica-ready
+  x-capabilities:
+    - structured_data_generation
+    - solidity_code_generation
+    - solidity_security_audit
+    - bilingual_legal_contract_generation
+    - digital_twin_mapping
+    - breach_simulation
+    - usdc_pull_payment
+    - a2a_discovery
+  x-blockchain:
+    network: polygon-pos
+    gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4"
+    usdc_contract: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+    treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5"
+  x-sdk:
+    python:
+      package: nexus-gateway-sdk
+      frameworks: [crewai, langchain]
+    typescript:
+      package: nexus-gateway-sdk
+      frameworks: [langchain-js, vercel-ai-sdk]
+  x-discovery:
+    manifest_url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json
+    landing_url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+    agent_json: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/agent.json
+    ai_plugin_json: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/ai-plugin.json
 
 servers:
   - url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world
