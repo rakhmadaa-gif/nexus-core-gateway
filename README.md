@@ -6,6 +6,10 @@
 [![Version](https://img.shields.io/badge/version-v4.0.0--frontier-blue)](#)
 [![Network](https://img.shields.io/badge/network-Polygon%20PoS-8247E5)](https://polygonscan.com/address/0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4)
 [![Latency](https://img.shields.io/badge/latency-~3ms-orange)](#)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue)](./sdk/python/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue)](./sdk/typescript/)
+[![CrewAI](https://img.shields.io/badge/CrewAI-compatible-orange)](./sdk/python/)
+[![LangChain](https://img.shields.io/badge/LangChain-compatible-green)](./sdk/python/)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 
 ---
@@ -90,6 +94,140 @@ curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world \
     }
   }'
 ```
+
+---
+
+## SDK — Integrate with CrewAI & LangChain
+
+Nexus Gateway ships with **Python** and **TypeScript** SDKs that wrap every service as a native tool for popular agent frameworks. No more manual HTTP calls — just import and use.
+
+### Python SDK
+
+#### Install
+
+```bash
+pip install -e ./sdk/python          # from repo
+# or: pip install nexus-gateway-sdk  # from PyPI (when published)
+
+# Optional framework dependencies:
+pip install "nexus-gateway-sdk[crewai]"     # CrewAI tools
+pip install "nexus-gateway-sdk[langchain]"  # LangChain tools
+pip install "nexus-gateway-sdk[all]"        # Both
+```
+
+#### CrewAI — Use as Custom Tools
+
+```python
+from crewai import Agent, Task, Crew
+from nexus_gateway import (
+    NexusStructuredDataTool,
+    NexusCodeModulesTool,
+    NexusLegalCodeTool,
+    NexusDryRunTool,
+    NexusManifestTool,
+)
+
+# Create tools (paid tools need client_id, free tools don't)
+structured_data = NexusStructuredDataTool(client_id="my-agent")
+code_modules    = NexusCodeModulesTool(client_id="my-agent")
+legal_code      = NexusLegalCodeTool(client_id="my-agent")
+dry_run         = NexusDryRunTool()        # FREE — no auth
+manifest        = NexusManifestTool()      # FREE — no auth
+
+# Attach to any CrewAI agent
+auditor = Agent(
+    role="Smart Contract Security Auditor",
+    goal="Audit Solidity contracts using the free dry-run tool",
+    backstory="Expert in smart contract security and breach simulation",
+    tools=[dry_run, manifest],
+)
+
+generator = Agent(
+    role="Legal-Code Generator",
+    goal="Generate bilingual legal contracts with Solidity code",
+    backstory="Legal-tech specialist fluent in EN/ID contract law",
+    tools=[structured_data, code_modules, legal_code, dry_run],
+)
+
+# Run a crew
+crew = Crew(agents=[auditor, generator], tasks=[...])
+result = crew.kickoff()
+```
+
+#### LangChain — Use as Agent Tools
+
+```python
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_openai import ChatOpenAI
+from nexus_gateway import create_langchain_tools
+
+# Create all 5 Nexus tools at once
+tools = create_langchain_tools(client_id="my-agent")
+
+# Use with any LangChain agent
+llm = ChatOpenAI(model="gpt-4")
+agent = create_react_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({
+    "input": "Audit this contract: pragma solidity ^0.8.20; contract Token { }"
+})
+```
+
+#### Direct Client (No Framework)
+
+```python
+from nexus_gateway import NexusClient
+
+client = NexusClient(client_id="my-agent")
+
+# Free endpoints
+manifest = client.get_manifest()
+audit   = client.dry_run(source_code="pragma solidity ^0.8.20; contract Token { }")
+
+# Paid services (free trial available)
+result  = client.structured_data(schema_type="erc20_metadata", name="MyToken", symbol="MTK", decimals=18)
+```
+
+### TypeScript SDK
+
+#### Install
+
+```bash
+cd sdk/typescript && npm install
+# or: npm install nexus-gateway-sdk  # from npm (when published)
+```
+
+#### LangChain.js & Vercel AI SDK
+
+```typescript
+import { NexusClient, createNexusTools, createNexusVercelTools } from "nexus-gateway-sdk";
+
+// Direct client
+const client = new NexusClient({ clientId: "my-agent" });
+const manifest = await client.getManifest();
+const audit = await client.dryRun({ source_code: "pragma solidity ^0.8.20; contract Token { }" });
+
+// LangChain.js tools (5 tools, wrap with DynamicStructuredTool)
+const tools = createNexusTools({ clientId: "my-agent" });
+
+// Vercel AI SDK (ready for streamText / generateText)
+const vercelTools = createNexusVercelTools({ clientId: "my-agent" });
+```
+
+### Available Tools
+
+| Tool | Service | Cost | Frameworks |
+|---|---|---|---|
+| `NexusStructuredDataTool` | structured_data | 20 CRED ($0.20) | CrewAI, LangChain, LangChain.js |
+| `NexusCodeModulesTool` | code_modules | 120 CRED ($1.20) | CrewAI, LangChain, LangChain.js |
+| `NexusLegalCodeTool` | legal_code | 29,900 CRED ($299.00) | CrewAI, LangChain, LangChain.js |
+| `NexusDryRunTool` | dry-run | **FREE** | CrewAI, LangChain, LangChain.js |
+| `NexusManifestTool` | manifest | **FREE** | CrewAI, LangChain, LangChain.js |
+
+> **Free trial:** `structured_data` gets 20 CRED free (1x, 24hr). `code_modules` gets 100 CRED discount (1x, 24hr). `dry_run` and `manifest` are always free.
+
+📖 **Full SDK docs:** [`sdk/README.md`](./sdk/README.md)
 
 ---
 
@@ -201,8 +339,10 @@ Client Agent ──POST──→ Supabase Edge Function (Deno/TypeScript)
 ## Links
 
 - **Live API:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world`
+- **Landing Page:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing`
 - **GitHub:** `https://github.com/rakhmadaa-gif/nexus-core-gateway`
 - **PolygonScan:** `https://polygonscan.com/address/0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4`
+- **SDK (Python & TypeScript):** [`./sdk/`](./sdk/README.md)
 - **API Docs (Pull Payment):** [`nexus-pull-payment-api-v3.md`](./nexus-pull-payment-api-v3.md)
 - **OpenAPI Spec:** [`openapi.yaml`](./openapi.yaml)
 - **Postman Collection:** [`nexus-gateway.postman_collection.json`](./nexus-gateway.postman_collection.json)
