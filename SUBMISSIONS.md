@@ -8,8 +8,13 @@ This file tracks submissions to various directories and platforms for discoverab
 |---|---|---|
 | Google Search (sitemap ping) | ✅ Submitted | 2026-09-01 |
 | Bing Search (sitemap ping) | ✅ Submitted | 2026-09-01 |
-| IndexNow (Bing/Yandex) | ✅ Submitted | 2026-09-01 |
+| IndexNow (Bing/Yandex) | ✅ 202 Accepted | 2026-09-01 |
 | PublicAPIs.org | ✅ Attempted | 2026-09-01 |
+| GitHub Release v1.0.0 | ✅ Created | 2026-09-01 |
+| Outbound content prepared | ✅ All platforms | 2026-09-01 |
+
+**Release:** https://github.com/rakhmadaa-gif/nexus-core-gateway/releases/tag/v1.0.0
+**Content templates:** `outbound/hackernews-post.md` (copy-paste ready for all platforms)
 
 ## ⚠️ Manual Submission Required
 
