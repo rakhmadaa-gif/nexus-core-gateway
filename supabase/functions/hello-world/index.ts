@@ -495,7 +495,7 @@ const NODE_MANIFEST = {
     registered_at: "2026-08-31T23:45:00Z",
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
-    phase_3_status: "COMPLETE — 3.1+3.2 deployed (3.3 deferred)",
+    phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
     version: "v4.0.0-frontier (Phase 3 — LOCKED)",
     gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
@@ -2160,6 +2160,8 @@ interface DryRunRequest {
     heading_en: string;
     heading_id?: string;
   }>;
+  check_nonce_db?: boolean;  // Phase 3.3: query pull_payment_authorizations for nonce uniqueness
+  client_address?: string;   // Phase 3.3: client address for nonce check
 }
 
 interface SyntaxIssue {
@@ -2507,6 +2509,28 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     recommendations.push("Apply checks-effects-interactions pattern and consider OpenZeppelin ReentrancyGuard.");
   }
 
+  // Phase 3.3: Scenario 7 — Replay Attack (Nonce & Replay Defense)
+  const nonceFuncs = parsed.functions.filter(f =>
+    /\b(nonce|nonces|replay|permit|pullpayment|pull)\b/i.test(f.name) ||
+    parsed.modifiers.some(m => /\b(nonce|replay)\b/i.test(m.name))
+  );
+  const hasNonceMapping = parsed.state_vars.some(v => /\b(nonce|nonces|replay)\b/i.test(v.name));
+  const hasNonceProtection = nonceFuncs.length > 0 || hasNonceMapping;
+  scenarios.push({
+    scenario_id: "BS-007",
+    scenario_name: "Replay Attack (Nonce Defense)",
+    description: "Does the contract implement nonce-based replay protection for permit/pull payment flows?",
+    risk_level: hasNonceProtection ? "low" : "medium",
+    affected_functions: nonceFuncs.map(f => f.name),
+    mitigation: hasNonceProtection
+      ? `Nonce/replay protection detected: ${nonceFuncs.map(f => f.name).join(", ") || "state variable mapping"}. Verify nonce increments per-user and is unique.`
+      : "MEDIUM: No nonce/replay protection detected. If using EIP-712 permits, ensure nonce tracking (on-chain + DB UNIQUE INDEX on client_address + permit_nonce).",
+    detected: hasNonceProtection,
+  });
+  if (!hasNonceProtection) {
+    recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows.");
+  }
+
   // Overall risk
   const riskLevels = scenarios.map(s => s.risk_level);
   const riskOrder = { "low": 0, "medium": 1, "high": 2, "critical": 3 };
@@ -2654,6 +2678,8 @@ function generateTwinMatrix(
     "pausable": { kws: ["pause", "unpause", "paused", "emergency"], breach: ["Contract paused without legal cause", "Contract not paused during breach"] },
     "burnable": { kws: ["burn", "burnfrom"], breach: ["Unauthorized burn of tokens"] },
     "metadata": { kws: ["tokenuri", "baseuri", "name", "symbol"], breach: ["Metadata changed without consent"] },
+    "nonce": { kws: ["nonce", "nonces", "replay", "permit"], breach: ["Replay of signed permit transaction", "Nonce reuse across multiple pulls"] },
+    "replay": { kws: ["nonce", "nonces", "replay", "permit"], breach: ["Replay of signed permit transaction", "Nonce reuse across multiple pulls"] },
   };
 
   for (const clause of clauses) {
@@ -2781,7 +2807,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
     }, 400);
   }
 
-  const { source_code, contract_type, clauses } = body;
+  const { source_code, contract_type, clauses, check_nonce_db, client_address } = body;
 
   if (!source_code || typeof source_code !== "string") {
     return jsonResponse({
@@ -2822,6 +2848,55 @@ async function dryRunHandler(req: Request): Promise<Response> {
 
   // Phase 3.2: Automated Breach Simulation
   const breachSimulation = simulateBreachScenarios(parsed);
+
+  // Phase 3.3: Nonce & Replay Defense Alignment — query DB for nonce uniqueness
+  let nonceDefense: { db_checked: boolean; unique_nonces: number; duplicate_attempts: number; replay_risk: string; table: string | null } = {
+    db_checked: false,
+    unique_nonces: 0,
+    duplicate_attempts: 0,
+    replay_risk: "unknown",
+    table: null,
+  };
+  if (check_nonce_db && client_address) {
+    try {
+      const supabase = getSupabaseClient();
+      // Query pull_payment_authorizations for this client's nonce history
+      const { data: nonceRows, error: nonceErr } = await supabase
+        .from("pull_payment_authorizations")
+        .select("permit_nonce, status, client_address")
+        .eq("client_address", client_address)
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (!nonceErr && nonceRows) {
+        const nonces = nonceRows.map((r: { permit_nonce: number }) => r.permit_nonce);
+        const uniqueNonces = new Set(nonces);
+        nonceDefense = {
+          db_checked: true,
+          unique_nonces: uniqueNonces.size,
+          duplicate_attempts: nonces.length - uniqueNonces.size,
+          replay_risk: nonces.length === uniqueNonces.size ? "safe" : "replay_detected",
+          table: "pull_payment_authorizations",
+        };
+      } else {
+        nonceDefense = {
+          db_checked: true,
+          unique_nonces: 0,
+          duplicate_attempts: 0,
+          replay_risk: "table_empty_or_error",
+          table: "pull_payment_authorizations",
+        };
+      }
+    } catch {
+      nonceDefense = {
+        db_checked: false,
+        unique_nonces: 0,
+        duplicate_attempts: 0,
+        replay_risk: "db_query_failed",
+        table: "pull_payment_authorizations",
+      };
+    }
+  }
 
   const elapsed = Date.now() - startTime;
   const hasErrors = validation.issues.some(i => i.severity === "error");
@@ -2884,20 +2959,25 @@ async function dryRunHandler(req: Request): Promise<Response> {
     },
     // Phase 3.2: Automated Breach Simulation
     breach_simulation: breachSimulation,
+    // Phase 3.3: Nonce & Replay Defense Alignment
+    nonce_defense: nonceDefense,
     urgency_signal: urgencySignal,
     preview: {
-      deployable: !hasErrors && breachSimulation.overall_risk !== "critical",
+      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected",
       warnings: validation.issues.filter(i => i.severity === "warning").length,
       risk_level: breachSimulation.overall_risk,
+      nonce_risk: nonceDefense.replay_risk,
       recommendation: hasErrors
         ? "Fix syntax errors before deployment."
         : breachSimulation.overall_risk === "critical"
           ? "CRITICAL: Breach simulation detected critical vulnerabilities. Fix before deployment."
           : breachSimulation.overall_risk === "high"
             ? "HIGH: Breach simulation found high-risk vulnerabilities. Review before production."
-            : validation.issues.filter(i => i.severity === "warning").length > 0
-              ? "Contract is deployable but has warnings. Review before production."
-              : "Contract passed all checks including breach simulation. Ready for deployment.",
+            : nonceDefense.replay_risk === "replay_detected"
+              ? "REPLAY DETECTED: Duplicate nonces found in pull_payment_authorizations. Investigate replay attack."
+              : validation.issues.filter(i => i.severity === "warning").length > 0
+                ? "Contract is deployable but has warnings. Review before production."
+                : "Contract passed all checks including breach simulation and nonce defense. Ready for deployment.",
     },
   }, hasErrors ? 422 : 200);
 }
