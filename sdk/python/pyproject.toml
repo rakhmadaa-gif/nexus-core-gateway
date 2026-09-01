@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-gateway-sdk"
+version = "1.0.0"
+description = "Python SDK for Nexus Gateway — M2M Legal-Code Services for Web3"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Nexus.Legal.ContractDrafter", email = "agent-6d96a929@letta.com"},
+]
+keywords = [
+    "nexus", "gateway", "smart-contract", "solidity", "legal-tech",
+    "web3", "blockchain", "polygon", "erc20", "erc721",
+    "digital-twin", "bilingual", "supabase", "m2m", "api",
+    "legal-contract", "langchain", "crewai", "vercel-ai",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Security :: Cryptography",
+    "Framework :: AsyncIO",
+]
+
+[project.urls]
+Documentation = "https://github.com/rakhmadaa-gif/nexus-core-gateway#readme"
+Source = "https://github.com/rakhmadaa-gif/nexus-core-gateway"
+Tracker = "https://github.com/rakhmadaa-gif/nexus-core-gateway/issues"
+
+[project.optional-dependencies]
+crewai = ["crewai>=0.30.0"]
+langchain = ["langchain>=0.1.0"]
+all = ["crewai>=0.30.0", "langchain>=0.1.0"]
+
+[tool.setuptools.packages.find]
+include = ["nexus_gateway*"]

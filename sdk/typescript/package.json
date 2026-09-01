@@ -2,12 +2,21 @@
   "name": "nexus-gateway-sdk",
   "version": "1.0.0",
   "description": "TypeScript SDK for Nexus Gateway — M2M Legal-Code Services for Web3. Native tool wrappers for LangChain.js and Vercel AI SDK.",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./langchain": "./src/langchain.ts",
-    "./client": "./src/client.ts"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./langchain": {
+      "import": "./dist/langchain.js",
+      "types": "./dist/langchain.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
+    }
   },
   "scripts": {
     "build": "tsc",
