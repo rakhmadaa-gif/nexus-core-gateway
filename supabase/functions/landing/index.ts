@@ -105,6 +105,45 @@ a:hover{text-decoration:underline}
 .stat{text-align:center}
 .stat .num{font-size:2em;color:#8247E5;font-weight:700}
 .stat .label{color:#666;font-size:.9em}
+/* Playground */
+.playground{background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:25px;margin-top:20px}
+.playground textarea{width:100%;min-height:180px;background:#111;border:1px solid #333;border-radius:8px;color:#e0e0e0;font-family:'Fira Code',monospace;font-size:.85em;padding:15px;resize:vertical;outline:none}
+.playground textarea:focus{border-color:#8247E5}
+.playground textarea::placeholder{color:#555}
+.btn-audit{display:inline-block;padding:12px 30px;border-radius:8px;font-weight:700;background:#8247E5;color:#fff;border:none;cursor:pointer;font-size:1em;margin-top:15px;transition:background .3s}
+.btn-audit:hover{background:#6d34d1}
+.btn-audit:disabled{background:#555;cursor:not-allowed}
+.btn-example{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.85em;background:#1a1a1a;color:#60a5fa;border:1px solid #60a5fa;cursor:pointer;margin-top:10px;margin-right:8px;transition:background .3s}
+.btn-example:hover{background:#0a2a4a}
+.result-box{margin-top:20px;display:none}
+.result-box.visible{display:block}
+.result-header{display:flex;align-items:center;gap:15px;margin-bottom:15px;flex-wrap:wrap}
+.deployable{padding:5px 15px;border-radius:6px;font-weight:700;font-size:1em}
+.deployable.yes{background:#1a3a1a;color:#4ade80;border:1px solid #4ade80}
+.deployable.no{background:#3a1a1a;color:#f87171;border:1px solid #f87171}
+.latency-badge{color:#666;font-size:.85em}
+.breach-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:15px}
+.breach-result{background:#111;border:1px solid #333;border-radius:8px;padding:15px}
+.breach-result h4{font-size:.9em;margin-bottom:8px;color:#e0e0e0}
+.risk-level{padding:2px 10px;border-radius:4px;font-size:.8em;font-weight:600;display:inline-block;margin-left:8px}
+.risk-low{background:#1a3a1a;color:#4ade80}
+.risk-medium{background:#3a2a1a;color:#fbbf24}
+.risk-high{background:#3a1a1a;color:#f87171}
+.risk-critical{background:#5a1a1a;color:#ff0000}
+.breach-result p{color:#888;font-size:.8em;margin-top:5px}
+.loading{text-align:center;padding:30px;color:#8247E5;font-size:1.1em}
+.loading::after{content:'...';animation:dots 1.5s steps(4,end) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.error-box{background:#3a1a1a;border:1px solid #f87171;border-radius:8px;padding:15px;color:#f87171;margin-top:15px;display:none}
+.error-box.visible{display:block}
+.recommendations{margin-top:15px}
+.recommendations h3{color:#fbbf24;font-size:1em;margin-bottom:10px}
+.recommendations li{color:#888;font-size:.85em;margin-left:20px;margin-bottom:5px}
+.overall-risk{margin-top:10px;padding:12px 20px;border-radius:8px;text-align:center;font-weight:700;font-size:1.1em}
+.overall-risk.low{background:#1a3a1a;color:#4ade80;border:1px solid #4ade80}
+.overall-risk.medium{background:#3a2a1a;color:#fbbf24;border:1px solid #fbbf24}
+.overall-risk.high{background:#3a1a1a;color:#f87171;border:1px solid #f87171}
+.overall-risk.critical{background:#5a1a1a;color:#ff0000;border:1px solid #ff0000}
 </style>
 </head>
 <body>
@@ -153,6 +192,39 @@ curl ${SAMPLES_URL}</code>
   </section>
 
   <section>
+    <h2>Interactive Playground — Try It Now</h2>
+    <p style="color:#999;margin-bottom:15px">Paste any Solidity smart contract below and get a free security audit — 7 breach scenarios, risk assessment, and deployable check. No signup, no auth.</p>
+    <div class="playground">
+      <textarea id="solInput" placeholder="// Paste your Solidity code here...
+pragma solidity ^0.8.20;
+contract MyToken {
+    mapping(address => uint256) public balanceOf;
+    function transfer(address to, uint256 amount) public {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+}"></textarea>
+      <div>
+        <button class="btn-audit" id="auditBtn" onclick="runAudit()">Run Security Audit</button>
+        <button class="btn-example" onclick="loadExample('erc20')">Load ERC-20 Example</button>
+        <button class="btn-example" onclick="loadExample('vulnerable')">Load Vulnerable Contract</button>
+        <button class="btn-example" onclick="loadExample('escrow')">Load Escrow Example</button>
+      </div>
+      <div class="loading" id="loadingBox" style="display:none">Running 7 breach simulations</div>
+      <div class="error-box" id="errorBox"></div>
+      <div class="result-box" id="resultBox">
+        <div class="result-header">
+          <span class="deployable" id="deployableBadge"></span>
+          <span class="latency-badge" id="latencyBadge"></span>
+        </div>
+        <div class="overall-risk" id="overallRisk"></div>
+        <div class="breach-results" id="breachResults"></div>
+        <div class="recommendations" id="recommendations"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>Endpoints</h2>
     <div class="endpoints">
       <div class="endpoint"><span class="method get">GET</span><span class="path">/manifest.json</span><span class="desc"><span class="free">FREE</span> — A2A agent discovery</span></div>
@@ -197,6 +269,123 @@ curl ${SAMPLES_URL}</code>
     <p><a href="https://github.com/rakhmadaa-gif/nexus-core-gateway">GitHub</a> · <a href="https://polygonscan.com/address/0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4">PolygonScan</a> · <a href="${METRICS_URL}">Live Metrics</a></p>
   </footer>
 </div>
+
+<script>
+const DRY_RUN_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run";
+
+const EXAMPLES = {
+  erc20: "pragma solidity ^0.8.20;\n\ncontract SimpleToken {\n    string public name = \"SimpleToken\";\n    string public symbol = \"STK\";\n    uint8 public decimals = 18;\n    uint256 public totalSupply;\n    mapping(address => uint256) public balanceOf;\n    mapping(address => mapping(address => uint256)) public allowance;\n    address public owner;\n    bool public paused;\n\n    event Transfer(address indexed from, address indexed to, uint256 value);\n    event Approval(address indexed owner, address indexed spender, uint256 value);\n\n    modifier onlyOwner() { require(msg.sender == owner, \"Not owner\"); _; }\n    modifier whenNotPaused() { require(!paused, \"Paused\"); _; }\n\n    constructor(uint256 _supply) {\n        owner = msg.sender;\n        totalSupply = _supply * 10 ** 18;\n        balanceOf[msg.sender] = totalSupply;\n    }\n\n    function transfer(address to, uint256 amount) public whenNotPaused returns (bool) {\n        require(balanceOf[msg.sender] >= amount, \"Insufficient\");\n        balanceOf[msg.sender] -= amount;\n        balanceOf[to] += amount;\n        emit Transfer(msg.sender, to, amount);\n        return true;\n    }\n\n    function mint(address to, uint256 amount) public onlyOwner {\n        totalSupply += amount;\n        balanceOf[to] += amount;\n    }\n\n    function pause() public onlyOwner { paused = true; }\n    function unpause() public onlyOwner { paused = false; }\n}",
+  vulnerable: "pragma solidity ^0.8.20;\n\ncontract VulnerableVault {\n    mapping(address => uint256) public balances;\n    address public owner;\n\n    constructor() { owner = msg.sender; }\n\n    function deposit() public payable {\n        balances[msg.sender] += msg.value;\n    }\n\n    function withdraw(uint256 amount) public {\n        require(balances[msg.sender] >= amount);\n        (bool sent, ) = msg.sender.call{value: amount}(\"\");\n        require(sent);\n        balances[msg.sender] -= amount;\n    }\n\n    function drainAll() public {\n        payable(msg.sender).transfer(address(this).balance);\n    }\n\n    function renounceOwnership() public {\n        owner = address(0);\n    }\n}",
+  escrow: "pragma solidity ^0.8.20;\n\ncontract Escrow {\n    address public buyer;\n    address public seller;\n    address public arbiter;\n    uint256 public amount;\n    bool public buyerApproved;\n    bool public sellerApproved;\n    bool public released;\n    bool public paused;\n    uint256 public nonce;\n\n    constructor(address _seller, address _arbiter) payable {\n        buyer = msg.sender;\n        seller = _seller;\n        arbiter = _arbiter;\n        amount = msg.value;\n    }\n\n    modifier notReleased() { require(!released, \"Already released\"); _; }\n    modifier whenNotPaused() { require(!paused, \"Paused\"); _; }\n\n    function approve() public notReleased whenNotPaused {\n        require(msg.sender == buyer || msg.sender == seller, \"Not party\");\n        if (msg.sender == buyer) buyerApproved = true;\n        if (msg.sender == seller) sellerApproved = true;\n    }\n\n    function release() public notReleased whenNotPaused {\n        require(buyerApproved && sellerApproved, \"Not both approved\");\n        released = true;\n        payable(seller).transfer(amount);\n    }\n\n    function dispute() public notReleased {\n        require(msg.sender == arbiter, \"Only arbiter\");\n        paused = true;\n    }\n\n    function resolveDispute(bool paySeller) public {\n        require(msg.sender == arbiter, \"Only arbiter\");\n        require(paused, \"Not disputed\");\n        released = true;\n        if (paySeller) payable(seller).transfer(amount);\n        else payable(buyer).transfer(amount);\n    }\n}"
+};
+
+function loadExample(type) {
+  document.getElementById('solInput').value = EXAMPLES[type];
+  hideAll();
+}
+
+function hideAll() {
+  document.getElementById('resultBox').classList.remove('visible');
+  document.getElementById('errorBox').classList.remove('visible');
+  document.getElementById('loadingBox').style.display = 'none';
+}
+
+function riskClass(level) {
+  const l = (level || 'unknown').toLowerCase();
+  if (l === 'low') return 'risk-low';
+  if (l === 'medium') return 'risk-medium';
+  if (l === 'high') return 'risk-high';
+  if (l === 'critical') return 'risk-critical';
+  return 'risk-low';
+}
+
+async function runAudit() {
+  const code = document.getElementById('solInput').value.trim();
+  if (!code) { alert('Paste some Solidity code first!'); return; }
+
+  const btn = document.getElementById('auditBtn');
+  btn.disabled = true;
+  btn.textContent = 'Auditing...';
+  hideAll();
+  document.getElementById('loadingBox').style.display = 'block';
+
+  const startTime = performance.now();
+
+  try {
+    const resp = await fetch(DRY_RUN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_code: code })
+    });
+
+    const data = await resp.json();
+    const elapsed = Math.round(performance.now() - startTime);
+
+    document.getElementById('loadingBox').style.display = 'none';
+
+    if (!resp.ok || data.error) {
+      const errMsg = data.error?.message || data.error || 'Unknown error (HTTP ' + resp.status + ')';
+      document.getElementById('errorBox').textContent = 'Error: ' + errMsg;
+      document.getElementById('errorBox').classList.add('visible');
+      return;
+    }
+
+    renderResults(data, elapsed);
+  } catch (err) {
+    document.getElementById('loadingBox').style.display = 'none';
+    document.getElementById('errorBox').textContent = 'Network error: ' + err.message;
+    document.getElementById('errorBox').classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Security Audit';
+  }
+}
+
+function renderResults(data, elapsed) {
+  const resultBox = document.getElementById('resultBox');
+  resultBox.classList.add('visible');
+
+  // Status badge — derive from overall_risk
+  const deployBadge = document.getElementById('deployableBadge');
+  const bs = data.breach_simulation || {};
+  const overallRisk = (bs.overall_risk || 'unknown').toLowerCase();
+  const isDeployable = overallRisk !== 'critical' && overallRisk !== 'high';
+  deployBadge.textContent = isDeployable ? 'DEPLOYABLE' : 'NOT DEPLOYABLE';
+  deployBadge.className = 'deployable ' + (isDeployable ? 'yes' : 'no');
+
+  // Latency
+  document.getElementById('latencyBadge').textContent = 'Completed in ' + elapsed + 'ms';
+
+  // Overall risk
+  const riskEl = document.getElementById('overallRisk');
+  riskEl.textContent = 'Overall Risk: ' + (bs.overall_risk || 'Unknown');
+  riskEl.className = 'overall-risk ' + overallRisk;
+
+  // Breach scenarios
+  const breachDiv = document.getElementById('breachResults');
+  breachDiv.innerHTML = '';
+  const scenarios = bs.scenarios || [];
+  scenarios.forEach(function(s, i) {
+    const div = document.createElement('div');
+    div.className = 'breach-result';
+    div.innerHTML = '<h4>' + (s.scenario_id || 'BS-' + String(i+1).padStart(3,'0')) + ' ' + (s.scenario_name || 'Unknown') + '<span class="risk-level ' + riskClass(s.risk_level) + '">' + (s.risk_level || 'N/A') + '</span></h4><p>' + (s.description || '') + '</p><p style="color:#666;font-size:.75em;margin-top:8px">' + (s.mitigation || '') + '</p>';
+    breachDiv.appendChild(div);
+  });
+
+  // Recommendations
+  const recDiv = document.getElementById('recommendations');
+  const recs = bs.recommendations || [];
+  if (recs.length > 0) {
+    recDiv.innerHTML = '<h3>Recommendations</h3><ul>' + recs.map(function(r) { return '<li>' + r + '</li>'; }).join('') + '</ul>';
+  } else {
+    recDiv.innerHTML = '';
+  }
+
+  // Scroll to results
+  resultBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+</script>
+
 </body>
 </html>`;
 
