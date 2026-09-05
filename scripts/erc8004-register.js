@@ -116,11 +116,13 @@ async function main() {
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   // Check private key
-  const privateKey = process.env.POLYGON_PRIVATE_KEY;
+  let privateKey = process.env.POLYGON_PRIVATE_KEY;
   if (!privateKey) {
     console.error('❌ POLYGON_PRIVATE_KEY not set');
     process.exit(1);
   }
+  // Ensure 0x prefix for ethers.js
+  if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
 
   // Setup provider and wallet
   const provider = new ethers.JsonRpcProvider(net.rpc);

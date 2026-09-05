@@ -26,12 +26,9 @@ function runScript(scriptPath, scriptArgs = []) {
   const cmd = `node ${scriptPath} ${scriptArgs.join(' ')}`;
   console.log(`\n  $ ${cmd}\n`);
   try {
-    const output = execSync(cmd, { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe' });
-    console.log(output);
-    return { success: true, output };
+    execSync(cmd, { cwd: process.cwd(), encoding: 'utf8', stdio: 'inherit', env: process.env });
+    return { success: true };
   } catch (err) {
-    console.log(err.stdout || '');
-    console.error(err.stderr || '');
     return { success: false, error: err.message };
   }
 }
