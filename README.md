@@ -339,7 +339,7 @@ Client Agent ──POST──→ Supabase Edge Function (Deno/TypeScript)
 ## Links
 
 - **Live API:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world`
-- **Landing Page:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing`
+- **Landing Page:** `https://rakhmadaa-gif.github.io/nexus-core-gateway/`
 - **GitHub:** `https://github.com/rakhmadaa-gif/nexus-core-gateway`
 - **PolygonScan:** `https://polygonscan.com/address/0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4`
 - **SDK (Python & TypeScript):** [`./sdk/`](./sdk/README.md)

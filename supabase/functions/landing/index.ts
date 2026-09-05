@@ -593,11 +593,9 @@ serve(async (req: Request) => {
     });
   }
   
-  // Serve landing page
-  return new Response(HTML, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=3600",
-    },
+  // Redirect to GitHub Pages (Supabase Edge Functions can't serve HTML)
+  const GITHUB_PAGES_URL = "https://rakhmadaa-gif.github.io/nexus-core-gateway/";
+  return Response.redirect(GITHUB_PAGES_URL, 301, {
+    headers: { "Cache-Control": "public, max-age=86400" },
   });
 });
