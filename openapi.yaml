@@ -60,7 +60,7 @@ info:
       frameworks: [langchain-js, vercel-ai-sdk]
   x-discovery:
     manifest_url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json
-    landing_url: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+    landing_url: https://rakhmadaa-gif.github.io/nexus-core-gateway/
     agent_json: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/agent.json
     ai_plugin_json: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/ai-plugin.json
 

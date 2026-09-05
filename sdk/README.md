@@ -201,7 +201,7 @@ client.pull_payment(
 ## Links
 
 - **Gateway API:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world`
-- **Landing Page:** `https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing`
+- **Landing Page:** `https://rakhmadaa-gif.github.io/nexus-core-gateway/`
 - **GitHub:** `https://github.com/rakhmadaa-gif/nexus-core-gateway`
 - **OpenAPI Spec:** [`openapi.yaml`](../openapi.yaml)
 - **Postman Collection:** [`nexus-gateway.postman_collection.json`](../nexus-gateway.postman_collection.json)

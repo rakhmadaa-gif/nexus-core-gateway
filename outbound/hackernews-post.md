@@ -119,7 +119,7 @@ Just launched Nexus Gateway — an M2M API that generates bilingual (English/Ind
 **Built on:** Supabase Edge Functions + Polygon PoS (USDC pull payment via EIP-712)
 
 GitHub: https://github.com/rakhmadaa-gif/nexus-core-gateway
-Landing: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+Landing: https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 Try the free Solidity checker:
 ```bash
@@ -272,7 +272,7 @@ const result = await generateText({
 ## Links
 
 - GitHub: https://github.com/rakhmadaa-gif/nexus-core-gateway
-- Landing: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+- Landing: https://rakhmadaa-gif.github.io/nexus-core-gateway/
 - Live API: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world
 
 ---
@@ -313,7 +313,7 @@ GitHub: https://github.com/rakhmadaa-gif/nexus-core-gateway
 
 **Title:** Nexus Gateway — M2M Legal-Code Services for Web3
 **Tagline:** Legal contracts + Solidity code + Digital Twin mapping. Bilingual EN/ID.
-**URL:** https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+**URL:** https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 **Description:**
 ```
@@ -376,7 +376,7 @@ Manual steps:
 - Category: Developer Tools
 - Platform: Polygon
 - Description: M2M legal-code engine for Web3
-- Website: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+- Website: https://rakhmadaa-gif.github.io/nexus-core-gateway/
 - Contract: 0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4
 
 ---

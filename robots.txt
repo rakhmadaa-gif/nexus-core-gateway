@@ -17,4 +17,4 @@ Allow: /
 # Security Policy (RFC 9116)
 # URL: https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/.well-known/security.txt
 
-Sitemap: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing?sitemap=1
+Sitemap: https://rakhmadaa-gif.github.io/nexus-core-gateway/sitemap.xml

@@ -26,7 +26,7 @@ Python SDK also available: pip install nexus-gateway-sdk (118+ downloads!)
 
 GitHub: https://github.com/rakhmadaa-gif/nexus-core-gateway
 npm: https://www.npmjs.com/package/nexus-gateway-sdk
-Try the playground: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+Try the playground: https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 #TypeScript #Web3 #Solidity #SmartContracts #npm #LangChain #VercelAI
 ```
@@ -83,7 +83,7 @@ Paid services: structured JSON schemas ($0.20), Solidity contract generation ($1
 
 GitHub: https://github.com/rakhmadaa-gif/nexus-core-gateway
 npm: https://www.npmjs.com/package/nexus-gateway-sdk
-Interactive playground (no terminal needed): https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+Interactive playground (no terminal needed): https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 Python SDK also available: pip install nexus-gateway-sdk (118+ downloads)
 ```
@@ -141,7 +141,7 @@ const vercelTools = createNexusVercelTools({ clientId: "my-agent" });
 ## Try It Without Installing
 
 Visit the interactive playground — paste Solidity code in your browser and get instant results:
-https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 ## Links
 

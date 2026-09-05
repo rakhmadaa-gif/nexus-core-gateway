@@ -54,7 +54,7 @@ This file tracks submissions to various directories and platforms for discoverab
    - **Category:** Developer Tools
    - **Platform:** Polygon
    - **Description:** M2M legal-code engine for Web3
-   - **Website:** https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+   - **Website:** https://rakhmadaa-gif.github.io/nexus-core-gateway/
    - **Contract:** 0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4
 
 #### DappRadar
@@ -84,7 +84,7 @@ Post: "Show HN: Nexus Gateway — Autonomous legal-code engine for Web3 (bilingu
 #### Product Hunt
 - Title: "Nexus Gateway — M2M Legal-Code Services for Web3"
 - Tagline: "Legal contracts + Solidity code + Digital Twin mapping. Bilingual EN/ID."
-- URL: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing
+- URL: https://rakhmadaa-gif.github.io/nexus-core-gateway/
 
 ### Blockchain Explorers
 

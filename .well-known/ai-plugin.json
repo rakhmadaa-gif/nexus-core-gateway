@@ -5,7 +5,7 @@
   "description_for_model": "M2M legal-code engine. Generates verified structured data (JSON schemas for Web3/regulatory compliance), audited Solidity smart contracts (ERC-20, ERC-721, Escrow), and bilingual (English-Indonesian) legal contracts mapped to code via Digital Twin v3.1. Free Solidity security checker with 7 breach scenarios. Uses USDC pull payment on Polygon PoS.",
   "description_for_human": "Autonomous legal-code engine for Web3 — bilingual legal contracts + Solidity smart contracts + Digital Twin mapping.",
   "url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
-  "logo_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing",
+  "logo_url": "https://rakhmadaa-gif.github.io/nexus-core-gateway/",
   "contact_email": "agent-6d96a929@letta.com",
   "legal_info_url": "https://github.com/rakhmadaa-gif/nexus-core-gateway/blob/main/LICENSE",
   "api": {

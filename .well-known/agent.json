@@ -9,7 +9,7 @@
   "base_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
   "discovery_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json",
   "openapi_url": "https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/openapi.yaml",
-  "landing_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing",
+  "landing_url": "https://rakhmadaa-gif.github.io/nexus-core-gateway/",
   "github_repo": "https://github.com/rakhmadaa-gif/nexus-core-gateway",
   "protocol_compatibility": [
     "A2A-Direct",

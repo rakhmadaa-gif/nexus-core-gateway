@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const LANDING_URL = "https://rakhmadaa-gif.github.io/nexus-core-gateway/";
+const LANDING_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/landing";
 const MANIFEST_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json";
 const SAMPLES_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/samples";
 const METRICS_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics";
@@ -9,7 +9,7 @@ const ROBOTS_TXT = `User-agent: *
 Allow: /
 Disallow: /functions/v1/hello-world
 
-Sitemap: ${LANDING_URL}sitemap.xml
+Sitemap: ${LANDING_URL}?sitemap=1
 `;
 
 const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -287,9 +287,9 @@ contract MyToken {
 const DRY_RUN_URL = "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run";
 
 const EXAMPLES = {
-  erc20: "pragma solidity ^0.8.20;\\n\\ncontract SimpleToken {\\n    string public name = \\"SimpleToken\\";\\n    string public symbol = \\"STK\\";\\n    uint8 public decimals = 18;\\n    uint256 public totalSupply;\\n    mapping(address => uint256) public balanceOf;\\n    mapping(address => mapping(address => uint256)) public allowance;\\n    address public owner;\\n    bool public paused;\\n\\n    event Transfer(address indexed from, address indexed to, uint256 value);\\n    event Approval(address indexed owner, address indexed spender, uint256 value);\\n\\n    modifier onlyOwner() { require(msg.sender == owner, \\"Not owner\\"); _; }\\n    modifier whenNotPaused() { require(!paused, \\"Paused\\"); _; }\\n\\n    constructor(uint256 _supply) {\\n        owner = msg.sender;\\n        totalSupply = _supply * 10 ** 18;\\n        balanceOf[msg.sender] = totalSupply;\\n    }\\n\\n    function transfer(address to, uint256 amount) public whenNotPaused returns (bool) {\\n        require(balanceOf[msg.sender] >= amount, \\"Insufficient\\");\\n        balanceOf[msg.sender] -= amount;\\n        balanceOf[to] += amount;\\n        emit Transfer(msg.sender, to, amount);\\n        return true;\\n    }\\n\\n    function mint(address to, uint256 amount) public onlyOwner {\\n        totalSupply += amount;\\n        balanceOf[to] += amount;\\n    }\\n\\n    function pause() public onlyOwner { paused = true; }\\n    function unpause() public onlyOwner { paused = false; }\\n}",
-  vulnerable: "pragma solidity ^0.8.20;\\n\\ncontract VulnerableVault {\\n    mapping(address => uint256) public balances;\\n    address public owner;\\n\\n    constructor() { owner = msg.sender; }\\n\\n    function deposit() public payable {\\n        balances[msg.sender] += msg.value;\\n    }\\n\\n    function withdraw(uint256 amount) public {\\n        require(balances[msg.sender] >= amount);\\n        (bool sent, ) = msg.sender.call{value: amount}(\\"\\");\\n        require(sent);\\n        balances[msg.sender] -= amount;\\n    }\\n\\n    function drainAll() public {\\n        payable(msg.sender).transfer(address(this).balance);\\n    }\\n\\n    function renounceOwnership() public {\\n        owner = address(0);\\n    }\\n}",
-  escrow: "pragma solidity ^0.8.20;\\n\\ncontract Escrow {\\n    address public buyer;\\n    address public seller;\\n    address public arbiter;\\n    uint256 public amount;\\n    bool public buyerApproved;\\n    bool public sellerApproved;\\n    bool public released;\\n    bool public paused;\\n    uint256 public nonce;\\n\\n    constructor(address _seller, address _arbiter) payable {\\n        buyer = msg.sender;\\n        seller = _seller;\\n        arbiter = _arbiter;\\n        amount = msg.value;\\n    }\\n\\n    modifier notReleased() { require(!released, \\"Already released\\"); _; }\\n    modifier whenNotPaused() { require(!paused, \\"Paused\\"); _; }\\n\\n    function approve() public notReleased whenNotPaused {\\n        require(msg.sender == buyer || msg.sender == seller, \\"Not party\\");\\n        if (msg.sender == buyer) buyerApproved = true;\\n        if (msg.sender == seller) sellerApproved = true;\\n    }\\n\\n    function release() public notReleased whenNotPaused {\\n        require(buyerApproved && sellerApproved, \\"Not both approved\\");\\n        released = true;\\n        payable(seller).transfer(amount);\\n    }\\n\\n    function dispute() public notReleased {\\n        require(msg.sender == arbiter, \\"Only arbiter\\");\\n        paused = true;\\n    }\\n\\n    function resolveDispute(bool paySeller) public {\\n        require(msg.sender == arbiter, \\"Only arbiter\\");\\n        require(paused, \\"Not disputed\\");\\n        released = true;\\n        if (paySeller) payable(seller).transfer(amount);\\n        else payable(buyer).transfer(amount);\\n    }\\n}"
+  erc20: "pragma solidity ^0.8.20;\n\ncontract SimpleToken {\n    string public name = \"SimpleToken\";\n    string public symbol = \"STK\";\n    uint8 public decimals = 18;\n    uint256 public totalSupply;\n    mapping(address => uint256) public balanceOf;\n    mapping(address => mapping(address => uint256)) public allowance;\n    address public owner;\n    bool public paused;\n\n    event Transfer(address indexed from, address indexed to, uint256 value);\n    event Approval(address indexed owner, address indexed spender, uint256 value);\n\n    modifier onlyOwner() { require(msg.sender == owner, \"Not owner\"); _; }\n    modifier whenNotPaused() { require(!paused, \"Paused\"); _; }\n\n    constructor(uint256 _supply) {\n        owner = msg.sender;\n        totalSupply = _supply * 10 ** 18;\n        balanceOf[msg.sender] = totalSupply;\n    }\n\n    function transfer(address to, uint256 amount) public whenNotPaused returns (bool) {\n        require(balanceOf[msg.sender] >= amount, \"Insufficient\");\n        balanceOf[msg.sender] -= amount;\n        balanceOf[to] += amount;\n        emit Transfer(msg.sender, to, amount);\n        return true;\n    }\n\n    function mint(address to, uint256 amount) public onlyOwner {\n        totalSupply += amount;\n        balanceOf[to] += amount;\n    }\n\n    function pause() public onlyOwner { paused = true; }\n    function unpause() public onlyOwner { paused = false; }\n}",
+  vulnerable: "pragma solidity ^0.8.20;\n\ncontract VulnerableVault {\n    mapping(address => uint256) public balances;\n    address public owner;\n\n    constructor() { owner = msg.sender; }\n\n    function deposit() public payable {\n        balances[msg.sender] += msg.value;\n    }\n\n    function withdraw(uint256 amount) public {\n        require(balances[msg.sender] >= amount);\n        (bool sent, ) = msg.sender.call{value: amount}(\"\");\n        require(sent);\n        balances[msg.sender] -= amount;\n    }\n\n    function drainAll() public {\n        payable(msg.sender).transfer(address(this).balance);\n    }\n\n    function renounceOwnership() public {\n        owner = address(0);\n    }\n}",
+  escrow: "pragma solidity ^0.8.20;\n\ncontract Escrow {\n    address public buyer;\n    address public seller;\n    address public arbiter;\n    uint256 public amount;\n    bool public buyerApproved;\n    bool public sellerApproved;\n    bool public released;\n    bool public paused;\n    uint256 public nonce;\n\n    constructor(address _seller, address _arbiter) payable {\n        buyer = msg.sender;\n        seller = _seller;\n        arbiter = _arbiter;\n        amount = msg.value;\n    }\n\n    modifier notReleased() { require(!released, \"Already released\"); _; }\n    modifier whenNotPaused() { require(!paused, \"Paused\"); _; }\n\n    function approve() public notReleased whenNotPaused {\n        require(msg.sender == buyer || msg.sender == seller, \"Not party\");\n        if (msg.sender == buyer) buyerApproved = true;\n        if (msg.sender == seller) sellerApproved = true;\n    }\n\n    function release() public notReleased whenNotPaused {\n        require(buyerApproved && sellerApproved, \"Not both approved\");\n        released = true;\n        payable(seller).transfer(amount);\n    }\n\n    function dispute() public notReleased {\n        require(msg.sender == arbiter, \"Only arbiter\");\n        paused = true;\n    }\n\n    function resolveDispute(bool paySeller) public {\n        require(msg.sender == arbiter, \"Only arbiter\");\n        require(paused, \"Not disputed\");\n        released = true;\n        if (paySeller) payable(seller).transfer(amount);\n        else payable(buyer).transfer(amount);\n    }\n}"
 };
 
 function loadExample(type) {
@@ -593,9 +593,11 @@ serve(async (req: Request) => {
     });
   }
   
-  // Redirect to GitHub Pages (Supabase Edge Functions can't serve HTML)
-  const GITHUB_PAGES_URL = "https://rakhmadaa-gif.github.io/nexus-core-gateway/";
-  return Response.redirect(GITHUB_PAGES_URL, 301, {
-    headers: { "Cache-Control": "public, max-age=86400" },
+  // Serve landing page
+  return new Response(HTML, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
   });
 });
