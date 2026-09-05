@@ -388,7 +388,7 @@ function renderResults(data, elapsed) {
     else if (riskLevel === 'high') { lossLabel = '$1M+ Exploit Risk'; lossClass = 'loss-high'; }
     else if (riskLevel === 'medium') { lossLabel = '$100K+ Exploit Risk'; lossClass = 'loss-medium'; }
     else { lossLabel = '$10K+ Exploit Risk'; lossClass = 'loss-low'; }
-    div.innerHTML = '<h4>' + (s.scenario_id || 'BS-' + String(i+1).padStart(3,'0')) + ' ' + (s.scenario_name || 'Unknown') + '<span class="risk-level ' + riskClass(s.risk_level) + '">' + (s.risk_level || 'N/A') + '</span></h4><p>' + (s.description || '') + '</p><p style="color:#666;font-size:.75em;margin-top:8px">' + (s.mitigation || '') + '</p><span class="loss-estimate ' + lossClass + '">\u{1F4B0} Estimasi Potensi Kerugian: ' + lossLabel + '</span>';
+    div.innerHTML = '<h4>' + (s.scenario_id || 'BS-' + String(i+1).padStart(3,'0')) + ' ' + (s.scenario_name || 'Unknown') + '<span class="risk-level ' + riskClass(s.risk_level) + '">' + (s.risk_level || 'N/A') + '</span></h4><p>' + (s.description || '') + '</p><p style="color:#666;font-size:.75em;margin-top:8px">' + (s.mitigation || '') + '</p><span class="loss-estimate ' + lossClass + '">Estimasi Potensi Kerugian: ' + lossLabel + '</span>';
     breachDiv.appendChild(div);
   });
 
@@ -398,7 +398,7 @@ function renderResults(data, elapsed) {
   if (recs.length > 0) {
     var fixedCode = generateFixedCode(scenarios, recs);
     recDiv.innerHTML = '<h3>Recommendations</h3><ul>' + recs.map(function(r) { return '<li>' + r + '</li>'; }).join('') + '</ul>' +
-      '<button class="copy-fixed-btn" id="copyFixedBtn" onclick="copyFixedCode()">\u{1F4CB} Copy Fixed Code</button>' +
+      '<button class="copy-fixed-btn" id="copyFixedBtn" onclick="copyFixedCode()">Copy Fixed Code</button>' +
       '<span class="copy-feedback" id="copyFeedback">Copied! Paste into your .sol file</span>' +
       '<div class="fixed-code-block" id="fixedCodeBlock"><code>' + escapeHtml(fixedCode) + '</code></div>';
   } else {
@@ -550,10 +550,10 @@ function copyFixedCode() {
 
   navigator.clipboard.writeText(code).then(function() {
     feedback.classList.add('visible');
-    btn.textContent = '\\u2705 Copied!';
+    btn.textContent = 'Copied!';
     setTimeout(function() {
       feedback.classList.remove('visible');
-      btn.textContent = '\\uD83D\\uDCCB Copy Fixed Code';
+      btn.textContent = 'Copy Fixed Code';
     }, 3000);
   }).catch(function() {
     // Fallback for browsers without clipboard API
@@ -564,10 +564,10 @@ function copyFixedCode() {
     document.execCommand('copy');
     document.body.removeChild(ta);
     feedback.classList.add('visible');
-    btn.textContent = '\\u2705 Copied!';
+    btn.textContent = 'Copied!';
     setTimeout(function() {
       feedback.classList.remove('visible');
-      btn.textContent = '\\uD83D\\uDCCB Copy Fixed Code';
+      btn.textContent = 'Copy Fixed Code';
     }, 3000);
   });
 }
