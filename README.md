@@ -11,6 +11,28 @@
 [![CrewAI](https://img.shields.io/badge/CrewAI-compatible-orange)](./sdk/python/)
 [![LangChain](https://img.shields.io/badge/LangChain-compatible-green)](./sdk/python/)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
+[![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20%23636-8247E5)](https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8)
+
+---
+
+## ERC-8004 On-Chain Identity
+
+Nexus Gateway is registered as **Agent ID 636** on the ERC-8004 IdentityRegistry (Polygon Mainnet).
+
+| Field | Value |
+|---|---|
+| Agent ID | 636 |
+| Registry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+| Transaction | [`0x0b78a5f7...`](https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8) |
+| Block | 9,331,172 |
+| Owner | `0x80963791cE7cB9c5d580Fe638C39FDd9ffdaE2d5` |
+| Agent URI | [agent.json](./.well-known/agent.json) |
+
+**On-Chain Metadata:**
+- `category` = `legal-code`
+- `version` = `4.0.0-frontier`
+- `gateway` = `0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4`
+- `sla` = `99.9`
 
 ---
 
