@@ -28,33 +28,33 @@
       "service_type": "structured_data",
       "description": "Verified JSON schemas for Web3, regulatory compliance, and cross-platform orchestration",
       "cost_credits": 20,
-      "cost_usd": 0.20,
+      "cost_usd": 0.2,
       "free_trial": true
     },
     {
       "service_type": "code_modules",
       "description": "Security-checked Solidity smart contracts (ERC-20, ERC-721, Escrow logic)",
       "cost_credits": 120,
-      "cost_usd": 1.20,
+      "cost_usd": 1.2,
       "free_trial": true
     },
     {
       "service_type": "legal_code",
       "description": "Bilingual (EN/ID) legal contracts mapped directly to Solidity code functions via Digital Twin v3.1",
       "cost_credits": 29900,
-      "cost_usd": 299.00,
+      "cost_usd": 299.0,
       "free_trial": false
     },
     {
       "service_type": "dry_run",
-      "description": "Free Solidity security validation — 7 breach scenarios + nonce/replay defense + Digital Twin v3.1 matrix",
+      "description": "Free Solidity security validation \u2014 7 breach scenarios + nonce/replay defense + Digital Twin v3.1 matrix",
       "cost_credits": 0,
       "cost_usd": 0,
       "free_trial": "unlimited"
     },
     {
       "service_type": "manifest",
-      "description": "A2A agent discovery manifest — services, pricing, endpoints, capabilities",
+      "description": "A2A agent discovery manifest \u2014 services, pricing, endpoints, capabilities",
       "cost_credits": 0,
       "cost_usd": 0,
       "free_trial": "unlimited"
@@ -82,12 +82,29 @@
     "python": {
       "package_name": "nexus-gateway-sdk",
       "pypi_url": "https://pypi.org/project/nexus-gateway-sdk/",
-      "frameworks": ["crewai", "langchain"]
+      "frameworks": [
+        "crewai",
+        "langchain"
+      ]
     },
     "typescript": {
       "package_name": "nexus-gateway-sdk",
       "npm_url": "https://www.npmjs.com/package/nexus-gateway-sdk",
-      "frameworks": ["langchain-js", "vercel-ai-sdk"]
+      "frameworks": [
+        "langchain-js",
+        "vercel-ai-sdk"
+      ]
     }
-  }
+  },
+  "registrations": [
+    {
+      "standard": "ERC-8004",
+      "agentRegistry": "eip155:137:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+      "agentId": "636",
+      "chain": "polygon-mainnet",
+      "registered_at": "2026-09-06T05:30:00Z",
+      "tx_hash": "0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8",
+      "block_number": 93311724
+    }
+  ]
 }
