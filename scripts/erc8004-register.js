@@ -204,8 +204,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Connect to IdentityRegistry
-  const registry = new ethers.Contract(net.identityRegistry, IDENTITY_ABI, wallet);
+  // Create interface for encoding function calls
+  const iface = new ethers.Interface(IDENTITY_ABI);
 
   // Register
   console.log('\n  📝 Registering agent identity...');
@@ -214,10 +214,27 @@ async function main() {
 
   const tx = await withRetry(async () => {
     const feeData = await provider.getFeeData();
-    // Use explicit function signature for overloaded register()
-    const registerFn = registry.getFunction('register(string,(string,bytes)[])');
-    const tx = await registerFn(AGENT_URI, METADATA, {
-      gasLimit: 300000,
+    // Encode function call manually to avoid ethers v6 overload resolution issues
+    const calldata = iface.encodeFunctionData('register(string,(string,bytes)[])', [AGENT_URI, METADATA]);
+    console.log(`     Encoded calldata length: ${calldata.length} chars`);
+    // Estimate gas and add 20% buffer
+    let gasLimit;
+    try {
+      const estimated = await provider.estimateGas({
+        to: net.identityRegistry,
+        data: calldata,
+        from: wallet.address,
+      });
+      gasLimit = Math.ceil(Number(estimated) * 1.2);
+      console.log(`     Gas estimate: ${estimated.toString()}, using: ${gasLimit}`);
+    } catch (e) {
+      gasLimit = 500000;
+      console.log(`     Gas estimate failed, using default: ${gasLimit}`);
+    }
+    const tx = await wallet.sendTransaction({
+      to: net.identityRegistry,
+      data: calldata,
+      gasLimit: gasLimit,
       gasPrice: feeData.gasPrice,
     });
     return tx;
@@ -241,14 +258,14 @@ async function main() {
   // Parse Registered event to get agentId
   const registeredEvent = receipt.logs.find(log => {
     try {
-      const parsed = registry.interface.parseLog(log);
+      const parsed = iface.parseLog(log);
       return parsed && parsed.name === 'Registered';
     } catch { return false; }
   });
 
   let agentId;
   if (registeredEvent) {
-    const parsed = registry.interface.parseLog(registeredEvent);
+    const parsed = iface.parseLog(registeredEvent);
     agentId = parsed.args.agentId.toString();
     console.log(`\n  🎉 Agent ID: ${agentId}`);
     console.log(`     Owner: ${parsed.args.owner}`);
@@ -264,6 +281,7 @@ async function main() {
   if (agentId) {
     console.log('\n  📋 Verifying registration...');
     try {
+      const registry = new ethers.Contract(net.identityRegistry, IDENTITY_ABI, provider);
       const uri = await registry.tokenURI(agentId);
       const owner = await registry.ownerOf(agentId);
       console.log(`     tokenURI(${agentId}): ${uri}`);
