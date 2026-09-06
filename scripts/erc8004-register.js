@@ -154,9 +154,10 @@ async function main() {
   console.log(`     Metadata: ${METADATA.length} entries`);
 
   const tx = await withRetry(async () => {
+    const feeData = await provider.getFeeData();
     const tx = await registry.register(AGENT_URI, METADATA, {
       gasLimit: 300000,
-      gasPrice: await provider.getGasPrice(),
+      gasPrice: feeData.gasPrice,
     });
     return tx;
   });

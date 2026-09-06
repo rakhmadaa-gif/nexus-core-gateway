@@ -21,19 +21,19 @@ const MARKETPLACES = [
     url: 'https://x402-list.com/api/v1/submit',
     method: 'POST',
     payload: {
-      name: 'Nexus.Legal.ContractDrafter',
-      description: 'M2M Autonomous Legal-Code Gateway — structured data, Solidity audits, bilingual legal contracts mapped to code via Digital Twin v3.1',
+      name: 'Nexus Legal ContractDrafter',
+      url: 'https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world',
+      website: 'https://rakhmadaa-gif.github.io/nexus-core-gateway/',
+      email: 'rakhmadaa@gmail.com',
+      category: 'Blockchain',
+      description: 'M2M Autonomous Legal-Code Gateway — structured data, Solidity security audits (7 breach scenarios), bilingual legal contracts mapped to code via Digital Twin v3.1. Credit-based billing (1 CREDIT = $0.01, USDC on Polygon). Free endpoints: manifest, samples, metrics, dry-run, landing page.',
       endpoints: [
-        'https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json'
-      ],
-      categories: ['legal', 'solidity', 'compliance', 'web3'],
-      pricing_model: 'credit-based (1 CREDIT = $0.01, USDC on Polygon)',
-      source: 'submitted',
-      documentation: 'https://github.com/rakhmadaa-gif/nexus-core-gateway',
-      sdk: {
-        pypi: 'nexus-gateway-sdk',
-        npm: 'nexus-gateway-sdk'
-      }
+        '/manifest.json',
+        '/samples',
+        '/metrics',
+        '/gateway/dry-run',
+        '/landing'
+      ]
     }
   },
   {
@@ -46,7 +46,8 @@ const MARKETPLACES = [
       endpoints: [
         'https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world'
       ]
-    }
+    },
+    skipOnSSLError: true
   },
   {
     name: 'Agora402',
@@ -188,13 +189,24 @@ async function main() {
         };
       }
     } catch (err) {
-      console.log(`  ❌ FAILED — ${err.message}`);
-      results.push({ marketplace: mkt.name, status: 'failed', error: err.message });
-      state.phase2_marketplaces[mkt.name.toLowerCase().replace(/\s/g, '_')] = {
-        status: 'failed',
-        attempts: 5,
-        last_error: err.message
-      };
+      const isSSLError = err.message.includes('Hostname/IP') || err.message.includes('certificate') || err.message.includes('SSL');
+      if (mkt.skipOnSSLError && isSSLError) {
+        console.log(`  ⏭️  SKIPPED — SSL/cert issue on ${mkt.name} (expected, skipping)`);
+        results.push({ marketplace: mkt.name, status: 'skipped_ssl', error: err.message });
+        state.phase2_marketplaces[mkt.name.toLowerCase().replace(/\s/g, '_')] = {
+          status: 'skipped_ssl',
+          attempts: 1,
+          last_error: err.message
+        };
+      } else {
+        console.log(`  ❌ FAILED — ${err.message}`);
+        results.push({ marketplace: mkt.name, status: 'failed', error: err.message });
+        state.phase2_marketplaces[mkt.name.toLowerCase().replace(/\s/g, '_')] = {
+          status: 'failed',
+          attempts: 5,
+          last_error: err.message
+        };
+      }
     }
   }
 
@@ -208,7 +220,7 @@ async function main() {
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   for (const r of results) {
-    const icon = r.status === 'success' ? '✅' : r.status === 'dry-run' ? '🔍' : '❌';
+    const icon = r.status === 'success' ? '✅' : r.status === 'dry-run' ? '🔍' : r.status === 'skipped_ssl' ? '⏭️' : '❌';
     console.log(`  ${icon} ${r.marketplace}: ${r.status}`);
   }
 
