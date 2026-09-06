@@ -21,9 +21,9 @@ const MARKETPLACES = [
     url: 'https://x402-list.com/api/v1/submit',
     method: 'POST',
     payload: {
-      name: 'Nexus Legal ContractDrafter',
+      service_name: 'Nexus Legal ContractDrafter',
       url: 'https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world',
-      website: 'https://rakhmadaa-gif.github.io/nexus-core-gateway/',
+      website_url: 'https://rakhmadaa-gif.github.io/nexus-core-gateway/',
       email: 'rakhmadaa@gmail.com',
       category: 'Blockchain',
       description: 'M2M Autonomous Legal-Code Gateway — structured data, Solidity security audits (7 breach scenarios), bilingual legal contracts mapped to code via Digital Twin v3.1. Credit-based billing (1 CREDIT = $0.01, USDC on Polygon). Free endpoints: manifest, samples, metrics, dry-run, landing page.',
@@ -78,6 +78,7 @@ async function withRetry(fn, maxAttempts = 5) {
 function httpRequest(url, method, body) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url);
+    const postData = body ? JSON.stringify(body) : null;
     const options = {
       hostname: urlObj.hostname,
       port: urlObj.port || 443,
@@ -87,8 +88,7 @@ function httpRequest(url, method, body) {
       timeout: 15000
     };
     
-    if (body) {
-      const postData = JSON.stringify(body);
+    if (postData) {
       options.headers['Content-Type'] = 'application/json';
       options.headers['Content-Length'] = Buffer.byteLength(postData);
     }
@@ -102,7 +102,7 @@ function httpRequest(url, method, body) {
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     
-    if (body) req.write(JSON.stringify(body));
+    if (postData) req.write(postData);
     req.end();
   });
 }

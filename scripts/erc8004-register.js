@@ -47,8 +47,27 @@ const METADATA = [
   { metadataKey: 'sla', metadataValue: ethers.toUtf8Bytes('99.9') },
 ];
 
-// IdentityRegistry ABI (register function only)
+// IdentityRegistry ABI (all register overloads + key functions)
 const IDENTITY_ABI = [
+  // register() — no args
+  {
+    inputs: [],
+    name: 'register',
+    outputs: [{ internalType: 'uint256', name: 'agentId', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  // register(string agentURI)
+  {
+    inputs: [
+      { internalType: 'string', name: 'agentURI', type: 'string' }
+    ],
+    name: 'register',
+    outputs: [{ internalType: 'uint256', name: 'agentId', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  // register(string agentURI, MetadataEntry[] metadata)
   {
     inputs: [
       { internalType: 'string', name: 'agentURI', type: 'string' },
@@ -67,6 +86,29 @@ const IDENTITY_ABI = [
     stateMutability: 'nonpayable',
     type: 'function'
   },
+  // setMetadata(uint256 agentId, string metadataKey, bytes metadataValue)
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'agentId', type: 'uint256' },
+      { internalType: 'string', name: 'metadataKey', type: 'string' },
+      { internalType: 'bytes', name: 'metadataValue', type: 'bytes' }
+    ],
+    name: 'setMetadata',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  // setAgentURI(uint256 agentId, string newURI)
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'agentId', type: 'uint256' },
+      { internalType: 'string', name: 'newURI', type: 'string' }
+    ],
+    name: 'setAgentURI',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
   {
     inputs: [{ internalType: 'uint256', name: 'agentId', type: 'uint256' }],
     name: 'tokenURI',
@@ -78,6 +120,23 @@ const IDENTITY_ABI = [
     inputs: [{ internalType: 'uint256', name: 'agentId', type: 'uint256' }],
     name: 'ownerOf',
     outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'agentId', type: 'uint256' }],
+    name: 'getAgentWallet',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'agentId', type: 'uint256' },
+      { internalType: 'string', name: 'metadataKey', type: 'string' }
+    ],
+    name: 'getMetadata',
+    outputs: [{ internalType: 'bytes', name: '', type: 'bytes' }],
     stateMutability: 'view',
     type: 'function'
   },
@@ -155,7 +214,9 @@ async function main() {
 
   const tx = await withRetry(async () => {
     const feeData = await provider.getFeeData();
-    const tx = await registry.register(AGENT_URI, METADATA, {
+    // Use explicit function signature for overloaded register()
+    const registerFn = registry.getFunction('register(string,(string,bytes)[])');
+    const tx = await registerFn(AGENT_URI, METADATA, {
       gasLimit: 300000,
       gasPrice: feeData.gasPrice,
     });
