@@ -3100,17 +3100,71 @@ async function handler(req: Request): Promise<Response> {
 
   if (!gatekeeper.allowed) {
     await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
-    // Phase 2.3: M2M standard error envelope
+    // Phase 2.3: M2M standard error envelope + x402-compliant payment-required
     const denied = gatekeeper.deniedResponse as Record<string, unknown>;
-    return m2mError(
-      String(denied.error_code ?? "DENIED"),
-      String(denied.message ?? "Request denied by gatekeeper."),
-      serviceType,
-      402,
-      0,
-      reqStartTime,
-      denied,
-    );
+
+    // Build x402 standard payment-required response
+    const serviceCosts: Record<string, number> = {
+      structured_data: 20,
+      code_modules: 120,
+      legal_code: 29900,
+    };
+    const costCredits = serviceCosts[serviceType] ?? 20;
+    // Convert CRED to USDC atomic units (1 CRED = 0.01 USD, USDC has 6 decimals)
+    // 20 CRED = $0.20 = 200000 atomic units
+    const amountUsdcAtomic = (costCredits * 10000).toString();
+
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: new URL(req.url).pathname,
+        description: `Nexus Gateway - ${serviceType}`,
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",  // Polygon PoS
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",  // Treasury
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+          note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, CRED credited. 1 USDC = 100 CRED.",
+        },
+      }],
+    };
+
+    // Encode as base64 for the payment-required header (Unicode-safe)
+    const x402Json = JSON.stringify(x402PaymentRequired);
+    const x402Bytes = new TextEncoder().encode(x402Json);
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+
+    // Return the M2M error body but with x402-compliant headers
+    const body = {
+      status: "failed",
+      payload_id: null,
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "DENIED"),
+        message: String(denied.message ?? "Request denied by gatekeeper."),
+        ...(Object.keys(denied).length > 2 ? { details: denied } : {}),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    };
+
+    return new Response(JSON.stringify(body, null, 2), {
+      status: 402,
+      headers: {
+        ...CORS_HEADERS,
+        "Content-Type": "application/json",
+        "payment-required": x402Base64,
+      },
+    });
   }
 
   // 6. Delegate to Core Payload Engine — Phase 2.2: track stage timing
