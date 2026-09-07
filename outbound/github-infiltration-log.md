@@ -89,3 +89,43 @@ Expected for Week 1 given only 12 hours elapsed. Open-source maintainers typical
   - Following up with a polite bump comment on the issues
   - Expanding to Phase 2 targets (additional repos)
   - Engaging with repo maintainers on other channels (Discord/Twitter if available)
+
+---
+
+## Phase 2 — 2026-09-07 (Paid Security Remediation & Bounty Hunting)
+
+### Candidate: enzymefinance/protocol (Immunefi Bug Bounty)
+
+| Detail | Value |
+|--------|-------|
+| **Target Repo** | enzymefinance/protocol (554 ⭐) |
+| **Security Repo** | enzymefinance/security (issues enabled) |
+| **Bounty Platform** | Immunefi — up to $200,000 (Critical) |
+| **KYC** | NOT required for submission ✅ |
+| **Payment** | USDC/ETH, L2 (Polygon) supported |
+| **Contract Audited** | Dispatcher.sol (23,155 chars, Solidity 0.6.12) |
+| **Dry-Run Risk** | HIGH (BS-006 Reentrancy, BS-004 No Emergency Pause, BS-007 No Nonce) |
+
+### Actions Completed
+
+| Action | Status | Notes |
+|--------|--------|-------|
+| Dry-run audit (Nexus Gateway) | ✅ | 7 breach scenarios, BS-006 HIGH detected |
+| Source code analysis | ✅ | Dispatcher.sol — migration flow, access control patterns |
+| Immunefi scope verification | ✅ | KYC not required, L2 payment supported |
+| Full proposal written | ✅ | 7,453 chars, 219 lines — includes PoC + proposed fixes |
+| Public Gist created | ✅ | https://gist.github.com/rakhmadaa-gif/7944eaf9379ab186bf50e8a4a1fe9568 |
+| Issue submitted (security repo) | ✅ | https://github.com/enzymefinance/security/issues/4 |
+| Repo starred | ✅ | enzymefinance/security + enzymefinance/protocol |
+| Portfolio attached | ✅ | Phase 1: 3 PRs, 15 touchpoints, PyPI 498, npm 136 |
+| Payment address included | ✅ | 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5 (Polygon L2) |
+
+### Proposal-First Protocol (No PR)
+
+Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. No PR submitted. Waiting for Enzyme Council response before any code submission.
+
+### Monitoring
+
+- Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
+- If Council responds: establish secure communication channel, share full PoC
+- If no response by Week 2: polite follow-up comment on issue #4
