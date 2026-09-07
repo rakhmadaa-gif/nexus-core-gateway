@@ -168,3 +168,46 @@ The `takerSubmitted` modifier on `execute()` only manages payer in transient sto
 - Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
 - If dev team responds: discuss findings, share full PoC, propose fix
 - If no response by Week 2: polite follow-up comment on issue #646
+
+### Candidate: maple-labs/pool-v2 (Immunefi Bug Bounty)
+
+| Detail | Value |
+|--------|-------|
+| **Target Repo** | maple-labs/pool-v2 (issues disabled) |
+| **Submission Repo** | maple-labs/maple-core-v2 (issues enabled, #33) |
+| **Bounty Platform** | Immunefi — up to $500,000 (Critical) |
+| **KYC** | Required for payout |
+| **Payment** | USDC/ETH, L2 (Polygon) supported |
+| **Contract Audited** | MaplePool.sol + MaplePoolManager.sol (Solidity 0.8.25) |
+| **Dry-Run Risk** | HIGH (BS-006 Cross-Function Reentrancy, BS-002 External Delegation, BS-004 Pause Bypass) |
+| **Delay** | 5-hour natural delay (submitted 21:50 UTC Sep 7) |
+
+### Actions Completed
+
+| Action | Status | Notes |
+|--------|--------|-------|
+| Source code analysis | ✅ | MaplePool.sol + MaplePoolManager.sol — transfer/transferFrom lack nonReentrant |
+| canCall() analysis | ✅ | view function, no whenNotPaused, checks isFunctionPaused(msg.sig) not functionId_ |
+| Full proposal written | ✅ | Cross-function reentrancy + external delegation + pause bypass |
+| Public Gist created | ✅ | https://gist.github.com/rakhmadaa-gif/64825aed3af5897b37454098fb27c982 |
+| Issue submitted | ✅ | https://github.com/maple-labs/maple-core-v2/issues/33 |
+| Repo starred | ✅ | maple-labs/maple-core-v2 + maple-labs/pool-v2 |
+| Portfolio attached | ✅ | Phase 1: 3 PRs, 15 touchpoints + Phase 2: Enzyme #4, 0x #646 |
+| Payment address included | ✅ | 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5 (Polygon L2) |
+
+### Proposal-First Protocol (No PR)
+
+Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. No PR submitted. Waiting for Maple dev team response before any code submission.
+
+### Key Findings
+
+1. **BS-006 (HIGH):** Cross-function reentrancy — `transfer()` and `transferFrom()` lack `nonReentrant` modifier while all other state-changing functions have it. During `deposit()` (which sets `_locked = 2`), if the underlying asset has callbacks, an attacker can re-enter `transfer()` which doesn't check `_locked`.
+2. **BS-002 (HIGH):** Transfer functions rely solely on `checkCall` (external delegation to `manager.canCall()`), without `nonReentrant` defense-in-depth.
+3. **BS-004 (MEDIUM):** `canCall()` in PoolManager lacks `whenNotPaused` modifier — transfers continue even when PoolManager is paused. Also, `isFunctionPaused(msg.sig)` uses `canCall`'s own selector, not the specific function being checked.
+4. **BS-003 (False Positive):** Dry-run flagged withdraw/redeem as CRITICAL, but manual review confirmed they ARE protected by `nonReentrant + checkCall + whenNotPaused + onlyPool`. Real finding is cross-function reentrancy via transfer.
+
+### Monitoring
+
+- Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
+- If dev team responds: discuss findings, share full PoC, propose fix
+- If no response by Week 2: polite follow-up comment on issue #33
