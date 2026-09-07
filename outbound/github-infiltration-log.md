@@ -129,3 +129,42 @@ Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. N
 - Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
 - If Council responds: establish secure communication channel, share full PoC
 - If no response by Week 2: polite follow-up comment on issue #4
+
+### Candidate: 0xProject/0x-settler (Immunefi Bug Bounty)
+
+| Detail | Value |
+|--------|-------|
+| **Target Repo** | 0xProject/0x-settler (111 ⭐) |
+| **Bounty Platform** | Immunefi — up to $1,000,000 (Critical) |
+| **KYC** | Required for payout |
+| **Payment** | USDC/ETH, L2 (Polygon) supported |
+| **Contract Audited** | Settler.sol (8,376 chars, Solidity 0.8.25) + SettlerBase.sol, Permit2Payment.sol |
+| **Dry-Run Risk** | HIGH (BS-006 Reentrancy, BS-004 No Emergency Pause, BS-007 No Nonce) |
+
+### Actions Completed
+
+| Action | Status | Notes |
+|--------|--------|-------|
+| Dry-run audit (Nexus Gateway) | ✅ | 7 breach scenarios, BS-006 HIGH detected |
+| Source code analysis | ✅ | Settler.sol + SettlerBase.sol + Permit2Payment.sol — takerSubmitted modifier lacks reentrancy guard |
+| Immunefi scope verification | ✅ | KYC required for payout, L2 payment supported |
+| Full proposal written | ✅ | 10,002 chars, 224 lines — includes PoC + proposed fixes (transient storage nonReentrant) |
+| Public Gist created | ✅ | https://gist.github.com/rakhmadaa-gif/b69b9af064365c304ca45c6a11f397c1 |
+| Issue submitted | ✅ | https://github.com/0xProject/0x-settler/issues/646 |
+| Repo starred | ✅ | 0xProject/0x-settler |
+| Portfolio attached | ✅ | Phase 1: 3 PRs, 15 touchpoints + Phase 2: Enzyme #4, PyPI 498, npm 136 |
+| Payment address included | ✅ | 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5 (Polygon L2) |
+
+### Proposal-First Protocol (No PR)
+
+Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. No PR submitted. Waiting for 0x dev team response before any code submission.
+
+### Key Finding
+
+The `takerSubmitted` modifier on `execute()` only manages payer in transient storage — no reentrancy guard. While individual callbacks are protected by `ReentrantCallback` (transient storage), the outer `execute()` function can be re-entered. A malicious pool called during action dispatch could re-enter `execute()` with a new action array before the original call's `_checkSlippageAndTransfer()` completes.
+
+### Monitoring
+
+- Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
+- If dev team responds: discuss findings, share full PoC, propose fix
+- If no response by Week 2: polite follow-up comment on issue #646
