@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v4.0.0-frontier — Phase 3: Digital Twin Engine Upgrade (bipolar mapping + breach simulation)
+// v4.1.0-frontier — Phase 3.4: False Positive Reduction (transient storage, immutability, Permit2)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.0.0-frontier",
+  engine_version: "v4.1.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -2201,6 +2201,9 @@ interface ParsedFunction {
   modifiers: string[];
   require_count: number;
   has_require: boolean;
+  has_nonReentrant: boolean;          // Phase 3.4: nonReentrant modifier detection
+  has_transient_storage: boolean;    // Phase 3.4: tstore/tload reentrancy guard detection
+  has_checks_effects_interactions: boolean; // Phase 3.4: CEI pattern detection
 }
 
 interface ParsedEvent {
@@ -2234,6 +2237,9 @@ interface ParsedContract {
   has_ownership: boolean;      // Phase 3.2: ownership check
   has_burn: boolean;           // Phase 3.2: burn capability
   has_mint: boolean;           // Phase 3.2: mint capability
+  has_transient_storage: boolean;  // Phase 3.4: tstore/tload detection (reentrancy guard)
+  has_permit2: boolean;            // Phase 3.4: Permit2 usage detection (built-in chain binding)
+  is_intentionally_immutable: boolean; // Phase 3.4: no owner + no pause = design choice
   line_count: number;
 }
 
@@ -2321,6 +2327,17 @@ function parseSolidityContract(source: string): ParsedContract {
     const funcBody = source.substring(funcBodyStart, bodyEnd);
     const requireCount = (funcBody.match(/require\s*\(/g) || []).length;
 
+    // Phase 3.4: Detect nonReentrant modifier
+    const hasNonReentrant = modifiers.some(m => /nonreentrant/i.test(m)) ||
+      /nonReentrant/.test(modifiersRaw);
+
+    // Phase 3.4: Detect transient storage usage (tstore/tload) as reentrancy guard
+    const hasTransientStorage = /\b(tstore|tload)\b/.test(funcBody);
+
+    // Phase 3.4: Detect checks-effects-interactions pattern (state change before external call)
+    const hasCEI = /(\bdelete\b|\b=\s*0\b|\b=\s*address\(0\)\b).*\b(\.call|\.transfer|\.send)\b/s.test(funcBody) ||
+      /(\bdelete\b|\b=\s*0\b).*\brequire\b/s.test(funcBody);
+
     functions.push({
       name: funcName,
       signature: `function ${funcName}(${params}) ${modifiersRaw.replace(/\s+/g, " ").trim()}`.trim(),
@@ -2329,6 +2346,9 @@ function parseSolidityContract(source: string): ParsedContract {
       modifiers,
       require_count: requireCount,
       has_require: requireCount > 0,
+      has_nonReentrant: hasNonReentrant,
+      has_transient_storage: hasTransientStorage,
+      has_checks_effects_interactions: hasCEI,
     });
   }
 
@@ -2371,13 +2391,26 @@ function parseSolidityContract(source: string): ParsedContract {
     });
   }
 
-  // Capability detection (Phase 3.2)
+  // Capability detection (Phase 3.2 + 3.4)
   const sourceLower = source.toLowerCase();
   const hasPause = /\b(pause|unpause|paused)\b/i.test(source);
   const hasOwnership = /\b(onlyowner|owner|transferownership|renounceownership|ownable)\b/i.test(source);
   const hasBurn = /\b(burn|burnfrom|burnable)\b/i.test(source);
   const hasMint = /\b(mint|_mint)\b/i.test(source);
   const hasConstructor = /constructor\s*\(/i.test(source);
+
+  // Phase 3.4: Transient storage detection (tstore/tload = reentrancy guard pattern)
+  const hasTransientStorage = /\b(tstore|tload)\b/.test(source);
+
+  // Phase 3.4: Permit2 detection (has built-in chain binding + nonce management)
+  const hasPermit2 = /\b(permit2|Permit2|IAllowanceTransfer|ISignatureTransfer)\b/.test(source) ||
+    /\bpermit2\b/i.test(source);
+
+  // Phase 3.4: Intentional immutability detection (no owner + no pause + no renounce = design choice)
+  // Contracts that are ownerless and non-pausable by design should not be flagged for BS-004
+  const isIntentionallyImmutable = !hasOwnership && !hasPause &&
+    (/\b(ownerless|immutable|non-pausable|no owner)\b/i.test(source) ||
+     (!hasOwnership && !hasPause && functions.length > 0)); // No owner, no pause = likely design choice
 
   return {
     name,
@@ -2392,6 +2425,9 @@ function parseSolidityContract(source: string): ParsedContract {
     has_ownership: hasOwnership,
     has_burn: hasBurn,
     has_mint: hasMint,
+    has_transient_storage: hasTransientStorage,
+    has_permit2: hasPermit2,
+    is_intentionally_immutable: isIntentionallyImmutable,
     line_count: lineCount,
   };
 }
@@ -2467,20 +2503,22 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     recommendations.push("Add access control to withdraw function (onlyOwner or pending withdrawals pattern).");
   }
 
-  // Scenario 4: Emergency freeze detection
+  // Scenario 4: Emergency freeze detection (Phase 3.4: recognizes intentional immutability)
   const pauseFuncs = parsed.functions.filter(f => /\b(pause|unpause|emergencyStop|freeze)\b/i.test(f.name));
   scenarios.push({
     scenario_id: "BS-004",
     scenario_name: "Emergency Freeze",
     description: "Does the contract have an emergency stop / pause mechanism?",
-    risk_level: parsed.has_pause ? "low" : "medium",
+    risk_level: parsed.has_pause ? "low" : parsed.is_intentionally_immutable ? "low" : "medium",
     affected_functions: pauseFuncs.map(f => f.name),
     mitigation: parsed.has_pause
       ? "Pause mechanism detected — verify only authorized parties can pause."
-      : "MEDIUM: No pause/emergency stop detected. Consider adding Pausable pattern for emergency response.",
+      : parsed.is_intentionally_immutable
+        ? "No pause mechanism detected, but contract appears to be intentionally immutable/ownerless (design choice, not vulnerability). Verify this is deliberate."
+        : "MEDIUM: No pause/emergency stop detected. Consider adding Pausable pattern for emergency response.",
     detected: parsed.has_pause,
   });
-  if (!parsed.has_pause) {
+  if (!parsed.has_pause && !parsed.is_intentionally_immutable) {
     recommendations.push("Consider adding OpenZeppelin Pausable pattern for emergency freeze capability.");
   }
 
@@ -2495,33 +2533,65 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     detected: parsed.functions.some(f => /renounce/i.test(f.name)),
   });
 
-  // Scenario 6: Reentrancy risk
+  // Scenario 6: Reentrancy risk (Phase 3.4: detects transient storage + nonReentrant + CEI pattern)
   const externalCalls = parsed.functions.filter(f => f.visibility === "external" || /payable/i.test(f.signature));
   const hasExternalWithBalance = externalCalls.some(f =>
     f.has_require && /\b(balance|amount|value)\b/i.test(f.signature)
   );
+  // Phase 3.4: Check for reentrancy protection mechanisms
+  const functionsWithNonReentrant = parsed.functions.filter(f => f.has_nonReentrant);
+  const functionsWithTransientStorage = parsed.functions.filter(f => f.has_transient_storage);
+  const functionsWithCEI = parsed.functions.filter(f => f.has_checks_effects_interactions);
+  const hasAnyReentrancyProtection = functionsWithNonReentrant.length > 0 ||
+    functionsWithTransientStorage.length > 0 ||
+    parsed.has_transient_storage ||
+    functionsWithCEI.length > 0;
+
+  // Reassess risk: if protection mechanisms exist, downgrade risk
+  let reentrancyRiskLevel: "low" | "medium" | "high" | "critical";
+  if (externalCalls.length === 0) {
+    reentrancyRiskLevel = "low";
+  } else if (hasAnyReentrancyProtection && functionsWithNonReentrant.length >= externalCalls.length * 0.5) {
+    reentrancyRiskLevel = "low"; // Most external functions have nonReentrant
+  } else if (hasAnyReentrancyProtection) {
+    reentrancyRiskLevel = "medium"; // Some protection but not comprehensive
+  } else if (hasExternalWithBalance) {
+    reentrancyRiskLevel = "medium";
+  } else {
+    reentrancyRiskLevel = "high";
+  }
+
   scenarios.push({
     scenario_id: "BS-006",
     scenario_name: "Reentrancy Attack",
     description: "Are external calls with value transfer protected against reentrancy?",
-    risk_level: externalCalls.length === 0 ? "low" : hasExternalWithBalance ? "medium" : "high",
+    risk_level: reentrancyRiskLevel,
     affected_functions: externalCalls.map(f => f.name),
     mitigation: externalCalls.length === 0
       ? "No external/payable functions detected — low reentrancy risk."
-      : "Use checks-effects-interactions pattern and consider ReentrancyGuard.",
-    detected: externalCalls.length > 0,
+      : functionsWithNonReentrant.length > 0 && functionsWithTransientStorage.length > 0
+        ? `Reentrancy protection detected: nonReentrant modifier (${functionsWithNonReentrant.map(f => f.name).join(", ")}) + transient storage guard (${functionsWithTransientStorage.map(f => f.name).join(", ")}). Verify all external functions are protected.`
+        : functionsWithNonReentrant.length > 0
+          ? `nonReentrant modifier detected on: ${functionsWithNonReentrant.map(f => f.name).join(", ")}. Verify all external functions are protected.`
+          : functionsWithTransientStorage.length > 0 || parsed.has_transient_storage
+            ? "Transient storage (tstore/tload) reentrancy guard detected. This IS a valid reentrancy protection mechanism. Verify all external functions use it."
+            : "Use checks-effects-interactions pattern and consider ReentrancyGuard. NOTE: transient storage (tstore/tload) is also a valid reentrancy guard.",
+    detected: externalCalls.length > 0 && !hasAnyReentrancyProtection,
   });
-  if (externalCalls.length > 0) {
-    recommendations.push("Apply checks-effects-interactions pattern and consider OpenZeppelin ReentrancyGuard.");
+  if (externalCalls.length > 0 && !hasAnyReentrancyProtection) {
+    recommendations.push("Apply checks-effects-interactions pattern and consider OpenZeppelin ReentrancyGuard. NOTE: transient storage (tstore/tload) is also a valid reentrancy guard pattern.");
   }
 
-  // Phase 3.3: Scenario 7 — Replay Attack (Nonce & Replay Defense)
+  // Phase 3.3 + 3.4: Scenario 7 — Replay Attack (Nonce & Replay Defense)
+  // Phase 3.4: Recognizes Permit2's built-in chain binding as replay protection
   const nonceFuncs = parsed.functions.filter(f =>
     /\b(nonce|nonces|replay|permit|pullpayment|pull)\b/i.test(f.name) ||
     parsed.modifiers.some(m => /\b(nonce|replay)\b/i.test(m.name))
   );
   const hasNonceMapping = parsed.state_vars.some(v => /\b(nonce|nonces|replay)\b/i.test(v.name));
-  const hasNonceProtection = nonceFuncs.length > 0 || hasNonceMapping;
+  // Phase 3.4: Permit2 has built-in chain binding + nonce management
+  const hasPermit2Protection = parsed.has_permit2;
+  const hasNonceProtection = nonceFuncs.length > 0 || hasNonceMapping || hasPermit2Protection;
   scenarios.push({
     scenario_id: "BS-007",
     scenario_name: "Replay Attack (Nonce Defense)",
@@ -2529,12 +2599,14 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     risk_level: hasNonceProtection ? "low" : "medium",
     affected_functions: nonceFuncs.map(f => f.name),
     mitigation: hasNonceProtection
-      ? `Nonce/replay protection detected: ${nonceFuncs.map(f => f.name).join(", ") || "state variable mapping"}. Verify nonce increments per-user and is unique.`
-      : "MEDIUM: No nonce/replay protection detected. If using EIP-712 permits, ensure nonce tracking (on-chain + DB UNIQUE INDEX on client_address + permit_nonce).",
-    detected: hasNonceProtection,
+      ? hasPermit2Protection
+        ? `Permit2 detected — Permit2 has built-in chain binding and nonce management. Verify Permit2 integration is correct.${nonceFuncs.length > 0 ? ` Additional nonce functions: ${nonceFuncs.map(f => f.name).join(", ")}.` : ""}`
+        : `Nonce/replay protection detected: ${nonceFuncs.map(f => f.name).join(", ") || "state variable mapping"}. Verify nonce increments per-user and is unique.`
+      : "MEDIUM: No nonce/replay protection detected. If using EIP-712 permits, ensure nonce tracking (on-chain + DB UNIQUE INDEX on client_address + permit_nonce). NOTE: If using Permit2, chain binding is built-in.",
+    detected: !hasNonceProtection,
   });
   if (!hasNonceProtection) {
-    recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows.");
+    recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows. NOTE: Permit2 provides built-in chain binding — no additional nonce needed if using Permit2 correctly.");
   }
 
   // Overall risk
