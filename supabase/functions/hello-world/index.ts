@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v4.1.0-frontier — Phase 3.4: False Positive Reduction (transient storage, immutability, Permit2)
+// v4.2.0-frontier — Phase 3.5: Gas Asymmetry DoS Detection (BS-008) + Deadline Buffer Extension (30-60 min)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.1.0-frontier",
+  engine_version: "v4.2.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -200,7 +200,7 @@ function buildMetricsPayload(): Record<string, unknown> {
       "GET /samples": "Multi-tier sample manifests (free)",
       "GET /samples/:tier": "Individual tier sample (free)",
       "GET /metrics": "Live telemetry endpoint (free)",
-      "POST /gateway/dry-run": "Interactive Solidity dry-run with Digital Twin v3.1 matrix + breach simulation (free)",
+      "POST /gateway/dry-run": "Interactive Solidity dry-run with Digital Twin v3.1 matrix + breach simulation + gas asymmetry detection (free)",
       "GET /landing": "Landing page — human-friendly overview (free, HTML)",
     },
     // Phase 2.2: Throughput tracking
@@ -459,7 +459,7 @@ const NODE_MANIFEST = {
       auth: "none",
     },
     "POST /gateway/dry-run": {
-      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation + nonce defense + Algorithmic Nudging urgency signal (free)",
+      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation (8 scenarios incl. gas asymmetry DoS) + nonce defense + Algorithmic Nudging urgency signal (free)",
       billing: "FREE",
       auth: "none",
     },
@@ -1064,8 +1064,8 @@ const PULL_PAYMENT_CONFIG = {
   rpc_url: "https://polygon-bor-rpc.publicnode.com",
   cred_per_usdc: 100,
   usdc_decimals: 6,
-  min_deadline_buffer: 900,     // 15 minutes (IRON RULE #2)
-  max_deadline_buffer: 1800,    // 30 minutes (IRON RULE #2)
+  min_deadline_buffer: 1800,    // 30 minutes (IRON RULE #2 — updated to match Polygon checkpoint interval)
+  max_deadline_buffer: 3600,   // 60 minutes (IRON RULE #2 — updated to match Polygon checkpoint interval)
   max_gas_price: 500000000000,  // 500 gwei (SECURITY PARAMETER #6)
   confirmation_blocks: 2,       // (SECURITY PARAMETER #5)
   poll_interval_ms: 2000,       // ~1 Polygon block
@@ -1772,7 +1772,7 @@ async function genPullPayment(
   }
   trail.push(auditStep("validation", "passed"));
 
-  // 2. Check deadline buffer (IRON RULE #2: 15-30 min)
+  // 2. Check deadline buffer (IRON RULE #2: 30-60 min — matches Polygon checkpoint interval)
   const now = Math.floor(Date.now() / 1000);
   const buffer = deadline - now;
   if (buffer < PULL_PAYMENT_CONFIG.min_deadline_buffer) {
@@ -1780,14 +1780,14 @@ async function genPullPayment(
       `Buffer ${buffer}s < ${PULL_PAYMENT_CONFIG.min_deadline_buffer}s minimum`));
     return envelope("pull_payment", "failed",
       errorPayload("DEADLINE_TOO_SOON",
-        `Deadline buffer must be >= 15 minutes (900s). Current: ${buffer}s`), trail);
+        `Deadline buffer must be >= 30 minutes (1800s). Current: ${buffer}s`), trail);
   }
   if (buffer > PULL_PAYMENT_CONFIG.max_deadline_buffer) {
     trail.push(auditStep("deadline_check", "failed",
       `Buffer ${buffer}s > ${PULL_PAYMENT_CONFIG.max_deadline_buffer}s maximum`));
     return envelope("pull_payment", "failed",
       errorPayload("DEADLINE_TOO_FAR",
-        `Deadline buffer must be <= 30 minutes (1800s). Current: ${buffer}s`), trail);
+        `Deadline buffer must be <= 60 minutes (3600s). Current: ${buffer}s`), trail);
   }
   trail.push(auditStep("deadline_check", "passed", `Buffer: ${buffer}s`));
 
@@ -2240,6 +2240,16 @@ interface ParsedContract {
   has_transient_storage: boolean;  // Phase 3.4: tstore/tload detection (reentrancy guard)
   has_permit2: boolean;            // Phase 3.4: Permit2 usage detection (built-in chain binding)
   is_intentionally_immutable: boolean; // Phase 3.4: no owner + no pause = design choice
+  // Phase 3.5: Gas Asymmetry DoS detection (EVM Protocol-Level Audit)
+  gas_asymmetry: {
+    has_modexp: boolean;            // MODEXP precompile (0x05) calls detected
+    modexp_calls: number;           // Count of MODEXP call sites
+    has_tstore_loop: boolean;      // TSTORE in a loop (>1000 iterations pattern)
+    tstore_count: number;           // Total tstore calls detected
+    cold_access_count: number;      // Unique cold account access patterns (extcodecopy, balance, etc.)
+    risk_level: "low" | "medium" | "high";
+    details: string[];
+  };
   line_count: number;
 }
 
@@ -2412,6 +2422,35 @@ function parseSolidityContract(source: string): ParsedContract {
     (/\b(ownerless|immutable|non-pausable|no owner)\b/i.test(source) ||
      (!hasOwnership && !hasPause && functions.length > 0)); // No owner, no pause = likely design choice
 
+  // Phase 3.5: Gas Asymmetry DoS detection (EVM Protocol-Level Audit V1)
+  // Detects opcode patterns that can cause disproportionate CPU/RAM burden on validators
+  // relative to their gas cost. Based on EVM Protocol-Level Audit findings.
+  const modexpCalls = (source.match(/\b0x05\b\s*\.staticcall|address\s*\(\s*0x05\s*\)|modexp\b/gi) || []).length;
+  const hasModexp = modexpCalls > 0;
+  // TSTORE loop detection: tstore inside a for/while loop with large iteration count
+  const tstoreCount = (source.match(/\btstore\b/gi) || []).length;
+  const hasTstoreLoop = tstoreCount > 0 && /\b(for|while)\s*\([^)]*(\d{3,}|i\s*<\s*\d{3,})/i.test(source);
+  // Cold access patterns: extcodecopy, extcodesize, extcodehash, balance on dynamic addresses
+  const coldAccessMatches = source.match(/\b(extcodecopy|extcodesize|extcodehash|\.balance\b|balanceOf\b)/gi) || [];
+  const coldAccessCount = coldAccessMatches.length;
+  const gasAsymmetryDetails: string[] = [];
+  let gasAsymmetryRisk: "low" | "medium" | "high" = "low";
+  if (hasModexp) {
+    gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s). MODEXP with 256-byte inputs can stall validators ~18s per 30M gas tx.`);
+    gasAsymmetryRisk = "high";
+  }
+  if (hasTstoreLoop) {
+    gasAsymmetryDetails.push(`TSTORE in loop pattern detected: ${tstoreCount} tstore calls. TSTORE at 100 gas/key enables ~9.15MB transient storage per 30M gas tx.`);
+    gasAsymmetryRisk = gasAsymmetryRisk === "high" ? "high" : "medium";
+  }
+  if (coldAccessCount > 100) {
+    gasAsymmetryDetails.push(`High cold access pattern count: ${coldAccessCount} cold access opcodes. Cache-flooding risk: ~5.8s I/O per 30M gas tx.`);
+    gasAsymmetryRisk = gasAsymmetryRisk === "high" ? "high" : "medium";
+  }
+  if (gasAsymmetryDetails.length === 0) {
+    gasAsymmetryDetails.push("No gas asymmetry patterns detected.");
+  }
+
   return {
     name,
     pragma,
@@ -2428,6 +2467,15 @@ function parseSolidityContract(source: string): ParsedContract {
     has_transient_storage: hasTransientStorage,
     has_permit2: hasPermit2,
     is_intentionally_immutable: isIntentionallyImmutable,
+    gas_asymmetry: {
+      has_modexp: hasModexp,
+      modexp_calls: modexpCalls,
+      has_tstore_loop: hasTstoreLoop,
+      tstore_count: tstoreCount,
+      cold_access_count: coldAccessCount,
+      risk_level: gasAsymmetryRisk,
+      details: gasAsymmetryDetails,
+    },
     line_count: lineCount,
   };
 }
@@ -2607,6 +2655,28 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   });
   if (!hasNonceProtection) {
     recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows. NOTE: Permit2 provides built-in chain binding — no additional nonce needed if using Permit2 correctly.");
+  }
+
+  // Phase 3.5: Scenario 8 — Gas Asymmetry DoS (EVM Protocol-Level Audit V1)
+  // Detects opcode patterns that cause disproportionate resource consumption on validators
+  const gasAsym = parsed.gas_asymmetry;
+  scenarios.push({
+    scenario_id: "BS-008",
+    scenario_name: "Gas Asymmetry DoS (Resource Exhaustion)",
+    description: "Does the contract use opcode patterns that can cause disproportionate CPU/RAM burden on validator nodes relative to gas cost?",
+    risk_level: gasAsym.risk_level,
+    affected_functions: gasAsym.has_modexp
+      ? parsed.functions.filter(f => /0x05|modexp/i.test(f.signature)).map(f => f.name)
+      : gasAsym.has_tstore_loop
+        ? parsed.functions.filter(f => f.has_transient_storage).map(f => f.name)
+        : [],
+    mitigation: gasAsym.risk_level === "low"
+      ? "No gas asymmetry patterns detected. Contract uses standard opcode combinations."
+      : gasAsym.details.join(" ") + " Consider: (1) avoiding MODEXP precompile with large inputs, (2) limiting TSTORE loop iterations, (3) caching cold account accesses. Note: This is a protocol-level risk, not a contract bug — but contracts that amplify it are flagged.",
+    detected: gasAsym.risk_level !== "low",
+  });
+  if (gasAsym.risk_level !== "low") {
+    recommendations.push("Gas Asymmetry DoS: " + gasAsym.details.join(" ") + " Mitigate by reducing MODEXP input sizes, limiting TSTORE loop counts, or caching cold account accesses. This is an EVM protocol-level risk — no current EIP addresses MODEXP or TSTORE gas repricing.");
   }
 
   // Overall risk
@@ -3041,7 +3111,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
     nonce_defense: nonceDefense,
     urgency_signal: urgencySignal,
     preview: {
-      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected",
+      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected" && parsed.gas_asymmetry.risk_level !== "high",
       warnings: validation.issues.filter(i => i.severity === "warning").length,
       risk_level: breachSimulation.overall_risk,
       nonce_risk: nonceDefense.replay_risk,
@@ -3051,11 +3121,13 @@ async function dryRunHandler(req: Request): Promise<Response> {
           ? "CRITICAL: Breach simulation detected critical vulnerabilities. Fix before deployment."
           : breachSimulation.overall_risk === "high"
             ? "HIGH: Breach simulation found high-risk vulnerabilities. Review before production."
-            : nonceDefense.replay_risk === "replay_detected"
-              ? "REPLAY DETECTED: Duplicate nonces found in pull_payment_authorizations. Investigate replay attack."
-              : validation.issues.filter(i => i.severity === "warning").length > 0
-                ? "Contract is deployable but has warnings. Review before production."
-                : "Contract passed all checks including breach simulation and nonce defense. Ready for deployment.",
+            : parsed.gas_asymmetry.risk_level === "high"
+              ? "HIGH: Gas Asymmetry DoS patterns detected (MODEXP/TSTORE). Contract can stall validator nodes. Review opcode usage before deployment."
+              : nonceDefense.replay_risk === "replay_detected"
+                ? "REPLAY DETECTED: Duplicate nonces found in pull_payment_authorizations. Investigate replay attack."
+                : validation.issues.filter(i => i.severity === "warning").length > 0
+                  ? "Contract is deployable but has warnings. Review before production."
+                  : "Contract passed all checks including breach simulation, nonce defense, and gas asymmetry detection. Ready for deployment.",
     },
   }, hasErrors ? 422 : 200);
 }
