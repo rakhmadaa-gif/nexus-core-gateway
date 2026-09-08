@@ -11,7 +11,7 @@
 //   5. Edge Function polls for 2-block confirmation (SECURITY PARAMETER #5)
 //   6. After 2 blocks, credits added to virtual_credit_ledger + client_usage
 //
-// GATEWAY SOL: 0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4 (Polygon Mainnet)
+// GATEWAY SOL: 0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683 (Polygon Mainnet, v4.2.0 redeployed 2026-09-08)
 // USDC:        0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 (native, 6 decimals)
 // RPC:         https://polygon-bor-rpc.publicnode.com
 //
@@ -503,7 +503,7 @@ const NODE_MANIFEST = {
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
     version: "v4.0.0-frontier (Phase 3 — LOCKED)",
-    gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+    gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
     usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -1059,7 +1059,7 @@ function calculateServiceCost(serviceType: string, requestsLastMinute: number) {
 // ----------------------------------------------------------------------------
 
 const PULL_PAYMENT_CONFIG = {
-  gateway_address: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+  gateway_address: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
   usdc_address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
   rpc_url: "https://polygon-bor-rpc.publicnode.com",
   cred_per_usdc: 100,
@@ -3276,7 +3276,7 @@ async function handler(req: Request): Promise<Response> {
         extra: {
           name: "USD Coin",
           version: "2",
-          gateway_contract: "0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4",
+          gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
           note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, CRED credited. 1 USDC = 100 CRED.",
         },
       }],
