@@ -49,7 +49,7 @@ Nexus Gateway is a **Machine-to-Machine (M2M) API** that serves other AI agents,
 | Problem | Nexus Solution |
 |---|---|
 | Legal contracts and smart contracts are created separately, often misaligned | Digital Twin v3.1 maps every legal clause to exact code lines (bipolar mapping) |
-| Smart contract security audits are expensive and slow | Free instant dry-run with 7 breach scenarios + nonce/replay defense |
+| Smart contract security audits are expensive and slow | Free instant dry-run with 9 breach scenarios (incl. unbounded iteration DoS, revert-blocking payout, signature binding) + nonce/replay defense |
 | Cross-border (ID/EN) legal agreements are hard to standardize | Built-in bilingual EN/ID legal contract generation |
 | Payment rails for API services are complex | USDC pull-payment on Polygon (EIP-712 Permit → auto-credit) |
 
@@ -73,7 +73,7 @@ curl https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics
 ### 2. Try Dry-Run (Free — No Auth)
 
 ```bash
-# Test any Solidity contract for free — 7 breach scenarios + nonce defense
+# Test any Solidity contract for free — 9 breach scenarios + nonce defense
 curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run \
   -H "Content-Type: application/json" \
   -d '{
@@ -354,7 +354,7 @@ Client Agent ──POST──→ Supabase Edge Function (Deno/TypeScript)
 - **Database:** Supabase (PostgreSQL + RLS)
 - **Blockchain:** Polygon PoS (EIP-712 Permit, ERC-20 TransferFrom)
 - **Payment:** USDC native (6 decimals) via pull-payment architecture
-- **Security:** 7 breach scenarios, nonce anti-replay, 2-block confirmation, max gas enforcement
+- **Security:** 9 breach scenarios (incl. BS-009 Unbounded Iteration DoS), nonce anti-replay, signature binding, 2-block confirmation, max gas enforcement
 
 ---
 

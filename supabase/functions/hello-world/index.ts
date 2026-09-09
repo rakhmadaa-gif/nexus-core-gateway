@@ -1,6 +1,6 @@
 // ============================================================================
 // NEXUS PAYLOAD ENGINE - SUPABASE EDGE FUNCTION (MONOLITH GATEWAY)
-// v4.2.0-frontier — Phase 3.5: Gas Asymmetry DoS Detection (BS-008) + Deadline Buffer Extension (30-60 min)
+// v4.3.0-frontier — Phase 3.6: Unbounded Iteration DoS Detection (BS-009: dust spam OOG + revert-blocking batch payout) + Signature Binding Analysis (BS-007 extension)
 // ============================================================================
 //
 // PULL PAYMENT FLOW:
@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.2.0-frontier",
+  engine_version: "v4.3.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -459,7 +459,7 @@ const NODE_MANIFEST = {
       auth: "none",
     },
     "POST /gateway/dry-run": {
-      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation (8 scenarios incl. gas asymmetry DoS) + nonce defense + Algorithmic Nudging urgency signal (free)",
+      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation (9 scenarios incl. unbounded iteration DoS + revert-blocking payout + signature binding) + nonce defense + Algorithmic Nudging urgency signal (free)",
       billing: "FREE",
       auth: "none",
     },
@@ -2204,6 +2204,15 @@ interface ParsedFunction {
   has_nonReentrant: boolean;          // Phase 3.4: nonReentrant modifier detection
   has_transient_storage: boolean;    // Phase 3.4: tstore/tload reentrancy guard detection
   has_checks_effects_interactions: boolean; // Phase 3.4: CEI pattern detection
+  // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS flags
+  has_push: boolean;                 // appends to a storage array (.push())
+  has_length_cap: boolean;            // require() cap on array length
+  has_loop: boolean;                  // for/while loop present
+  has_array_iteration: boolean;       // loop iterates a .length-bounded storage array
+  has_external_call_in_loop: boolean; // external call (.call/.transfer/.send) inside loop body
+  has_try_catch: boolean;             // try/catch isolation present
+  has_ecrecover: boolean;             // ecrecover/ECDSA.recover signature verification
+  has_access_control: boolean;        // onlyOwner/role modifier or msg.sender require guard
 }
 
 interface ParsedEvent {
@@ -2247,6 +2256,21 @@ interface ParsedContract {
     has_tstore_loop: boolean;      // TSTORE in a loop (>1000 iterations pattern)
     tstore_count: number;           // Total tstore calls detected
     cold_access_count: number;      // Unique cold account access patterns (extcodecopy, balance, etc.)
+    risk_level: "low" | "medium" | "high";
+    details: string[];
+  };
+  // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS + Signature Binding
+  unbounded_iteration: {
+    public_append_functions: string[];    // attacker-growable array appends (uncapped, no access control)
+    iteration_functions: string[];        // functions looping over .length-bounded storage arrays
+    revert_blocking_functions: string[];  // external call in loop without try/catch
+    risk_level: "low" | "medium" | "high";
+    details: string[];
+  };
+  signature_binding: {
+    has_signature_verification: boolean;  // ecrecover/ECDSA/EIP-712 present
+    binds_msg_sender: boolean;            // recovered signer checked against msg.sender
+    binds_contract_or_chain: boolean;     // address(this)/block.chainid in digest construction
     risk_level: "low" | "medium" | "high";
     details: string[];
   };
@@ -2348,6 +2372,34 @@ function parseSolidityContract(source: string): ParsedContract {
     const hasCEI = /(\bdelete\b|\b=\s*0\b|\b=\s*address\(0\)\b).*\b(\.call|\.transfer|\.send)\b/s.test(funcBody) ||
       /(\bdelete\b|\b=\s*0\b).*\brequire\b/s.test(funcBody);
 
+    // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS per-function flags
+    const hasPush = /\.push\s*\(/.test(funcBody);
+    const hasLengthCap = /require\s*\([^)]*\.length\s*(<|<=|==)/.test(funcBody);
+    const hasLoop = /\b(for|while)\s*\(/.test(funcBody);
+    // External call INSIDE the loop body only (brace-matched region, not after the loop)
+    let hasExternalCallInLoop = false;
+    if (hasLoop) {
+      const loopStartIdx = funcBody.search(/\b(for|while)\s*\(/);
+      const braceOpen = funcBody.indexOf("{", loopStartIdx);
+      if (braceOpen >= 0) {
+        let depth = 1;
+        let idx = braceOpen + 1;
+        while (idx < funcBody.length && depth > 0) {
+          if (funcBody[idx] === "{") depth++;
+          else if (funcBody[idx] === "}") depth--;
+          idx++;
+        }
+        const loopBody = funcBody.substring(braceOpen + 1, Math.max(braceOpen + 1, idx - 1));
+        // External call patterns: raw .call{value:}(...) / .call(...) / .transfer(...) / .send(...)
+        hasExternalCallInLoop = /\.call\s*(\{|\()|\.transfer\s*\(|\.send\s*\(/.test(loopBody);
+      }
+    }
+    const hasTryCatch = /\btry\s+\S+/.test(funcBody) && /\bcatch\b/.test(funcBody);
+    const hasEcrecover = /\b(ecrecover\s*\(|ECDSA\.recover|SignatureChecker)/.test(funcBody);
+    const hasAccessControl = modifiers.some(m => /\bonly(owner|role|admin|authorized|operator|minter|pauser|signer)\b/i.test(m)) ||
+      /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody);
+    const hasArrayIteration = hasLoop && /\.length\b/.test(funcBody);
+
     functions.push({
       name: funcName,
       signature: `function ${funcName}(${params}) ${modifiersRaw.replace(/\s+/g, " ").trim()}`.trim(),
@@ -2359,6 +2411,14 @@ function parseSolidityContract(source: string): ParsedContract {
       has_nonReentrant: hasNonReentrant,
       has_transient_storage: hasTransientStorage,
       has_checks_effects_interactions: hasCEI,
+      has_push: hasPush,
+      has_length_cap: hasLengthCap,
+      has_loop: hasLoop,
+      has_array_iteration: hasArrayIteration,
+      has_external_call_in_loop: hasExternalCallInLoop,
+      has_try_catch: hasTryCatch,
+      has_ecrecover: hasEcrecover,
+      has_access_control: hasAccessControl,
     });
   }
 
@@ -2451,6 +2511,90 @@ function parseSolidityContract(source: string): ParsedContract {
     gasAsymmetryDetails.push("No gas asymmetry patterns detected.");
   }
 
+  // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS detection
+  // Based on real bounty classes: Belong Staking #57717/#57790 (dust spam → O(n) withdraw OOG),
+  // Belong #57458 (revert-blocking batch payout), Plume #51369 (stakeOnBehalf bloat).
+  const payoutish = (name: string) =>
+    /\b(withdraw|claim|payout|release|pay|distribute|reward|airdrop|refund|harvest)\b/i.test(name);
+  const publicAppendFuncs = functions.filter(f =>
+    (f.visibility === "public" || f.visibility === "external") &&
+    f.has_push && !f.has_length_cap && !f.has_access_control
+  );
+  const iterationFuncs = functions.filter(f => f.has_array_iteration);
+  const revertBlockingFuncs = functions.filter(f =>
+    f.has_external_call_in_loop && !f.has_try_catch
+  );
+  const unboundedDetails: string[] = [];
+  let unboundedRisk: "low" | "medium" | "high" = "low";
+  // Combo: attacker-growable array + iteration in payout/withdraw path → dust spam freeze
+  const dustSpamTargets = iterationFuncs.filter(f => payoutish(f.name) || f.has_external_call_in_loop);
+  if (publicAppendFuncs.length > 0 && dustSpamTargets.length > 0) {
+    unboundedRisk = "high";
+    unboundedDetails.push(
+      `HIGH: Attacker-growable array append without cap or access control in: ${publicAppendFuncs.map(f => f.name).join(", ")}. ` +
+      `Combined with O(n) iteration over storage in payout/withdraw path: ${dustSpamTargets.map(f => f.name).join(", ")}. ` +
+      `An attacker can spam dust entries against a victim (cost: pennies) until withdraw/claim exceeds the block gas limit — funds permanently frozen (class: Belong Staking #57717/#57790, Plume #51369).`
+    );
+  } else if (publicAppendFuncs.length > 0) {
+    unboundedRisk = "medium";
+    unboundedDetails.push(
+      `Public/external function(s) append to storage arrays without length cap or access control: ${publicAppendFuncs.map(f => f.name).join(", ")}. ` +
+      `If any other function iterates these arrays, gas griefing becomes possible. Add a per-user length cap (require(arr.length < MAX)) or access control.`
+    );
+  } else if (iterationFuncs.length > 0 && !functions.some(f => f.has_length_cap)) {
+    // Only flag iteration-only when NO length cap exists anywhere in the contract —
+    // a require(arr.length < N) elsewhere shows the developer bounded array growth.
+    const uncappedLoops = iterationFuncs.filter(f => !/\b(bound|limit|cap|max)\b/i.test(f.signature));
+    if (uncappedLoops.length > 0) {
+      unboundedRisk = "medium";
+      unboundedDetails.push(
+        `Loop(s) iterate storage arrays whose length may grow unbounded: ${uncappedLoops.map(f => f.name).join(", ")}. ` +
+        `Verify array growth is capped or provide index-based partial withdrawal.`
+      );
+    }
+  }
+  // Revert-Blocking: external call inside loop without try/catch (Belong #57458 class)
+  if (revertBlockingFuncs.length > 0) {
+    unboundedDetails.push(
+      `External call(s) inside loop without try/catch isolation: ${revertBlockingFuncs.map(f => f.name).join(", ")}. ` +
+      `A single reverting/malicious receiver blocks the ENTIRE batch — all other payees' funds freeze (Revert-Blocking DoS, class: Belong #57458). ` +
+      `Use try/catch per-iteration, skip-on-fail accounting, or pull-payment pattern.`
+    );
+    if (unboundedRisk === "low") unboundedRisk = "medium";
+  }
+  if (unboundedDetails.length === 0) {
+    unboundedDetails.push("No unbounded iteration or revert-blocking patterns detected.");
+  }
+
+  // Phase 3.6 (v4.3.0): Signature Binding analysis (BS-007 extension)
+  // Class: Belong #57437/#57854 — signature not bound to msg.sender → front-run DoS / theft.
+  const hasSigVerification = functions.some(f => f.has_ecrecover) ||
+    /\b(ecrecover\s*\(|ECDSA\.recover|SignatureChecker|_hashTypedData|toTypedDataHash|EIP712)\b/.test(source);
+  const bindsMsgSender =
+    /\b(signer|recovered|recoveredaddress|account)\b[^;]{0,80}(==|!=)\s*msg\.sender/i.test(source) ||
+    /msg\.sender\s*(==|!=)\s*[^;]{0,80}\b(signer|recovered|recoveredaddress|account)\b/i.test(source);
+  const bindsContractOrChain =
+    (/address\s*\(\s*this\s*\)/.test(source) && /(keccak256|abi\.encode|toTypedDataHash|_hashTypedData|domainseparator)/i.test(source)) ||
+    /block\.chainid/.test(source);
+  let sigBindingRisk: "low" | "medium" | "high" = "low";
+  const sigBindingDetails: string[] = [];
+  if (hasSigVerification && !hasPermit2) {
+    if (!bindsMsgSender && !bindsContractOrChain) {
+      sigBindingRisk = "medium";
+      sigBindingDetails.push(
+        `MEDIUM: Signature verification detected (ecrecover/ECDSA/EIP-712) but the digest does not appear to bind to msg.sender, address(this), or block.chainid. ` +
+        `Front-run risk: an attacker can observe the signature in mempool and submit it first, permanently blocking or stealing the intended action (class: Belong #57437/#57854). ` +
+        `Bind the signed digest to address(this), block.chainid, and the intended executor (msg.sender).`
+      );
+    } else {
+      sigBindingDetails.push(
+        `Signature verification detected. Binding found: ${bindsMsgSender ? "msg.sender" : ""}${bindsMsgSender && bindsContractOrChain ? " + " : ""}${bindsContractOrChain ? "contract/chain" : ""}. Verify binding covers all signature-gated actions.`
+      );
+    }
+  } else if (hasSigVerification && hasPermit2) {
+    sigBindingDetails.push("Permit2 detected — chain binding and nonce management are built-in.");
+  }
+
   return {
     name,
     pragma,
@@ -2476,6 +2620,20 @@ function parseSolidityContract(source: string): ParsedContract {
       risk_level: gasAsymmetryRisk,
       details: gasAsymmetryDetails,
     },
+    unbounded_iteration: {
+      public_append_functions: publicAppendFuncs.map(f => f.name),
+      iteration_functions: iterationFuncs.map(f => f.name),
+      revert_blocking_functions: revertBlockingFuncs.map(f => f.name),
+      risk_level: unboundedRisk,
+      details: unboundedDetails,
+    },
+    signature_binding: {
+      has_signature_verification: hasSigVerification,
+      binds_msg_sender: bindsMsgSender,
+      binds_contract_or_chain: bindsContractOrChain,
+      risk_level: sigBindingRisk,
+      details: sigBindingDetails,
+    },
     line_count: lineCount,
   };
 }
@@ -2492,22 +2650,26 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   const recommendations: string[] = [];
 
   // Scenario 1: Unauthorized minting
+  // Phase 3.6 (v4.3.0): access control via modifier (onlyOwner etc.) now recognized —
+  // previously a mint() with onlyOwner but no in-body require() was falsely flagged critical.
   const mintFuncs = parsed.functions.filter(f => /\b(mint|_mint)\b/i.test(f.name));
   const mintHasRequire = mintFuncs.some(f => f.has_require);
+  const mintHasAccessControl = mintFuncs.some(f => f.has_access_control);
+  const mintProtected = mintHasRequire || mintHasAccessControl;
   scenarios.push({
     scenario_id: "BS-001",
     scenario_name: "Unauthorized Minting",
     description: "Can an attacker mint tokens without authorization?",
-    risk_level: mintFuncs.length === 0 ? "low" : mintHasRequire ? "low" : "critical",
+    risk_level: mintFuncs.length === 0 ? "low" : mintProtected ? "low" : "critical",
     affected_functions: mintFuncs.map(f => f.name),
     mitigation: mintFuncs.length === 0
       ? "No mint function detected — not applicable."
-      : mintHasRequire
-        ? "Mint function has require() guards — verify access control (onlyOwner)."
-        : "CRITICAL: Mint function lacks require() guards. Add access control (onlyOwner modifier).",
-    detected: mintFuncs.length > 0 && !mintHasRequire,
+      : mintProtected
+        ? "Mint function has require() guards and/or access control modifier (onlyOwner/role-based) — verify the modifier is applied correctly."
+        : "CRITICAL: Mint function lacks require() guards and access control. Add access control (onlyOwner modifier).",
+    detected: mintFuncs.length > 0 && !mintProtected,
   });
-  if (mintFuncs.length > 0 && !mintHasRequire) {
+  if (mintFuncs.length > 0 && !mintProtected) {
     recommendations.push("Add access control to mint function (onlyOwner or role-based).");
   }
 
@@ -2532,22 +2694,25 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   }
 
   // Scenario 3: Fund drain via withdraw
+  // Phase 3.6 (v4.3.0): access control via modifier now recognized (same FP fix as BS-001).
   const withdrawFuncs = parsed.functions.filter(f => /\b(withdraw|withdrawal|claim)\b/i.test(f.name));
   const withdrawHasRequire = withdrawFuncs.some(f => f.has_require);
+  const withdrawHasAccessControl = withdrawFuncs.some(f => f.has_access_control);
+  const withdrawProtected = withdrawHasRequire || withdrawHasAccessControl;
   scenarios.push({
     scenario_id: "BS-003",
     scenario_name: "Fund Drain via Withdrawal",
     description: "Can anyone withdraw funds without authorization?",
-    risk_level: withdrawFuncs.length === 0 ? "low" : withdrawHasRequire ? "low" : "critical",
+    risk_level: withdrawFuncs.length === 0 ? "low" : withdrawProtected ? "low" : "critical",
     affected_functions: withdrawFuncs.map(f => f.name),
     mitigation: withdrawFuncs.length === 0
       ? "No withdraw function detected — not applicable."
-      : withdrawHasRequire
-        ? "Withdraw function has require() guards — verify caller authorization."
-        : "CRITICAL: Withdraw function lacks require() guards. Add caller authorization.",
-    detected: withdrawFuncs.length > 0 && !withdrawHasRequire,
+      : withdrawProtected
+        ? "Withdraw function has require() guards and/or access control — verify caller authorization logic."
+        : "CRITICAL: Withdraw function lacks require() guards and access control. Add caller authorization.",
+    detected: withdrawFuncs.length > 0 && !withdrawProtected,
   });
-  if (withdrawFuncs.length > 0 && !withdrawHasRequire) {
+  if (withdrawFuncs.length > 0 && !withdrawProtected) {
     recommendations.push("Add access control to withdraw function (onlyOwner or pending withdrawals pattern).");
   }
 
@@ -2657,6 +2822,18 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows. NOTE: Permit2 provides built-in chain binding — no additional nonce needed if using Permit2 correctly.");
   }
 
+  // Phase 3.6 (v4.3.0): Extend BS-007 with Signature Binding analysis (front-run class)
+  const sigBinding = parsed.signature_binding;
+  if (sigBinding.risk_level === "medium") {
+    const bs007 = scenarios.find(s => s.scenario_id === "BS-007");
+    if (bs007) {
+      bs007.risk_level = "medium";
+      bs007.detected = true;
+      bs007.mitigation = bs007.mitigation + " ADDITIONAL (Signature Binding): " + sigBinding.details.join(" ");
+    }
+    recommendations.push("Signature Binding: include address(this), block.chainid, and the intended executor (msg.sender) in every signed digest to prevent front-running of signature-gated actions (Belong #57437/#57854 class).");
+  }
+
   // Phase 3.5: Scenario 8 — Gas Asymmetry DoS (EVM Protocol-Level Audit V1)
   // Detects opcode patterns that cause disproportionate resource consumption on validators
   const gasAsym = parsed.gas_asymmetry;
@@ -2677,6 +2854,29 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   });
   if (gasAsym.risk_level !== "low") {
     recommendations.push("Gas Asymmetry DoS: " + gasAsym.details.join(" ") + " Mitigate by reducing MODEXP input sizes, limiting TSTORE loop counts, or caching cold account accesses. This is an EVM protocol-level risk — no current EIP addresses MODEXP or TSTORE gas repricing.");
+  }
+
+  // Phase 3.6 (v4.3.0): Scenario 9 — Unbounded Iteration DoS (BS-009)
+  // Real bounty classes: dust spam OOG freeze (Belong #57717/#57790, Plume #51369)
+  // + revert-blocking batch payout (Belong #57458).
+  const unbounded = parsed.unbounded_iteration;
+  scenarios.push({
+    scenario_id: "BS-009",
+    scenario_name: "Unbounded Iteration DoS (Dust Spam / Revert-Blocking Payout)",
+    description: "Can an attacker grow a per-user storage array without cap, causing OOG on withdraw/claim paths (permanent fund freeze)? Can one reverting receiver block an entire batch payout?",
+    risk_level: unbounded.risk_level,
+    affected_functions: [...new Set([
+      ...unbounded.public_append_functions,
+      ...unbounded.iteration_functions,
+      ...unbounded.revert_blocking_functions,
+    ])],
+    mitigation: unbounded.risk_level === "low"
+      ? "No unbounded iteration or revert-blocking patterns detected."
+      : unbounded.details.join(" ") + " Mitigations: (1) cap per-user array growth — require(arr.length < MAX_STAKES); (2) use try/catch or pull-payment pattern for batch payouts so one reverting receiver cannot block others; (3) allow index-based partial withdrawal; (4) add access control to on-behalf-of deposit functions.",
+    detected: unbounded.risk_level !== "low",
+  });
+  if (unbounded.risk_level !== "low") {
+    recommendations.push("Unbounded Iteration DoS (BS-009): " + unbounded.details.join(" "));
   }
 
   // Overall risk
@@ -3092,6 +3292,9 @@ async function dryRunHandler(req: Request): Promise<Response> {
         has_burn: parsed.has_burn,
         has_mint: parsed.has_mint,
       },
+      // Phase 3.6 (v4.3.0): BS-009 + signature binding analysis
+      unbounded_iteration: parsed.unbounded_iteration,
+      signature_binding: parsed.signature_binding,
     },
     digital_twin_v3_matrix: {
       version: "v3.1",
@@ -3111,7 +3314,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
     nonce_defense: nonceDefense,
     urgency_signal: urgencySignal,
     preview: {
-      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected" && parsed.gas_asymmetry.risk_level !== "high",
+      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected" && parsed.gas_asymmetry.risk_level !== "high" && parsed.unbounded_iteration.risk_level !== "high",
       warnings: validation.issues.filter(i => i.severity === "warning").length,
       risk_level: breachSimulation.overall_risk,
       nonce_risk: nonceDefense.replay_risk,
@@ -3121,13 +3324,15 @@ async function dryRunHandler(req: Request): Promise<Response> {
           ? "CRITICAL: Breach simulation detected critical vulnerabilities. Fix before deployment."
           : breachSimulation.overall_risk === "high"
             ? "HIGH: Breach simulation found high-risk vulnerabilities. Review before production."
-            : parsed.gas_asymmetry.risk_level === "high"
-              ? "HIGH: Gas Asymmetry DoS patterns detected (MODEXP/TSTORE). Contract can stall validator nodes. Review opcode usage before deployment."
-              : nonceDefense.replay_risk === "replay_detected"
+            : parsed.unbounded_iteration.risk_level === "high"
+              ? "HIGH: Unbounded Iteration DoS detected (BS-009). Attacker can freeze victim funds via dust spam or block batch payouts via revert. Fix before deployment."
+              : parsed.gas_asymmetry.risk_level === "high"
+                ? "HIGH: Gas Asymmetry DoS patterns detected (MODEXP/TSTORE). Contract can stall validator nodes. Review opcode usage before deployment."
+                : nonceDefense.replay_risk === "replay_detected"
                 ? "REPLAY DETECTED: Duplicate nonces found in pull_payment_authorizations. Investigate replay attack."
                 : validation.issues.filter(i => i.severity === "warning").length > 0
                   ? "Contract is deployable but has warnings. Review before production."
-                  : "Contract passed all checks including breach simulation, nonce defense, and gas asymmetry detection. Ready for deployment.",
+                  : "Contract passed all checks including breach simulation, nonce defense, gas asymmetry detection, and unbounded iteration DoS detection. Ready for deployment.",
     },
   }, hasErrors ? 422 : 200);
 }
