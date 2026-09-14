@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.3.0-frontier",
+  engine_version: "v4.4.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "4.0.0-frontier",
+  version: "4.4.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -440,6 +440,11 @@ const NODE_MANIFEST = {
     },
     "GET /manifest.json": {
       description: "A2A agent discovery manifest (free)",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /pricing.manifest.json": {
+      description: "M2M machine-readable pricing manifest — tariffs, surge tiers, trials, payment rails, escrow settlement flow (free)",
       billing: "FREE",
       auth: "none",
     },
@@ -502,7 +507,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v4.0.0-frontier (Phase 3 — LOCKED)",
+    version: "v4.4.0-frontier (M2M Pricing Manifest + Escrow Settlement Flow)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1039,12 +1044,8 @@ contract Escrow is ReentrancyGuard {
 // ----------------------------------------------------------------------------
 
 function calculateServiceCost(serviceType: string, requestsLastMinute: number) {
-  let baseCredits = 0;
-
-  if (serviceType === "structured_data") baseCredits = 20;
-  else if (serviceType === "code_modules") baseCredits = 120;
-  else if (serviceType === "legal_code") baseCredits = 29900;
-  else if (serviceType === "error") baseCredits = 0;
+  // v4.4.0: tariffs derive from PRICING_MODEL single source of truth
+  const baseCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 0;
 
   let multiplier = 1.0;
   if (requestsLastMinute > 50) multiplier = 2.5;
@@ -1083,6 +1084,123 @@ const GATEWAY_ABI = [
 const ERC20_PERMIT_ABI = [
   "function nonces(address owner) external view returns (uint256)",
 ];
+
+// ----------------------------------------------------------------------------
+// 2c-2. PRICING MODEL — SINGLE SOURCE OF TRUTH (v4.4.0)
+// ----------------------------------------------------------------------------
+// All billing surfaces (gatekeeper calculateServiceCost, 402 x402 header,
+// pricing.manifest.json) derive from this constant. No duplicated tariffs.
+// 1 CREDIT = 0.01 USD. USDC = 6 decimals → 1 CRED = 10,000 atomic USDC units.
+
+const PRICING_MODEL = {
+  currency_unit: "CREDIT",
+  usd_per_credit: 0.01,
+  cred_per_usdc: 100,
+  usdc_decimals: 6,
+  atomic_units_per_credit: 10000, // 0.01 USD * 10^6
+  services: {
+    structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
+    code_modules: { base_credits: 120, description: "Audited Code Modules (~$1.20)" },
+    legal_code: { base_credits: 29900, description: "Hybrid Legal-Code Pro (~$299.00)" },
+    error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
+    pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
+  },
+  surge_scaling: [
+    { tier: 1, requests_per_minute: "<= 10", multiplier: 1.0, label: "Base Rate" },
+    { tier: 2, requests_per_minute: "11 - 50", multiplier: 1.5, label: "Elevated Demand" },
+    { tier: 3, requests_per_minute: "> 50", multiplier: 2.5, label: "Priority Pass" },
+  ],
+  trials: {
+    structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial (20 CRED, covers one structured_data call)" },
+    code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: 100 CRED off code_modules — client pays 20 CRED for a 120 CRED service" },
+  },
+};
+
+// ----------------------------------------------------------------------------
+// 2c-3. PRICING MANIFEST — M2M MACHINE-READABLE PRICING DISCOVERY (v4.4.0)
+// ----------------------------------------------------------------------------
+// Free endpoint (GET /pricing.manifest.json), own schema, no billing, no
+// x-client-id. Mirrors the /manifest.json discovery pattern: an orchestrator
+// can fetch tariffs + payment rails + escrow settlement flow in one static
+// read, then make an autonomous purchase decision without human negotiation.
+// ----------------------------------------------------------------------------
+
+const PRICING_MANIFEST = {
+  manifest_type: "pricing",
+  schema_version: "1.0.0",
+  node_id: NODE_IDENTITY.node_id,
+  generated_note: "Static pricing manifest — tariffs, payment rails, and escrow settlement flow for autonomous M2M purchase decisions.",
+  pricing_model: PRICING_MODEL,
+  payment_rails: {
+    primary: {
+      protocol: "EIP-712 / ERC-20 Permit + TransferFrom (Pull Payment)",
+      chain: "polygon-mainnet",
+      chain_id: 137,
+      caip2: "eip155:137",
+      asset: {
+        symbol: "USDC",
+        contract: PULL_PAYMENT_CONFIG.usdc_address,
+        decimals: PULL_PAYMENT_CONFIG.usdc_decimals,
+      },
+      gateway_contract: PULL_PAYMENT_CONFIG.gateway_address,
+      pay_to_treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+      exchange_rate: "1 USDC = 100 CRED",
+      how_to_pay: {
+        endpoint: "POST /",
+        service_type: "pull_payment",
+        auth: "x-client-id header required",
+        params: {
+          permit: "EIP-712 {owner, spender, value, deadline, v, r, s} — spender MUST be the Gateway contract",
+          client_id_hash: "keccak256(x-client-id) as 0x-prefixed bytes32",
+        },
+      },
+      security_parameters: {
+        min_deadline_buffer_s: PULL_PAYMENT_CONFIG.min_deadline_buffer,
+        max_deadline_buffer_s: PULL_PAYMENT_CONFIG.max_deadline_buffer,
+        max_gas_price_wei: PULL_PAYMENT_CONFIG.max_gas_price,
+        confirmation_blocks: PULL_PAYMENT_CONFIG.confirmation_blocks,
+        nonce_anti_replay: "UNIQUE INDEX on (client_address, permit_nonce) in pull_payment_authorizations",
+      },
+    },
+    x402_signaling: {
+      description: "All 402 Payment Required responses carry an x402 v2 payment-required header (base64 JSON) with accepts[] — exact scheme, eip155:137, USDC atomic amounts, treasury payTo.",
+      spec_compatibility: "x402Version: 2",
+    },
+  },
+  escrow_settlement_flow: {
+    model: "hold-and-settle virtual credit escrow",
+    description: "Funds are pulled into the virtual credit ledger and held as CRED balance. CRED is only consumed (settled) when a paid service executes successfully. If a paid call fails after charge, the virtual credit ledger rolls back the charge (DB-only refund — no on-chain USDC movement).",
+    states: [
+      { state: "authorized", description: "Client signs EIP-712 permit; Gateway verifies signature, deadline buffer (30-60 min), gas price cap, and nonce uniqueness.", transition: "pull" },
+      { state: "pulled", description: "Gateway.sol executes transferFrom; USDC moves client → treasury. 2-block confirmation required before crediting.", transition: "credit" },
+      { state: "credited", description: "Virtual credit ledger adds CRED to client balance (1 USDC = 100 CRED). Funds now escrowed as spendable balance.", transition: "spend" },
+      { state: "settled", description: "A paid service call executes successfully; gatekeeper deducts final cost (base x surge multiplier) from balance.", transition: "terminal" },
+      { state: "rolled_back", description: "Paid call failed after charge — ledger reverses the deduction (DB-only refund, Iron Rule #3). On-chain USDC is NOT returned.", transition: "terminal" },
+    ],
+    guarantee: "No CRED is consumed by failed calls. Unspent balance persists indefinitely and remains spendable on any service.",
+    iron_rules: [
+      "Gateway.sol IS the EIP-712 spender (never the treasury wallet directly)",
+      "Deadline buffer 30-60 min enforced on-chain + DB (matched to Polygon PoS checkpoint interval)",
+      "Virtual Credit Ledger rollback for failed API calls (DB-only refund, no on-chain USDC return)",
+      "Cryptographic nonce anti-replay (UNIQUE INDEX on client_address + permit_nonce)",
+      "2-block confirmation before crediting",
+      "Max Gas Price enforcement (500 gwei cap in Gateway.sol)",
+    ],
+  },
+  endpoints: {
+    "GET /pricing.manifest.json": { description: "This pricing manifest (free)", billing: "FREE", auth: "none" },
+    "GET /manifest.json": { description: "A2A agent discovery manifest (free)", billing: "FREE", auth: "none" },
+    "GET /metrics": { description: "Live telemetry — current surge tier can be inferred from throughput stats (free)", billing: "FREE", auth: "none" },
+    "POST /": { description: "Paid services (structured_data, code_modules, legal_code) + free pull_payment top-up", billing: "per-service CRED charge", auth: "x-client-id header required" },
+  },
+  registry: {
+    gateway_contract: PULL_PAYMENT_CONFIG.gateway_address,
+    treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+    chain: "polygon-mainnet",
+    source_repo: "https://github.com/rakhmadaa-gif/nexus-core-gateway",
+    docs: "nexus-pull-payment-api-v3.md",
+  },
+};
 
 // ----------------------------------------------------------------------------
 // 3. GATEKEEPER MODULE (SUPABASE DB & QUOTA ENFORCER)
@@ -3391,7 +3509,18 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse(buildMetricsPayload(), 200);
   }
 
+  // 2b. Pricing Manifest Endpoint (v4.4.0 — M2M pricing discovery)
+  // Free, own schema, no billing, no x-client-id. Static read for
+  // orchestrator autonomous purchase decisions.
+  // NOTE: must be matched BEFORE the manifest catch-all below, since
+  // "/pricing.manifest.json" also ends with "manifest.json".
+  if (url.pathname.endsWith("/pricing.manifest.json")) {
+    return jsonResponse(PRICING_MANIFEST, 200);
+  }
+
   // 2. Manifest Discovery Endpoint
+  // (GET catch-all preserved: any GET without a matching route returns the A2A
+  // manifest.)
   if (req.method === "GET" || url.pathname.endsWith("/manifest.json")) {
     return jsonResponse(NODE_MANIFEST, 200);
   }
@@ -3453,15 +3582,9 @@ async function handler(req: Request): Promise<Response> {
     const denied = gatekeeper.deniedResponse as Record<string, unknown>;
 
     // Build x402 standard payment-required response
-    const serviceCosts: Record<string, number> = {
-      structured_data: 20,
-      code_modules: 120,
-      legal_code: 29900,
-    };
-    const costCredits = serviceCosts[serviceType] ?? 20;
-    // Convert CRED to USDC atomic units (1 CRED = 0.01 USD, USDC has 6 decimals)
-    // 20 CRED = $0.20 = 200000 atomic units
-    const amountUsdcAtomic = (costCredits * 10000).toString();
+    // v4.4.0: tariffs + atomic conversion derive from PRICING_MODEL single source of truth
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 20;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
 
     const x402PaymentRequired = {
       x402Version: 2,
