@@ -211,3 +211,57 @@ Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. N
 - Next check: 2026-09-14 02:00 UTC (weekly Monday 09:00 WIB)
 - If dev team responds: discuss findings, share full PoC, propose fix
 - If no response by Week 2: polite follow-up comment on issue #33
+
+---
+
+## Monitoring Check #2 — 2026-09-14 02:00 UTC (Week 2)
+
+### Summary
+
+| Target | Issue State | Issue Comments | Issue Reactions | PR State | PR Merged | PR Review Comments | PR Reactions |
+|--------|------------|----------------|-----------------|----------|-----------|-------------------|--------------|
+| sqrtDAO/contracts #113/#114 | OPEN | 0 | 0 | OPEN | No | 0 | 0 |
+| z-fi/zFi #23/#24 | OPEN | 0 | 0 | **MERGED** ✅ | **YES** (2026-09-08 10:24 UTC) | 0 | 0 |
+| gigahooker/hookers-contracts #2/#3 | OPEN | 0 | 0 | OPEN | No | 0 | 0 |
+
+### 🎯 MILESTONE: z-fi PR #24 MERGED
+
+**First merged PR of the entire infiltration campaign.**
+
+| Detail | Value |
+|--------|-------|
+| PR | [z-fi/zFi#24](https://github.com/z-fi/zFi/pull/24) — "Fix: Add nonReentrant to claimTap for defense-in-depth" |
+| Merged at | 2026-09-08 10:24:10 UTC (2 days after submission) |
+| Merged by | **z0r0z** (repo owner) |
+| Merge commit | fe8a6cbf8158ce821a5cbc869a7bea5314b4c854 |
+| Diff | +1/−1 (the single-line nonReentrant fix) |
+
+**Significance:** Silent merge — zero comments, zero review feedback, owner z0r0z simply merged the fix. This validates the Phase 1 playbook: dry-run audit → issue + PR with minimal diff → maintainer acts on clean, small, defense-in-depth fixes. z-fi was correctly identified in Week 1 as the most likely target to respond (most active repo, 17 stars).
+
+**Reputation impact:** rakhmadaa-gif now has a merged security PR in a live DeFi repo (zFi CollectorVault). Add to track record: Solady #1562, Confetti GHSA-3g9w-x8qp-2qpq, tempo-std #145, Uniswap #1073, **z-fi #24 (MERGED)**.
+
+### Repo Activity Status (Week 2)
+
+| Repo | Archived | Last Push | Open Issues | Stars |
+|------|----------|-----------|-------------|-------|
+| sqrtDAO/contracts | No | 2026-09-13 | 117 | 2 |
+| z-fi/zFi | No | 2026-09-12 | 9 | 17 |
+| gigahooker/hookers-contracts | No | 2026-08-04 | 3 | 1 |
+
+### Analysis
+
+- **z-fi #24 MERGED** — campaign's first merged PR. Issue #23 remains open (typical: issue kept open as reference while fix is merged via PR).
+- **sqrtDAO**: repo active (pushed 2026-09-13, yesterday) but issue #113/PR #114 untouched since submission 8 days ago. 117 open issues — maintainers not triaging. Low priority.
+- **gigahooker**: fully dormant (no push since 2026-08-04, 41 days). Issue #2/PR #3 unlikely to ever get response. Consider closing our own PR #3 to keep fork/PR hygiene, or leave as passive signal.
+- Zero engagement on all 3 issues, zero comments on all PRs. The merge came without any communication — consistent with the "small clean fix gets silently merged" pattern.
+
+### Verdict
+
+**STATUS: 1 MERGED PR (z-fi #24) — campaign validated. 2 targets dormant/unresponsive.**
+
+### Next Steps
+
+- sqrtDAO + gigahooker: no action; keep issues open as passive discovery surface. Next check 2026-09-21 02:00 UTC.
+- z-fi: campaign goal achieved for this target. Optionally post a brief thank-you comment on merged PR #24 (low-risk reciprocity touchpoint) — needs user approval.
+- Consider closing gigahooker PR #3 (dormant repo, 41 days no push) to keep contribution profile clean — needs user approval.
+- Update GitHub profile README track record to include z-fi #24 merged PR — needs user approval (profile repo is user-managed).
