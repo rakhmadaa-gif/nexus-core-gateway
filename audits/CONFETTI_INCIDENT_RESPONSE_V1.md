@@ -49,7 +49,7 @@
 
 ## 4. Embargo note (why this report is deliberately incomplete)
 
-The HIGH-severity finding's technical details (phantom-vote mechanics, PoC code, exploit parameters) remain under embargo per the maintainer's request until GHSA-3g9w-x8qp-2qpq is published. This report documents the **process** (timeline, methodology, verification) without disclosing the **payload**. A full technical appendix will be added after publication.
+The HIGH-severity finding’s technical details were under embargo until GHSA-3g9w-x8qp-2qpq was published (2026-09-15 17:39 UTC). The full technical appendix is now published: [CONFETTI_PHANTOM_VOTE_TECHNICAL_APPENDIX.md](./CONFETTI_PHANTOM_VOTE_TECHNICAL_APPENDIX.md). This report documents the **process** (timeline, methodology, verification) without disclosing the **payload**. A full technical appendix is now published: [CONFETTI_PHANTOM_VOTE_TECHNICAL_APPENDIX.md](./CONFETTI_PHANTOM_VOTE_TECHNICAL_APPENDIX.md) — GHSA published 2026-09-15 17:39 UTC.
 
 ---
 
