@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.4.0-frontier",
+  engine_version: "v4.5.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "4.4.0-frontier",
+  version: "4.5.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -479,8 +479,8 @@ const NODE_MANIFEST = {
     conversion_rate: "1 CREDIT = 0.01 USD",
     services: {
       structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
-      code_modules: { base_credits: 120, description: "Audited Code Modules (~$1.20)" },
-      legal_code: { base_credits: 29900, description: "Hybrid Legal-Code Pro (~$299.00)" },
+      code_modules: { base_credits: 120, description: "EVM Sentinel Quick Scan (~$1.20)" },
+      legal_code: { base_credits: 45000, description: "Hybrid Legal-Code Pro (~$450.00 Standard tier; Light $300 / Standard $450 / Enterprise $800)" },
       error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
       pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
     },
@@ -507,7 +507,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v4.4.0-frontier (M2M Pricing Manifest + Escrow Settlement Flow)",
+    version: "v4.5.0-frontier (Tiered Legal-Code Pricing + EVM Sentinel Quick Scan Label)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -660,8 +660,8 @@ contract TokenSale is ERC20 {
     {
       tier_id: "tier2",
       name: "NFT Minting & Royalty Agreement",
-      price_usd: 500,
-      price_credits: 50000,
+      price_usd: 450,
+      price_credits: 45000,
       service_type: "legal_code",
       description: "ERC-721 NFT contract with minting function, token URI storage, and royalty terms. Suitable for digital art and collectibles platforms.",
       artifacts: {
@@ -1043,9 +1043,15 @@ contract Escrow is ReentrancyGuard {
 // 2. TREASURY & BILLING MODULE (DYNAMIC TIERING ENGINE)
 // ----------------------------------------------------------------------------
 
-function calculateServiceCost(serviceType: string, requestsLastMinute: number) {
+function calculateServiceCost(serviceType: string, requestsLastMinute: number, legalTier?: string) {
   // v4.4.0: tariffs derive from PRICING_MODEL single source of truth
-  const baseCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 0;
+  // v4.5.0: legal_code supports tier param (light/standard/enterprise)
+  let baseCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 0;
+  if (serviceType === "legal_code") {
+    const tier = (legalTier ?? "standard").toLowerCase();
+    const tierDef = PRICING_MODEL.legal_code_tiers[tier as keyof typeof PRICING_MODEL.legal_code_tiers];
+    if (tierDef) baseCredits = tierDef.credits;
+  }
 
   let multiplier = 1.0;
   if (requestsLastMinute > 50) multiplier = 2.5;
@@ -1100,10 +1106,17 @@ const PRICING_MODEL = {
   atomic_units_per_credit: 10000, // 0.01 USD * 10^6
   services: {
     structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
-    code_modules: { base_credits: 120, description: "Audited Code Modules (~$1.20)" },
-    legal_code: { base_credits: 29900, description: "Hybrid Legal-Code Pro (~$299.00)" },
+    code_modules: { base_credits: 120, description: "EVM Sentinel Quick Scan (~$1.20)" },
+    legal_code: { base_credits: 45000, description: "Hybrid Legal-Code Pro (~$450.00 Standard tier; Light $300 / Standard $450 / Enterprise $800)" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
+  },
+  // v4.5.0: legal_code tiered pricing — Light / Standard / Enterprise.
+  // base_credits above = Standard (default when no tier param given).
+  legal_code_tiers: {
+    light: { credits: 30000, usd: 300, description: "Light — basic bilingual legal contract + code mapping" },
+    standard: { credits: 45000, usd: 450, description: "Standard — full bilingual legal contract + Solidity + Digital Twin matrix" },
+    enterprise: { credits: 80000, usd: 800, description: "Enterprise — escrow/arbiter-grade contract + full audit trail + priority SLA" },
   },
   surge_scaling: [
     { tier: 1, requests_per_minute: "<= 10", multiplier: 1.0, label: "Base Rate" },
@@ -1127,7 +1140,7 @@ const PRICING_MODEL = {
 
 const PRICING_MANIFEST = {
   manifest_type: "pricing",
-  schema_version: "1.0.0",
+  schema_version: "1.1.0",
   node_id: NODE_IDENTITY.node_id,
   generated_note: "Static pricing manifest — tariffs, payment rails, and escrow settlement flow for autonomous M2M purchase decisions.",
   pricing_model: PRICING_MODEL,
@@ -1227,7 +1240,7 @@ async function logServiceCall(
   }
 }
 
-async function checkQuotaAndRate(req: Request, serviceType: string) {
+async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: string) {
   const supabase = getSupabaseClient();
 
   const clientId = req.headers.get("x-client-id");
@@ -1286,7 +1299,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string) {
     .gt("last_invoked_at", minuteAgo);
 
   const reqCountLastMinute = (count || 0) + 1;
-  const pricing = calculateServiceCost(serviceType, reqCountLastMinute);
+  const pricing = calculateServiceCost(serviceType, reqCountLastMinute, legalTier);
 
   // Determine payment path
   let paymentPath: "structured_data_trial" | "code_modules_trial" | "balance" | "free" | null = null;
@@ -1328,7 +1341,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string) {
         deniedResponse: {
           status: "failed",
           error_code: "TRIAL_INSUFFICIENT_BALANCE",
-          message: `Code Modules trial active! Add ${remainingCost} CRED ($${(remainingCost / 100).toFixed(2)}) to unlock your 100 CRED discount trial. Full price: ${pricing.finalCost} CRED. You pay only ${remainingCost} CRED.`,
+          message: `EVM Sentinel Quick Scan (code_modules) trial active! Add ${remainingCost} CRED ($${(remainingCost / 100).toFixed(2)}) to unlock your 100 CRED discount trial. Full price: ${pricing.finalCost} CRED. You pay only ${remainingCost} CRED.`,
           client_id: clientId,
           trial_discount: TRIAL_CONFIG.code_modules_trial_credits,
           remaining_cost: remainingCost,
@@ -1342,7 +1355,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string) {
         deniedResponse: {
           status: "failed",
           error_code: "TRIAL_EXPIRED",
-          message: `Your 100 CRED code_modules trial has expired. Top-up to continue using code_modules at full price (${pricing.finalCost} CRED).`,
+          message: `Your 100 CRED EVM Sentinel Quick Scan (code_modules) trial has expired. Top-up to continue using code_modules at full price (${pricing.finalCost} CRED).`,
           client_id: clientId,
         },
       };
@@ -1840,11 +1853,21 @@ async function genLegalCode(params: Record<string, unknown>): Promise<Record<str
   }
   trail.push(auditStep("validation", "passed"));
 
+  // v4.5.0: tier validation (light / standard / enterprise)
+  const tier = String(params.tier ?? "standard").toLowerCase();
+  const tierDef = PRICING_MODEL.legal_code_tiers[tier as keyof typeof PRICING_MODEL.legal_code_tiers];
+  if (!tierDef) {
+    trail.push(auditStep("validation", "failed", `Unknown legal_code tier: ${tier}`));
+    return envelope("legal_code", "failed",
+      errorPayload("INVALID_TIER", `tier must be one of: light, standard, enterprise`), trail);
+  }
+  trail.push(auditStep("validation", "passed", `tier: ${tier} (${tierDef.credits} CRED = $${tierDef.usd})`));
+
   const contract = ctype === "escrow" ? genEscrowLegal(params) : genTokenSaleLegal(params);
   trail.push(auditStep("generation", "completed"));
   trail.push(auditStep("audit", "completed", "Legal-code mapping verified"));
 
-  return envelope("legal_code", "verified", contract, trail);
+  return envelope("legal_code", "verified", { ...contract, pricing_tier: { tier, credits: tierDef.credits, usd: tierDef.usd } }, trail);
 }
 
 // -- 4. Error Payload ---------------------------------------------------------
@@ -3534,6 +3557,9 @@ async function handler(req: Request): Promise<Response> {
     if (reqBody.service_type) serviceType = String(reqBody.service_type);
   } catch (_) {}
 
+  // v4.5.0: legal_code tier extraction (light / standard / enterprise)
+  const legalTier = String((reqBody.params as Record<string, unknown> | undefined)?.tier ?? "standard");
+
   // 4. Pull Payment bypass — adds credits, doesn't charge
   if (serviceType === "pull_payment") {
     const clientId = req.headers.get("x-client-id");
@@ -3573,7 +3599,7 @@ async function handler(req: Request): Promise<Response> {
 
   // 5. Gatekeeper pre-check (for paid services) — Phase 2.2: track stage timing
   const gatekeeperStart = Date.now();
-  const gatekeeper = await checkQuotaAndRate(req, serviceType);
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, legalTier);
   recordStageTiming("gatekeeper", Date.now() - gatekeeperStart);
 
   if (!gatekeeper.allowed) {
@@ -3583,7 +3609,13 @@ async function handler(req: Request): Promise<Response> {
 
     // Build x402 standard payment-required response
     // v4.4.0: tariffs + atomic conversion derive from PRICING_MODEL single source of truth
-    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 20;
+    // v4.5.0: legal_code uses tier-aware cost (light/standard/enterprise)
+    let costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 20;
+    if (serviceType === "legal_code") {
+      const tier = (legalTier ?? "standard").toLowerCase();
+      const tierDef = PRICING_MODEL.legal_code_tiers[tier as keyof typeof PRICING_MODEL.legal_code_tiers];
+      if (tierDef) costCredits = tierDef.credits;
+    }
     const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
 
     const x402PaymentRequired = {
