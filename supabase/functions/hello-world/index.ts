@@ -3715,6 +3715,8 @@ async function dryRunHandler(req: Request): Promise<Response> {
       // Phase 3.6 (v4.3.0): BS-009 + signature binding analysis
       unbounded_iteration: parsed.unbounded_iteration,
       signature_binding: parsed.signature_binding,
+      // Sprint 3 Task 2 (v4.6.0): quantitative gas asymmetry ratio
+      gas_asymmetry: parsed.gas_asymmetry,
     },
     digital_twin_v3_matrix: {
       version: "v3.1",
