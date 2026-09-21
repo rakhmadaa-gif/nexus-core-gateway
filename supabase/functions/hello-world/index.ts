@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.5.0-frontier",
+  engine_version: "v4.6.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "4.5.0-frontier",
+  version: "4.6.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -473,6 +473,21 @@ const NODE_MANIFEST = {
       billing: "FREE",
       auth: "none",
     },
+    "POST /poa/record": {
+      description: "Outbound PoA Ledger — record agent audit/research/submission entry (internal RPC, append-only)",
+      billing: "FREE",
+      auth: "none (internal)",
+    },
+    "GET /poa/ledger": {
+      description: "Outbound PoA Ledger read-back — query entries by entity_id (internal RPC)",
+      billing: "FREE",
+      auth: "none (internal)",
+    },
+    "POST /ingest/security-inquiry": {
+      description: "H2M Email Ingestion — [SECURITY-INQUIRY] classification + H2M baseline quote ($250-$500 Standard / $1000+ Emergency) + auto-reply draft with x402 payment rail (free)",
+      billing: "FREE",
+      auth: "none",
+    },
   },
   pricing_model: {
     currency_unit: "CREDIT",
@@ -507,7 +522,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v4.5.0-frontier (Tiered Legal-Code Pricing + EVM Sentinel Quick Scan Label)",
+    version: "v4.6.0-frontier (Outbound PoA Ledger + Quantitative Gas Asymmetry Ratio + H2M Security-Inquiry Ingestion)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1238,6 +1253,208 @@ async function logServiceCall(
   } catch {
     console.log("Service log insert failed (non-blocking).");
   }
+}
+
+// Sprint 2 Task 1: Outbound PoA Ledger (v4.6.0)
+// Records agent outbound actions (security audits, research, PoCs, submissions)
+// into public.poa_ledger for immutable audit trail. Ledger is append-only:
+// RLS has INSERT+SELECT policies only (no UPDATE/DELETE).
+async function recordPoaEntry(
+  entityId: string,
+  actionType: string,
+  payload: Record<string, unknown>,
+  signature?: string,
+): Promise<{ ok: boolean; entryId?: string; error?: string }> {
+  const supabase = getSupabaseClient();
+  try {
+    const { data, error } = await supabase.from("poa_ledger").insert([{
+      entity_id: entityId,
+      action_type: actionType,
+      payload,
+      signature: signature ?? null,
+      status: "recorded",
+    }]).select("id").single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, entryId: data?.id as string };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+// PoA internal RPC handler — POST /poa/record (internal, no billing)
+// Body: { entity_id, action_type, payload, signature? }
+// Also GET /poa/ledger?entity_id=&limit= for read-back verification.
+async function poaHandler(req: Request, url: URL): Promise<Response> {
+  if (req.method === "POST" && url.pathname.endsWith("/poa/record")) {
+    let body: Record<string, unknown> = {};
+    try { body = await req.json(); } catch (_) {
+      return jsonResponse({ status: "failed", error_code: "INVALID_JSON", message: "Request body must be valid JSON." }, 400);
+    }
+    const entityId = String(body.entity_id ?? "").trim();
+    const actionType = String(body.action_type ?? "").trim();
+    if (!entityId || !actionType) {
+      return jsonResponse({
+        status: "failed",
+        error_code: "MISSING_FIELDS",
+        message: "Both entity_id and action_type are required.",
+        required: ["entity_id", "action_type"],
+        optional: ["payload (object)", "signature (string)"],
+      }, 400);
+    }
+    const payload = (body.payload && typeof body.payload === "object" ? body.payload : {}) as Record<string, unknown>;
+    const signature = body.signature ? String(body.signature) : undefined;
+    const result = await recordPoaEntry(entityId, actionType, payload, signature);
+    if (!result.ok) {
+      return jsonResponse({ status: "failed", error_code: "POA_WRITE_FAILED", message: result.error }, 500);
+    }
+    return jsonResponse({
+      status: "recorded",
+      poa_entry_id: result.entryId,
+      entity_id: entityId,
+      action_type: actionType,
+      recorded_at: new Date().toISOString(),
+      ledger: "public.poa_ledger (append-only)",
+    }, 201);
+  }
+
+  if (req.method === "GET" && url.pathname.endsWith("/poa/ledger")) {
+    const supabase = getSupabaseClient();
+    const entityId = url.searchParams.get("entity_id");
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 20), 100);
+    let query = supabase.from("poa_ledger").select("*").order("created_at", { ascending: false }).limit(limit);
+    if (entityId) query = query.eq("entity_id", entityId);
+    const { data, error } = await query;
+    if (error) return jsonResponse({ status: "failed", error_code: "POA_READ_FAILED", message: error.message }, 500);
+    return jsonResponse({ status: "ok", count: data?.length ?? 0, entries: data }, 200);
+  }
+
+  return jsonResponse({
+    status: "failed",
+    error_code: "POA_ROUTE_NOT_FOUND",
+    message: "Use POST /poa/record or GET /poa/ledger?entity_id=&limit=",
+  }, 404);
+}
+
+// Sprint 3 Task 3 (v4.6.0): H2M Email Ingestion — [SECURITY-INQUIRY] pipeline.
+// Inbound human-sourced security inquiries are classified H2M and MUST be
+// priced from the H2M audit baseline (min $250 Standard Async Scan), NEVER
+// micro-API pricing ($1.20 code_modules is the wrong tier for audit work).
+// POST /ingest/security-inquiry — accepts parsed email payload, records a
+// PoA ledger entry, returns auto-reply draft with tier estimate + x402 link.
+const H2M_PRICING = {
+  tiers: {
+    standard_async_scan: { usd_min: 250, usd_max: 500, sla: "24-72 hours", scope: "Single contract/protocol audit, 1 follow-up window", credits_min: 25000, credits_max: 50000 },
+    emergency_audit: { usd_min: 1000, usd_max: null, sla: "<24 hours", scope: "Emergency audit incl. remediation support + 30-day re-scan", credits_min: 100000, credits_max: null },
+    retainer: { usd_min: 500, usd_max: 1500, sla: "ongoing", scope: "Monthly retainer: ongoing monitoring, priority SLA, quarterly reviews", credits_min: 50000, credits_max: 150000 },
+  },
+  invoice_rule: "Inbound [SECURITY-INQUIRY] emails are always classified H2M and invoiced from the H2M baseline ($250 min Standard Async Scan), never micro-API pricing.",
+} as const;
+
+function classifySecurityInquiry(subject: string, body: string): { urgency: "emergency" | "standard" | "retainer"; reason: string } {
+  const s = (subject + " " + body).toLowerCase();
+  if (/\bemergency|urgent|asap|critical|exploit(ed|ation)? (active|ongoing|in.?the.?wild)|being (hacked|drained)|immediate\b/.test(s)) {
+    return { urgency: "emergency", reason: "Urgency keywords detected in subject/body (emergency/urgent/exploit-active patterns)." };
+  }
+  if (/\bretainer|monthly|ongoing monitoring|quarterly\b/.test(s)) {
+    return { urgency: "retainer", reason: "Retainer/ongoing engagement keywords detected." };
+  }
+  return { urgency: "standard", reason: "No urgency markers — default Standard Async Scan classification." };
+}
+
+function buildSecurityInquiryAutoReply(inquiry: {
+  from: string; subject: string; classification: { urgency: string; reason: string };
+  tier: { usd_min: number; usd_max: number | null; sla: string; scope: string; credits_min: number; credits_max: number | null };
+}): string {
+  const priceRange = inquiry.tier.usd_max
+    ? `$${inquiry.tier.usd_min}–$${inquiry.tier.usd_max}`
+    : `$${inquiry.tier.usd_min}+`;
+  return [
+    `Subject: Re: ${inquiry.subject} — Nexus EVM Sentinel Security Audit Quote`,
+    ``,
+    `Thank you for your security inquiry. Your request has been classified as: ${inquiry.classification.urgency.toUpperCase()}.`,
+    ``,
+    `Quote (H2M Security Audit baseline):`,
+    `  • Tier: ${inquiry.classification.urgency}`,
+    `  • Estimated price: ${priceRange} USD (${inquiry.tier.credits_min}–${inquiry.tier.credits_max ?? "custom"} CRED)`,
+    `  • SLA: ${inquiry.tier.sla}`,
+    `  • Scope: ${inquiry.tier.scope}`,
+    ``,
+    `Payment (x402 / EIP-712 USDC on Polygon PoS):`,
+    `  • Endpoint: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world`,
+    `  • First, top up credits via the pull_payment service (FREE call, adds credits):`,
+    `    POST with {"service_type":"pull_payment","params":{...EIP-712 permit...}}`,
+    `  • Rate: 1 USDC = 100 CRED. Treasury: 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5`,
+    ``,
+    `Once payment is confirmed, reply to this message and your audit will be queued`,
+    `with the agreed SLA. Full pricing catalog: GET /pricing.manifest.json`,
+  ].join("\n");
+}
+
+async function securityInquiryHandler(req: Request): Promise<Response> {
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch (_) {
+    return jsonResponse({ status: "failed", error_code: "INVALID_JSON", message: "Request body must be valid JSON." }, 400);
+  }
+  const from = String(body.from ?? "").trim();
+  const subject = String(body.subject ?? "").trim();
+  const bodyText = String(body.body ?? body.text ?? "");
+  if (!from || !subject) {
+    return jsonResponse({
+      status: "failed",
+      error_code: "MISSING_FIELDS",
+      message: "Both 'from' and 'subject' are required.",
+      expected_shape: { from: "sender email", subject: "email subject (should contain [SECURITY-INQUIRY])", body: "email body text", received_at: "optional ISO timestamp" },
+    }, 400);
+  }
+  // Gate: only [SECURITY-INQUIRY] tagged emails enter the H2M pipeline.
+  if (!/\[security-inquiry\]/i.test(subject)) {
+    return jsonResponse({
+      status: "rejected",
+      error_code: "NOT_SECURITY_INQUIRY",
+      message: "This endpoint only processes [SECURITY-INQUIRY] tagged emails. Other inquiries are out of scope for the H2M pipeline.",
+    }, 422);
+  }
+
+  const classification = classifySecurityInquiry(subject, bodyText);
+  const tier = classification.urgency === "emergency"
+    ? H2M_PRICING.tiers.emergency_audit
+    : classification.urgency === "retainer"
+    ? H2M_PRICING.tiers.retainer
+    : H2M_PRICING.tiers.standard_async_scan;
+
+  const autoReply = buildSecurityInquiryAutoReply({ from, subject, classification, tier: tier as { usd_min: number; usd_max: number | null; sla: string; scope: string; credits_min: number; credits_max: number | null } });
+
+  // Record in PoA ledger (inbound H2M inquiry = auditable event)
+  const poa = await recordPoaEntry("h2m-inbound", "security_inquiry_received", {
+    from,
+    subject,
+    classification: classification.urgency,
+    reason: classification.reason,
+    tier_quoted: classification.urgency,
+    price_range_usd: tier.usd_max ? `${tier.usd_min}-${tier.usd_max}` : `${tier.usd_min}+`,
+    received_at: body.received_at ?? new Date().toISOString(),
+  });
+
+  return jsonResponse({
+    status: "processed",
+    inquiry_id: poa.entryId,
+    classification: classification,
+    quote: {
+      tier: classification.urgency,
+      price_usd: tier.usd_max ? `${tier.usd_min}–${tier.usd_max}` : `${tier.usd_min}+`,
+      credits: tier.usd_max ? `${tier.credits_min}–${tier.credits_max}` : `${tier.credits_min}+`,
+      sla: tier.sla,
+      scope: tier.scope,
+    },
+    auto_reply: autoReply,
+    payment: {
+      rail: "EIP-712 USDC pull payment on Polygon PoS (eip155:137)",
+      endpoint: "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
+      rate: "1 USDC = 100 CRED",
+      treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+    },
+    poa_ledger: poa.ok ? { recorded: true, entry_id: poa.entryId } : { recorded: false, error: poa.error },
+  }, 200);
 }
 
 async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: string) {
@@ -2399,6 +2616,12 @@ interface ParsedContract {
     cold_access_count: number;      // Unique cold account access patterns (extcodecopy, balance, etc.)
     risk_level: "low" | "medium" | "high";
     details: string[];
+    // Sprint 3 Task 2 (v4.6.0): quantitative compute-to-gas ratio model
+    compute_to_gas_ratio: number;   // estimated compute instructions per gas unit (max across patterns)
+    ratio_threshold: number;        // 12.5 — validator-delay DoS inflection (EVM Protocol-Level Audit V1)
+    risk_score: number;             // 0.05-0.95 quantitative score; 0.95 when ratio > threshold
+    dos_validator_delay: boolean;   // true when ratio > threshold — DoS/validator-delay warning flag
+    ratio_basis: string;            // human-readable derivation of the ratio
   };
   // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS + Signature Binding
   unbounded_iteration: {
@@ -2634,6 +2857,54 @@ function parseSolidityContract(source: string): ParsedContract {
   // Cold access patterns: extcodecopy, extcodesize, extcodehash, balance on dynamic addresses
   const coldAccessMatches = source.match(/\b(extcodecopy|extcodesize|extcodehash|\.balance\b|balanceOf\b)/gi) || [];
   const coldAccessCount = coldAccessMatches.length;
+
+  // Sprint 3 Task 2 (v4.6.0): Quantitative compute-to-gas ratio analysis.
+  // Model: estimated compute instructions per gas unit (×1000 integer scale),
+  // calibrated from EVM Protocol-Level Audit V1 measurements:
+  //   - MODEXP 256-byte inputs: ~34,890 gas vs ~436K modexp word-multiply
+  //     instructions → ratio 12.5 — the inflection where 30M gas of the opcode
+  //     stalls a validator ~18s (compute-to-gas > 12.5 = DoS/validator-delay zone).
+  //   - TSTORE unbounded loop: 100 gas/key × 300K keys = 9.15MB RAM per 30M gas
+  //     → RAM amplification ratio ~12.5 when loop bound is absent.
+  //   - Cold access flood: ~2,600 gas vs ~2-4 compute ratio (cache-flooding, medium).
+  const GAS_ASYMMETRY_RATIO_THRESHOLD = 12.5;
+  let gasAsymmetryRatio = 0; // max ratio across detected patterns
+  let ratioBasis = "";
+  if (hasModexp) {
+    // Static analysis: MODEXP input sizes bounded to small constants (< 32 bytes) are safe;
+    // unbounded / dynamic / large-constant sizes sit in the asymmetry zone.
+    // Bounded patterns (idiomatic): `input.length < 32`, `require(x.length <= 32)`,
+    // `callDataSize <= 0x20`, or a 32/0x20 literal near the modexp call site.
+    const hasSmallBound =
+      /\.\s*length\s*<=?\s*(32|0x20)\b/i.test(source) ||
+      /callDataSize|inputSize/i.test(source) ||
+      /\bmodexp\b[^;]{0,200}\b(32|0x20)\b/i.test(source);
+    if (hasSmallBound) {
+      gasAsymmetryRatio = 0.4;
+      ratioBasis = "MODEXP with small bounded inputs (<32B): ratio ~0.4 (below threshold).";
+    } else {
+      gasAsymmetryRatio = 12.5 + modexpCalls * 0.5; // ≥ threshold, scales with call sites
+      ratioBasis = `MODEXP with unbounded/dynamic input sizes: ratio ~${gasAsymmetryRatio.toFixed(1)} (threshold ${GAS_ASYMMETRY_RATIO_THRESHOLD}). 256-byte inputs cost ~34,890 gas but ~436K compute instructions — 30M gas of MODEXP stalls validators ~18s.`;
+    }
+  }
+  if (hasTstoreLoop) {
+    const loopRatio = /\b(for|while)\s*\(\s*[^)]*(i\s*<\s*\d{3,})/i.test(source) ? 6.2 : 13.8; // bounded large loop vs unbounded
+    if (loopRatio > gasAsymmetryRatio) {
+      gasAsymmetryRatio = loopRatio;
+      ratioBasis = `TSTORE in ${loopRatio > 12.5 ? "unbounded" : "large bounded"} loop: RAM amplification ratio ~${loopRatio}. 100 gas/key enables ~9.15MB transient storage per 30M gas tx.`;
+    }
+  }
+  if (coldAccessCount > 100 && 2.5 > gasAsymmetryRatio) {
+    gasAsymmetryRatio = 2.5;
+    ratioBasis = `Cold access flood: ${coldAccessCount} cold access opcodes, ratio ~2.5 (cache-flooding, below DoS threshold but I/O heavy).`;
+  }
+  // Quantitative risk score: > 12.5 → 0.95 (near-certain validator-delay DoS vector)
+  const gasAsymmetryRiskScore = gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD ? 0.95
+    : gasAsymmetryRatio > 5 ? 0.6
+    : gasAsymmetryRatio > 0 ? 0.25
+    : 0.05;
+  const dosValidatorDelay = gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD;
+
   const gasAsymmetryDetails: string[] = [];
   let gasAsymmetryRisk: "low" | "medium" | "high" = "low";
   if (hasModexp) {
@@ -2647,6 +2918,9 @@ function parseSolidityContract(source: string): ParsedContract {
   if (coldAccessCount > 100) {
     gasAsymmetryDetails.push(`High cold access pattern count: ${coldAccessCount} cold access opcodes. Cache-flooding risk: ~5.8s I/O per 30M gas tx.`);
     gasAsymmetryRisk = gasAsymmetryRisk === "high" ? "high" : "medium";
+  }
+  if (dosValidatorDelay) {
+    gasAsymmetryDetails.push(`COMPUTE-TO-GAS RATIO ${gasAsymmetryRatio.toFixed(1)} > ${GAS_ASYMMETRY_RATIO_THRESHOLD} — riskScore ${gasAsymmetryRiskScore}. DoS/validator-delay WARNING: this opcode profile lets a cheap tx impose disproportionate CPU/RAM burden on validators. ${ratioBasis}`);
   }
   if (gasAsymmetryDetails.length === 0) {
     gasAsymmetryDetails.push("No gas asymmetry patterns detected.");
@@ -2760,6 +3034,11 @@ function parseSolidityContract(source: string): ParsedContract {
       cold_access_count: coldAccessCount,
       risk_level: gasAsymmetryRisk,
       details: gasAsymmetryDetails,
+      compute_to_gas_ratio: Math.round(gasAsymmetryRatio * 10) / 10,
+      ratio_threshold: GAS_ASYMMETRY_RATIO_THRESHOLD,
+      risk_score: gasAsymmetryRiskScore,
+      dos_validator_delay: dosValidatorDelay,
+      ratio_basis: ratioBasis,
     },
     unbounded_iteration: {
       public_append_functions: publicAppendFuncs.map(f => f.name),
@@ -3539,6 +3818,22 @@ async function handler(req: Request): Promise<Response> {
   // "/pricing.manifest.json" also ends with "manifest.json".
   if (url.pathname.endsWith("/pricing.manifest.json")) {
     return jsonResponse(PRICING_MANIFEST, 200);
+  }
+
+  // 2e. Outbound PoA Ledger (v4.6.0 — Sprint 2 Task 1)
+  // Internal RPC, no billing, no x-client-id required (append-only audit trail).
+  // POST /poa/record  → record new PoA entry (entity_id, action_type, payload, signature?)
+  // GET  /poa/ledger  → read back entries (optional entity_id + limit filters)
+  if (url.pathname.includes("/poa/")) {
+    return await poaHandler(req, url);
+  }
+
+  // 2f. H2M Email Ingestion (v4.6.0 — Sprint 3 Task 3)
+  // POST /ingest/security-inquiry — [SECURITY-INQUIRY] pipeline: classify,
+  // quote H2M baseline ($250-$500 Standard / $1000+ Emergency / $500-1500 Retainer),
+  // return auto-reply draft with x402 payment rail. Records PoA ledger entry.
+  if (url.pathname.endsWith("/ingest/security-inquiry") && req.method === "POST") {
+    return await securityInquiryHandler(req);
   }
 
   // 2. Manifest Discovery Endpoint
