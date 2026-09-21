@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.6.0-frontier",
+  engine_version: "v4.7.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "4.6.0-frontier",
+  version: "4.7.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -522,7 +522,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v4.6.0-frontier (Outbound PoA Ledger + Quantitative Gas Asymmetry Ratio + H2M Security-Inquiry Ingestion)",
+    version: "v4.7.0-frontier (Custom Access-Control Modifier Recognition + 150KB Payload Limit)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2601,6 +2601,7 @@ interface ParsedContract {
   state_vars: ParsedStateVar[];
   has_constructor: boolean;
   has_pause: boolean;          // Phase 3.2: emergency freeze detection
+  is_erc4626_vault: boolean;   // v4.7.0: ERC-4626 vault — open deposit/mint is by-design share issuance
   has_ownership: boolean;      // Phase 3.2: ownership check
   has_burn: boolean;           // Phase 3.2: burn capability
   has_mint: boolean;           // Phase 3.2: mint capability
@@ -2690,6 +2691,32 @@ function parseSolidityContract(source: string): ParsedContract {
   const licenseMatch = source.match(/\/\/\s*SPDX-License-Identifier:\s*(.+)/);
   const license = licenseMatch ? licenseMatch[1].trim() : null;
 
+  // v4.7.0: Classify custom modifiers — does the modifier body enforce a guard?
+  // A guarded modifier body contains: msg.sender check, a revert, a call to an
+  // authority/ACL (canCall, isAuthorized, hasRole, onlyOwner delegation), or
+  // ownership/admin membership test. Custom modifiers WITHOUT guards (e.g. pure
+  // logging or state-snapshot modifiers) do NOT count as access control.
+  const customGuardedModifiers = new Map<string, boolean>();
+  const modBodyRegex = /modifier\s+(\w+)\s*\([^)]*\)\s*\{/g;
+  let modBodyMatch;
+  while ((modBodyMatch = modBodyRegex.exec(source)) !== null) {
+    const name = modBodyMatch[1];
+    const braceOpen = source.indexOf("{", modBodyMatch.index);
+    if (braceOpen === -1) continue;
+    // brace-matched body extraction (same technique as loop-body detection)
+    let depth = 0, end = -1;
+    for (let i = braceOpen; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) continue;
+    const body = source.substring(braceOpen + 1, end);
+    const guarded =
+      /msg\.sender\s*(==|!=)/.test(body) ||
+      /\brevert\b/.test(body) ||
+      /\b(onlyOwner|onlyRole|requiresAuth|auth|authority|canCall|isAuthorized|hasRole|isAdmin|isOwner|owner\(\)|admin\(\))\b/i.test(body);
+    customGuardedModifiers.set(name, guarded);
+  }
   // Parse functions with full signatures
   const functions: ParsedFunction[] = [];
   const funcRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*([^{]*)\{/g;
@@ -2760,8 +2787,21 @@ function parseSolidityContract(source: string): ParsedContract {
     }
     const hasTryCatch = /\btry\s+\S+/.test(funcBody) && /\bcatch\b/.test(funcBody);
     const hasEcrecover = /\b(ecrecover\s*\(|ECDSA\.recover|SignatureChecker)/.test(funcBody);
-    const hasAccessControl = modifiers.some(m => /\bonly(owner|role|admin|authorized|operator|minter|pauser|signer)\b/i.test(m)) ||
-      /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody);
+    // v4.7.0: Custom access-control modifier recognition.
+    // Previously only built-in OZ-style names (onlyOwner/onlyRole/...) counted, so contracts
+    // using developer-defined modifiers (requiresAuth, onlyGovernor, restricted, gated, ...)
+    // were falsely flagged BS-001/BS-003 critical on standard ERC-4626 vaults.
+    // Layer 1: custom modifiers DECLARED in this file count if their body enforces a guard.
+    // Layer 2: modifiers NOT declared in this file (inherited from base contracts, e.g.
+    // Solmate Auth's requiresAuth) are evaluated by name convention: onlyXxx / requiresAuth /
+    // authorized / restricted. Non-guard inherited modifiers (whenNotPaused, initializer,
+    // nonReentrant) do not match and do not count.
+    const hasAccessControl = modifiers.some(m =>
+      /\bonly(owner|role|admin|authorized|operator|minter|pauser|signer)\b/i.test(m) ||
+      (customGuardedModifiers.get(m) === true) ||
+      (!customGuardedModifiers.has(m) &&
+        /^(requiresAuth|only[A-Z]\w*|authorized|restricted|hasRole|isAdmin|isAuthorized)$/.test(m))
+    ) || /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody);
     const hasArrayIteration = hasLoop && /\.length\b/.test(funcBody);
 
     functions.push({
@@ -2810,6 +2850,7 @@ function parseSolidityContract(source: string): ParsedContract {
     modifiers.push({ name: modMatch[1], line });
   }
 
+
   // Parse state variables
   const stateVars: ParsedStateVar[] = [];
   const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(public|private|internal|constant|immutable)?\s*(\w+)\s*[;=]/gm;
@@ -2832,6 +2873,16 @@ function parseSolidityContract(source: string): ParsedContract {
   const hasBurn = /\b(burn|burnfrom|burnable)\b/i.test(source);
   const hasMint = /\b(mint|_mint)\b/i.test(source);
   const hasConstructor = /constructor\s*\(/i.test(source);
+
+  // v4.7.0: ERC-4626 vault awareness.
+  // An open mint()/deposit() on an ERC-4626 vault is BY DESIGN share issuance backed
+  // by assets — the depositor pays in and receives shares. It is NOT unauthorized
+  // minting (BS-001). Detection: ERC4626 inheritance/interface + deposit/mint
+  // taking assets and issuing shares. When detected, BS-001/BS-003 evaluate only
+  // the non-standard paths (e.g. operator-only fulfillRedeem — protected by
+  // requiresAuth, now recognized).
+  const isErc4626Vault = /\b(ERC4626|IERC4626|ERC4626Upgradeable)\b/.test(source) ||
+    (/\bdeposit\s*\(\s*uint256\s+\w+\s*,\s*address\b/.test(source) && /\basset\s*\(\s*\)/.test(source));
 
   // Phase 3.4: Transient storage detection (tstore/tload = reentrancy guard pattern)
   const hasTransientStorage = /\b(tstore|tload)\b/.test(source);
@@ -3020,6 +3071,7 @@ function parseSolidityContract(source: string): ParsedContract {
     state_vars: stateVars,
     has_constructor: hasConstructor,
     has_pause: hasPause,
+    is_erc4626_vault: isErc4626Vault,
     has_ownership: hasOwnership,
     has_burn: hasBurn,
     has_mint: hasMint,
@@ -3075,7 +3127,13 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   const mintFuncs = parsed.functions.filter(f => /\b(mint|_mint)\b/i.test(f.name));
   const mintHasRequire = mintFuncs.some(f => f.has_require);
   const mintHasAccessControl = mintFuncs.some(f => f.has_access_control);
-  const mintProtected = mintHasRequire || mintHasAccessControl;
+  // v4.7.0: on an ERC-4626 vault, mint() mints shares against paid-in assets by design.
+  // It is protected (not unauthorized minting) if the contract has ANY guarded
+  // operator path (access-controlled function) — the standard vault pattern — or the
+  // mint itself carries guards. A bare token with open mint is still critical.
+  const hasAnyGuardedOperatorPath = parsed.functions.some(f => f.has_access_control);
+  const mintProtected = mintHasRequire || mintHasAccessControl ||
+    (parsed.is_erc4626_vault && hasAnyGuardedOperatorPath);
   scenarios.push({
     scenario_id: "BS-001",
     scenario_name: "Unauthorized Minting",
@@ -3118,7 +3176,11 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   const withdrawFuncs = parsed.functions.filter(f => /\b(withdraw|withdrawal|claim)\b/i.test(f.name));
   const withdrawHasRequire = withdrawFuncs.some(f => f.has_require);
   const withdrawHasAccessControl = withdrawFuncs.some(f => f.has_access_control);
-  const withdrawProtected = withdrawHasRequire || withdrawHasAccessControl;
+  // v4.7.0: on an ERC-4626 vault, users withdrawing their OWN shares is by design.
+  // Async-redemption vaults route payouts through access-controlled operator paths
+  // (fulfillRedeem). If any guarded operator path exists, the pattern is protected.
+  const withdrawProtected = withdrawHasRequire || withdrawHasAccessControl ||
+    (parsed.is_erc4626_vault && parsed.functions.some(f => f.has_access_control));
   scenarios.push({
     scenario_id: "BS-003",
     scenario_name: "Fund Drain via Withdrawal",
@@ -3586,11 +3648,15 @@ async function dryRunHandler(req: Request): Promise<Response> {
   }
 
   // Limit source code size (prevent abuse)
-  if (source_code.length > 50000) {
+  // v4.7.0: raised 50KB → 150KB. Modern multi-function contracts (facet-based diamonds,
+  // large vaults) routinely exceed 50KB; the old limit forced manual review fallback
+  // in the delta-commit monitoring pipeline. 150KB keeps abuse protection intact
+  // while covering real-world contract sizes.
+  if (source_code.length > 150000) {
     return jsonResponse({
       status: "error",
       error_code: "SOURCE_TOO_LARGE",
-      message: "Source code exceeds 50KB limit.",
+      message: "Source code exceeds 150KB limit.",
     }, 413);
   }
 
