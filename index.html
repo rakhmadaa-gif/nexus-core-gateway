@@ -128,16 +128,16 @@ a:hover{text-decoration:underline}
     <p>Autonomous legal-code engine for Web3. Generates verified structured data, audited Solidity smart contracts, and bilingual (EN/ID) legal contracts — mapped via Digital Twin v3.1.</p>
     <div class="badges">
       <span class="badge badge-green">DEPLOYED</span>
-      <span class="badge badge-blue">v4.0.0-frontier</span>
+      <span class="badge badge-blue">v4.6.0-frontier</span>
       <span class="badge badge-purple">Polygon PoS</span>
       <span class="badge badge-orange">~3ms latency</span>
       <span class="badge badge-green">ERC-8004 Agent #636</span>
     </div>
     <div class="stats">
       <div class="stat"><div class="num">5</div><div class="label">Services</div></div>
-      <div class="stat"><div class="num">7</div><div class="label">Breach Scenarios</div></div>
+      <div class="stat"><div class="num">9</div><div class="label">Breach Scenarios</div></div>
       <div class="stat"><div class="num">3</div><div class="label">Sample Tiers</div></div>
-      <div class="stat"><div class="num">17/17</div><div class="label">E2E Tests</div></div>
+      <div class="stat"><div class="num">28/28</div><div class="label">Latest Tests</div></div>
     </div>
   </header>
 
@@ -145,9 +145,17 @@ a:hover{text-decoration:underline}
     <h2>Services</h2>
     <div class="services">
       <div class="service"><h3>Structured Data</h3><div class="price">20 CRED ($0.20)</div><p>Verified JSON schemas for Web3, regulatory compliance, and cross-platform orchestration.</p></div>
-      <div class="service"><h3>Code Modules</h3><div class="price">120 CRED ($1.20)</div><p>Security-checked Solidity smart contracts — ERC-20, ERC-721, Escrow logic.</p></div>
-      <div class="service"><h3>Legal-Code Hybrid</h3><div class="price">29,900 CRED ($299.00)</div><p>Bilingual (EN/ID) legal contracts mapped directly to code functions via Digital Twin v3.1.</p></div>
+      <div class="service"><h3>EVM Sentinel — M2M Quick Scan</h3><div class="price">120 CRED ($1.20)</div><p>Security-checked Solidity smart contracts — ERC-20, ERC-721, Escrow logic. 9 breach scenarios + quantitative Gas Asymmetry ratio.</p></div>
+      <div class="service"><h3>Legal-Code Hybrid</h3><div class="price">Light $300 (30,000 CRED) · Standard $450 (45,000 CRED) · Enterprise $800 (80,000 CRED)</div><p>Bilingual (EN/ID) legal contracts mapped directly to code functions via Digital Twin v3.1. <strong>Standard is the default tier.</strong> <em>Early-Adopter / Promo Rates.</em></p></div>
       <div class="service"><h3>Pull Payment</h3><div class="price">FREE (adds credits)</div><p>USDC top-up on Polygon via EIP-712 Permit. Auto-converts to CRED. No charge.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>EVM Sentinel — Security Audit Tiers</h2>
+    <div class="services">
+      <div class="service"><h3>M2M Quick Scan</h3><div class="price">120 CRED ($1.20)</div><p>Machine-to-machine Solidity audit: 9 breach scenarios (BS-001 – BS-009), Gas Asymmetry DoS detection (compute-to-gas ratio, threshold &gt; 12.5), Digital Twin bipolar mapping. Endpoint: <code>POST /gateway/dry-run</code>.</p></div>
+      <div class="service"><h3>H2M Security Audit</h3><div class="price">Standard $250–$500 · Emergency $1,000+ · Retainer $500–$1,500/mo</div><p>Human-sourced security audits via [SECURITY-INQUIRY] email ingestion. Standard: 24–72h SLA, single contract audit. Emergency: &lt;24h SLA incl. remediation support. Retainer: ongoing monitoring + quarterly reviews. <em>Early-Adopter / Promo Baseline Rates.</em></p></div>
     </div>
   </section>
 
@@ -157,7 +165,7 @@ a:hover{text-decoration:underline}
 <code><span class="comment"># 1. Discover — see what we offer (free, no auth)</span>
 curl https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json
 
-<span class="comment"># 2. Test your Solidity contract — free, 7 breach scenarios</span>
+<span class="comment"># 2. Test your Solidity contract — free, 9 breach scenarios</span>
 curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run \
   -H <span class="string">"Content-Type: application/json"</span> \
   -d <span class="string">'{"source_code": "pragma solidity ^0.8.20; contract Token { }"}</span>'
@@ -169,7 +177,7 @@ curl https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/samples</
 
   <section>
     <h2>Interactive Playground — Try It Now</h2>
-    <p style="color:#999;margin-bottom:15px">Paste any Solidity smart contract below and get a free security audit — 7 breach scenarios, risk assessment, and deployable check. No signup, no auth.</p>
+    <p style="color:#999;margin-bottom:15px">Paste any Solidity smart contract below and get a free security audit — 9 breach scenarios, Gas Asymmetry ratio, risk assessment, and deployable check. No signup, no auth.</p>
     <div class="playground">
       <textarea id="solInput" placeholder="// Paste your Solidity code here...
 pragma solidity ^0.8.20;
@@ -186,7 +194,7 @@ contract MyToken {
         <button class="btn-example" onclick="loadExample('vulnerable')">Load Vulnerable Contract</button>
         <button class="btn-example" onclick="loadExample('escrow')">Load Escrow Example</button>
       </div>
-      <div class="loading" id="loadingBox" style="display:none">Running 7 breach simulations</div>
+      <div class="loading" id="loadingBox" style="display:none">Running 9 breach simulations</div>
       <div class="error-box" id="errorBox"></div>
       <div class="result-box" id="resultBox">
         <div class="result-header">
@@ -212,7 +220,7 @@ contract MyToken {
   </section>
 
   <section>
-    <h2>Breach Simulation — 7 Scenarios</h2>
+    <h2>Breach Simulation — 9 Scenarios</h2>
     <div class="breach-grid">
       <div class="breach"><h4>BS-001 Unauthorized Minting</h4><p>Can attacker mint without authorization?</p></div>
       <div class="breach"><h4>BS-002 Transfer Violation</h4><p>Can transfers bypass balance checks?</p></div>
@@ -221,13 +229,15 @@ contract MyToken {
       <div class="breach"><h4>BS-005 Ownership Renounce</h4><p>Can ownership be renounced?</p></div>
       <div class="breach"><h4>BS-006 Reentrancy Attack</h4><p>Are external calls protected?</p></div>
       <div class="breach"><h4>BS-007 Replay Attack</h4><p>Is nonce-based replay protection present?</p></div>
+      <div class="breach"><h4>BS-008 Gas Asymmetry DoS</h4><p>Quantitative compute-to-gas ratio — threshold &gt; 12.5 flags validator-delay risk.</p></div>
+      <div class="breach"><h4>BS-009 Unbounded Iteration DoS</h4><p>Attacker-growable arrays freezing withdrawals?</p></div>
     </div>
   </section>
 
   <section>
     <h2>Blockchain</h2>
     <div class="blockchain">
-      <div class="chain-item"><span class="label">Gateway.sol (Pull Payment)</span><span class="value">0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4</span></div>
+      <div class="chain-item"><span class="label">Gateway.sol (Pull Payment)</span><span class="value">0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683</span></div>
       <div class="chain-item"><span class="label">ERC-8004 IdentityRegistry</span><span class="value">0x8004A169FB4a3325136EB29fA0ceB6D2e539a432</span></div>
       <div class="chain-item"><span class="label">ERC-8004 Agent ID</span><span class="value">636 (Block 9,331,172)</span></div>
       <div class="chain-item"><span class="label">USDC (native, 6 decimals)</span><span class="value">0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359</span></div>
@@ -242,9 +252,9 @@ contract MyToken {
   </div>
 
   <footer>
-    <p>Nexus Gateway v4.0.0-frontier — Phase 3 FINAL — FULLY OPERATIONAL</p>
+    <p>Nexus Gateway v4.6.0-frontier — FULLY OPERATIONAL</p>
     <p>1 CREDIT = $0.01 USD · 100 CREDIT = 1 USDC · MIT License</p>
-    <p><a href="https://github.com/rakhmadaa-gif/nexus-core-gateway">GitHub</a> · <a href="https://polygonscan.com/address/0xDEEc5BE05F0911b4aCD7FB6C8a4aa603C13F60e4">Gateway Contract</a> · <a href="https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8">ERC-8004 Registration</a> · <a href="https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics">Live Metrics</a></p>
+    <p><a href="https://github.com/rakhmadaa-gif/nexus-core-gateway">GitHub</a> · <a href="https://polygonscan.com/address/0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683">Gateway Contract</a> · <a href="https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8">ERC-8004 Registration</a> · <a href="https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics">Live Metrics</a></p>
   </footer>
 </div>
 
