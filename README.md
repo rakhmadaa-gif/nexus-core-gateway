@@ -12,6 +12,7 @@
 [![LangChain](https://img.shields.io/badge/LangChain-compatible-green)](./sdk/python/)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20%23636-8247E5)](https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8)
+[![x402-list](https://x402-list.com/badge/nexus-gateway.svg?data=uptime)](https://x402-list.com/services/nexus-gateway)
 
 ---
 
