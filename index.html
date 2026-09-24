@@ -128,7 +128,7 @@ a:hover{text-decoration:underline}
     <p>Autonomous legal-code engine for Web3. Generates verified structured data, audited Solidity smart contracts, and bilingual (EN/ID) legal contracts — mapped via Digital Twin v3.1.</p>
     <div class="badges">
       <span class="badge badge-green">DEPLOYED</span>
-      <span class="badge badge-blue">v4.6.0-frontier</span>
+      <span class="badge badge-blue">v5.0.0-frontier</span>
       <span class="badge badge-purple">Polygon PoS</span>
       <span class="badge badge-orange">~3ms latency</span>
       <span class="badge badge-green">ERC-8004 Agent #636</span>
@@ -142,7 +142,7 @@ a:hover{text-decoration:underline}
       <div class="stat"><div class="num">5</div><div class="label">Services</div></div>
       <div class="stat"><div class="num">9</div><div class="label">Breach Scenarios</div></div>
       <div class="stat"><div class="num">3</div><div class="label">Sample Tiers</div></div>
-      <div class="stat"><div class="num">28/28</div><div class="label">Latest Tests</div></div>
+      <div class="stat"><div class="num">29/29</div><div class="label">Latest Tests</div></div>
     </div>
   </header>
 
@@ -153,6 +153,22 @@ a:hover{text-decoration:underline}
       <div class="service"><h3>EVM Sentinel — M2M Quick Scan</h3><div class="price">120 CRED ($1.20)</div><p>Security-checked Solidity smart contracts — ERC-20, ERC-721, Escrow logic. 9 breach scenarios + quantitative Gas Asymmetry ratio.</p></div>
       <div class="service"><h3>Legal-Code Hybrid</h3><div class="price">Light $300 (30,000 CRED) · Standard $450 (45,000 CRED) · Enterprise $800 (80,000 CRED)</div><p>Bilingual (EN/ID) legal contracts mapped directly to code functions via Digital Twin v3.1. <strong>Standard is the default tier.</strong> <em>Early-Adopter / Promo Rates.</em></p></div>
       <div class="service"><h3>Pull Payment</h3><div class="price">FREE (adds credits)</div><p>USDC top-up on Polygon via EIP-712 Permit. Auto-converts to CRED. No charge.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>EVM Sentinel — M2M Security Scan API</h2>
+    <div class="services">
+      <div class="service"><h3>Quick Scan</h3><div class="price">$0.05 USDC</div><p>Static security scan for machine agents: <code>risk_score</code>, <code>breach_scenarios</code>, <code>gas_ratio</code>, <code>action: ALLOW|BLOCK</code> + honeypot indicators. 1-hour result cache. <strong>Read-only static scan — no wallet approval required.</strong></p></div>
+      <div class="service"><h3>Deep Scan</h3><div class="price">$0.50 USDC</div><p>Everything in Quick + BS-010 Permit2 wallet-drainer detection + BS-011 arbitrage-execution manipulation analysis with per-scenario detail.</p></div>
+    </div>
+    <div class="code-block">
+<code><span class="comment"># M2M scan — x402 payment in USDC on Polygon PoS</span>
+curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/evm-sentinel/v1/scan-quick \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -H <span class="string">"x-client-id: your-agent-id"</span> \
+  -d <span class="string">'{ "solidity_code": "..." }'</span>
+<span class="comment"># → { "risk_score": 1, "action": "BLOCK", "breach_scenarios": [...] }</span></code>
     </div>
   </section>
 
@@ -257,7 +273,7 @@ contract MyToken {
   </div>
 
   <footer>
-    <p>Nexus Gateway v4.6.0-frontier — FULLY OPERATIONAL</p>
+    <p>Nexus Gateway v5.0.0-frontier — FULLY OPERATIONAL</p>
     <p>1 CREDIT = $0.01 USD · 100 CREDIT = 1 USDC · MIT License</p>
     <p><a href="https://github.com/rakhmadaa-gif/nexus-core-gateway">GitHub</a> · <a href="https://polygonscan.com/address/0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683">Gateway Contract</a> · <a href="https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8">ERC-8004 Registration</a> · <a href="https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics">Live Metrics</a></p>
   </footer>
