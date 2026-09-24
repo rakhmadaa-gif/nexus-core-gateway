@@ -1,5 +1,49 @@
 # Nexus Gateway Changelog
 
+## v5.0.0-frontier (2026-09-24)
+
+**EVM Sentinel M2M Scan Endpoints — USDC-only external pricing**
+
+### Added
+- **`POST /evm-sentinel/v1/scan-quick`** ($0.05 USDC): fast static security scan for
+  machine agents. Returns `{risk_score, breach_scenarios[], gas_ratio, action: ALLOW|BLOCK}`
+  plus honeypot indicators and cache status. Input validation (min 20 chars, max 150000)
+  runs BEFORE billing (400/413, not 402).
+- **`POST /evm-sentinel/v1/scan-deep`** ($0.50 USDC): full-depth scan adding BS-010
+  Permit2 wallet-drainer detection and BS-011 arbitrage-execution manipulation analysis
+  with per-scenario detail.
+- **x402-native billing**: 402 responses carry the x402 `payment-required` header
+  (x402Version 2, eip155:137, USDC, atomic amounts 50000/500000, payTo treasury).
+  External surface is USDC-only; CRED remains the internal DB unit.
+- **1-hour scan cache** keyed on code hash + tier (scan_cache table).
+- **GET on scan routes → 405** (POST-only resource).
+
+### Changed
+- **USDC-only docs purge**: llms.txt, pricing, OpenAPI spec (scan paths + schemas +
+  x-keywords honeypot-check/drainer-detector/risk-gate), terms (read-only
+  no-wallet-approval clause), node manifest (currency_unit USDC, version 5.0.0-frontier),
+  and all 402/trial/auto-reply messages now quote USDC directly.
+
+### Fixed (engine v5.0.1 false-positive reductions)
+- **BS-006 Reentrancy**: an "external function" is no longer automatically a reentrancy
+  surface — the function body must actually perform an external call
+  (`.call(`/`.transfer(`/`.send(`/`delegatecall`). Plain external setters/getters no
+  longer flag high.
+- **BS-007 Replay**: nonce-absence only counts as detected when a signature/permit
+  surface exists (matches Gate v1.1 design where BS-007 medium is excluded as noise).
+- **BS-010 Drainer**: a `permit2.permit()` / ISignatureTransfer call site is treated as
+  a signature-verification surface (verification happens inside Permit2) — unbound
+  signature + full-balance sweep now correctly rates critical.
+- **BS-011 Arbitrage**: zero-min-out detection extended to positional zero arguments
+  (`swap(0, ...)`, `swap(x, 0, ...)`) and `minOut`/`amountOutMinimum` aliases.
+- **overall_risk**: computed from DETECTED scenarios only — undetected scenarios no
+  longer inflate clean contracts to "medium".
+
+### Validation
+- 29/29 local tests PASS; live verified: honeypot BLOCK (risk 1), drainer BS-010
+  critical BLOCK, clean contract ALLOW (risk 0.05), cache hit, 402 x402 headers,
+  docs routes 200, dry-run regression (clean → low risk, deployable).
+
 ## v4.7.0-frontier (2026-09-21)
 
 **Custom Access-Control Modifier Recognition + 150KB Payload Limit**

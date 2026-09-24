@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v4.8.0-frontier",
+  engine_version: "v5.0.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "4.8.0-frontier",
+  version: "5.0.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -433,9 +433,19 @@ const NODE_MANIFEST = {
     max_concurrent_tasks: 3,
   },
   endpoints: {
+    "POST /evm-sentinel/v1/scan-quick": {
+      description: "EVM Sentinel Quick-Check — honeypot/access-control fast scan. Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action}. Read-only static scan, no wallet approval required.",
+      billing: "0.05 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /evm-sentinel/v1/scan-deep": {
+      description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis (BS-001..BS-009 + BS-010 Permit2-drain + BS-011 arbitrage-manipulation). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
+      billing: "0.50 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
     "POST /": {
       description: "Core payload engine (paid, requires x-client-id)",
-      billing: "per-service CRED charge",
+      billing: "per-service USDC charge (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "GET /manifest.json": {
@@ -490,9 +500,11 @@ const NODE_MANIFEST = {
     },
   },
   pricing_model: {
-    currency_unit: "CREDIT",
-    conversion_rate: "1 CREDIT = 0.01 USD",
+    currency_unit: "USDC",
+    conversion_rate: "All prices quoted in USDC (Polygon PoS, eip155:137)",
     services: {
+      scan_quick: { price_usdc: 0.05, description: "EVM Sentinel Quick-Check — honeypot/access-control fast scan" },
+      scan_deep: { price_usdc: 0.50, description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis" },
       structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
       code_modules: { base_credits: 120, description: "EVM Sentinel Quick Scan (~$1.20)" },
       legal_code: { base_credits: 45000, description: "Hybrid Legal-Code Pro (~$450.00 Standard tier; Light $300 / Standard $450 / Enterprise $800)" },
@@ -507,12 +519,12 @@ const NODE_MANIFEST = {
     free_tier: {
       structured_data_trial: {
         credits: 20,
-        description: "1x Free Trial for New Agents (20 CRED, structured_data only)",
+        description: "1x Free Trial for New Agents ($0.20 value, structured_data only)",
         expiry_hours: 24,
       },
       code_modules_trial: {
         discount_credits: 100,
-        description: "1x Discount Trial: 100 CRED off code_modules (client pays 20 CRED for $1.20 service)",
+        description: "1x Discount Trial: $1.00 off code_modules (client pays $0.20 for $1.20 service)",
         expiry_hours: 24,
       },
     },
@@ -522,7 +534,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v4.8.0-frontier (Agent-Readable Docs Routes: openapi.json, llms.txt, pricing, robots.txt, terms)",
+    version: "v5.0.0-frontier (EVM Sentinel M2M Scan Tiers: scan-quick $0.05 / scan-deep $0.50 USDC, BS-010 Permit2-drain + BS-011 arbitrage-manipulation detection, 1-hour scan cache)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1114,7 +1126,7 @@ const ERC20_PERMIT_ABI = [
 // 1 CREDIT = 0.01 USD. USDC = 6 decimals → 1 CRED = 10,000 atomic USDC units.
 
 const PRICING_MODEL = {
-  currency_unit: "CREDIT",
+  currency_unit: "USDC",
   usd_per_credit: 0.01,
   cred_per_usdc: 100,
   usdc_decimals: 6,
@@ -1123,6 +1135,10 @@ const PRICING_MODEL = {
     structured_data: { base_credits: 20, description: "Verified Structured Data (~$0.20)" },
     code_modules: { base_credits: 120, description: "EVM Sentinel Quick Scan (~$1.20)" },
     legal_code: { base_credits: 45000, description: "Hybrid Legal-Code Pro (~$450.00 Standard tier; Light $300 / Standard $450 / Enterprise $800)" },
+    // v5.0.0: EVM Sentinel M2M scan tiers — flat sub-$1 USDC pricing for x402 bots.
+    // 1 CRED = $0.01 → quick_check 5 CRED = $0.05, deep_scan 50 CRED = $0.50.
+    scan_quick: { base_credits: 5, description: "EVM Sentinel Quick-Check — honeypot/access-control fast scan ($0.05)" },
+    scan_deep: { base_credits: 50, description: "EVM Sentinel Deep-Scan — full 9-scenario breach analysis incl. Permit2-drain + arbitrage-manipulation patterns ($0.50)" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -1139,8 +1155,8 @@ const PRICING_MODEL = {
     { tier: 3, requests_per_minute: "> 50", multiplier: 2.5, label: "Priority Pass" },
   ],
   trials: {
-    structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial (20 CRED, covers one structured_data call)" },
-    code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: 100 CRED off code_modules — client pays 20 CRED for a 120 CRED service" },
+    structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial ($0.20 value, covers one structured_data call)" },
+    code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: $1.00 off code_modules — client pays $0.20 for a $1.20 service" },
   },
 };
 
@@ -1172,7 +1188,7 @@ const PRICING_MANIFEST = {
       },
       gateway_contract: PULL_PAYMENT_CONFIG.gateway_address,
       pay_to_treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
-      exchange_rate: "1 USDC = 100 CRED",
+      exchange_rate: "Prices quoted in USDC (Polygon PoS, eip155:137)",
       how_to_pay: {
         endpoint: "POST /",
         service_type: "pull_payment",
@@ -1197,15 +1213,15 @@ const PRICING_MANIFEST = {
   },
   escrow_settlement_flow: {
     model: "hold-and-settle virtual credit escrow",
-    description: "Funds are pulled into the virtual credit ledger and held as CRED balance. CRED is only consumed (settled) when a paid service executes successfully. If a paid call fails after charge, the virtual credit ledger rolls back the charge (DB-only refund — no on-chain USDC movement).",
+    description: "Funds are pulled into the virtual balance ledger and held as spendable USDC-denominated balance. Balance is only consumed (settled) when a paid service executes successfully. If a paid call fails after charge, the ledger rolls back the charge (DB-only refund — no on-chain USDC movement).",
     states: [
       { state: "authorized", description: "Client signs EIP-712 permit; Gateway verifies signature, deadline buffer (30-60 min), gas price cap, and nonce uniqueness.", transition: "pull" },
       { state: "pulled", description: "Gateway.sol executes transferFrom; USDC moves client → treasury. 2-block confirmation required before crediting.", transition: "credit" },
-      { state: "credited", description: "Virtual credit ledger adds CRED to client balance (1 USDC = 100 CRED). Funds now escrowed as spendable balance.", transition: "spend" },
+      { state: "credited", description: "Ledger adds USDC-denominated balance to the client account. Funds now escrowed as spendable balance.", transition: "spend" },
       { state: "settled", description: "A paid service call executes successfully; gatekeeper deducts final cost (base x surge multiplier) from balance.", transition: "terminal" },
       { state: "rolled_back", description: "Paid call failed after charge — ledger reverses the deduction (DB-only refund, Iron Rule #3). On-chain USDC is NOT returned.", transition: "terminal" },
     ],
-    guarantee: "No CRED is consumed by failed calls. Unspent balance persists indefinitely and remains spendable on any service.",
+    guarantee: "No balance is consumed by failed calls. Unspent balance persists indefinitely and remains spendable on any service.",
     iron_rules: [
       "Gateway.sol IS the EIP-712 spender (never the treasury wallet directly)",
       "Deadline buffer 30-60 min enforced on-chain + DB (matched to Polygon PoS checkpoint interval)",
@@ -1219,7 +1235,7 @@ const PRICING_MANIFEST = {
     "GET /pricing.manifest.json": { description: "This pricing manifest (free)", billing: "FREE", auth: "none" },
     "GET /manifest.json": { description: "A2A agent discovery manifest (free)", billing: "FREE", auth: "none" },
     "GET /metrics": { description: "Live telemetry — current surge tier can be inferred from throughput stats (free)", billing: "FREE", auth: "none" },
-    "POST /": { description: "Paid services (structured_data, code_modules, legal_code) + free pull_payment top-up", billing: "per-service CRED charge", auth: "x-client-id header required" },
+    "POST /": { description: "Paid services (structured_data, code_modules, legal_code) + free pull_payment top-up", billing: "per-service USDC charge (x402 exact, eip155:137)", auth: "x-client-id header required" },
   },
   registry: {
     gateway_contract: PULL_PAYMENT_CONFIG.gateway_address,
@@ -1375,7 +1391,7 @@ function buildSecurityInquiryAutoReply(inquiry: {
     ``,
     `Quote (H2M Security Audit baseline):`,
     `  • Tier: ${inquiry.classification.urgency}`,
-    `  • Estimated price: ${priceRange} USD (${inquiry.tier.credits_min}–${inquiry.tier.credits_max ?? "custom"} CRED)`,
+    `  • Estimated price: ${priceRange} USD`,
     `  • SLA: ${inquiry.tier.sla}`,
     `  • Scope: ${inquiry.tier.scope}`,
     ``,
@@ -1383,7 +1399,7 @@ function buildSecurityInquiryAutoReply(inquiry: {
     `  • Endpoint: https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world`,
     `  • First, top up credits via the pull_payment service (FREE call, adds credits):`,
     `    POST with {"service_type":"pull_payment","params":{...EIP-712 permit...}}`,
-    `  • Rate: 1 USDC = 100 CRED. Treasury: 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5`,
+    `  • Quote is in USDC (Polygon PoS). Treasury: 0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5`,
     ``,
     `Once payment is confirmed, reply to this message and your audit will be queued`,
     `with the agreed SLA. Full pricing catalog: GET /pricing.manifest.json`,
@@ -1450,7 +1466,7 @@ async function securityInquiryHandler(req: Request): Promise<Response> {
     payment: {
       rail: "EIP-712 USDC pull payment on Polygon PoS (eip155:137)",
       endpoint: "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
-      rate: "1 USDC = 100 CRED",
+      currency: "USDC (Polygon PoS, eip155:137)",
       treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     },
     poa_ledger: poa.ok ? { recorded: true, entry_id: poa.entryId } : { recorded: false, error: poa.error },
@@ -1539,7 +1555,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
         deniedResponse: {
           status: "failed",
           error_code: "INSUFFICIENT_CREDITS",
-          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          message: `Payment required: $${(pricing.finalCost / 100).toFixed(2)} USDC (Polygon PoS). Please top-up via x402.`,
           client_id: clientId,
         },
       };
@@ -1558,7 +1574,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
         deniedResponse: {
           status: "failed",
           error_code: "TRIAL_INSUFFICIENT_BALANCE",
-          message: `EVM Sentinel Quick Scan (code_modules) trial active! Add ${remainingCost} CRED ($${(remainingCost / 100).toFixed(2)}) to unlock your 100 CRED discount trial. Full price: ${pricing.finalCost} CRED. You pay only ${remainingCost} CRED.`,
+          message: `EVM Sentinel Quick Scan (code_modules) trial active! Add $${(remainingCost / 100).toFixed(2)} USDC to unlock your $1.00 discount trial. Full price: $${(pricing.finalCost / 100).toFixed(2)} USDC. You pay only $${(remainingCost / 100).toFixed(2)} USDC.`,
           client_id: clientId,
           trial_discount: TRIAL_CONFIG.code_modules_trial_credits,
           remaining_cost: remainingCost,
@@ -1572,7 +1588,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
         deniedResponse: {
           status: "failed",
           error_code: "TRIAL_EXPIRED",
-          message: `Your 100 CRED EVM Sentinel Quick Scan (code_modules) trial has expired. Top-up to continue using code_modules at full price (${pricing.finalCost} CRED).`,
+          message: `Your EVM Sentinel Quick Scan (code_modules) discount trial has expired. Top-up to continue using code_modules at full price ($${(pricing.finalCost / 100).toFixed(2)} USDC).`,
           client_id: clientId,
         },
       };
@@ -1586,7 +1602,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
         deniedResponse: {
           status: "failed",
           error_code: "INSUFFICIENT_CREDITS",
-          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          message: `Payment required: $${(pricing.finalCost / 100).toFixed(2)} USDC (Polygon PoS). Please top-up via x402.`,
           client_id: clientId,
         },
       };
@@ -1603,7 +1619,7 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
         deniedResponse: {
           status: "failed",
           error_code: "INSUFFICIENT_CREDITS",
-          message: `Quota or credits exhausted. Required: ${pricing.finalCost} CRED ($${(pricing.finalCost / 100).toFixed(2)}). Please top-up.`,
+          message: `Payment required: $${(pricing.finalCost / 100).toFixed(2)} USDC (Polygon PoS). Please top-up via x402.`,
           client_id: clientId,
         },
       };
@@ -2078,7 +2094,7 @@ async function genLegalCode(params: Record<string, unknown>): Promise<Record<str
     return envelope("legal_code", "failed",
       errorPayload("INVALID_TIER", `tier must be one of: light, standard, enterprise`), trail);
   }
-  trail.push(auditStep("validation", "passed", `tier: ${tier} (${tierDef.credits} CRED = $${tierDef.usd})`));
+  trail.push(auditStep("validation", "passed", `tier: ${tier} ($${tierDef.usd} USDC)`));
 
   const contract = ctype === "escrow" ? genEscrowLegal(params) : genTokenSaleLegal(params);
   trail.push(auditStep("generation", "completed"));
@@ -2161,7 +2177,7 @@ async function genPullPayment(
       BigInt(10 ** PULL_PAYMENT_CONFIG.usdc_decimals)
   );
   trail.push(auditStep("amount_check", "passed",
-    `${amountUsdcStr} units = ${creditsExpected} CRED`));
+    `${amountUsdcStr} atomic USDC units`));
 
   // 4. Check gas price (SECURITY PARAMETER #6: max 500 gwei)
   const provider = new JsonRpcProvider(PULL_PAYMENT_CONFIG.rpc_url);
@@ -2342,7 +2358,7 @@ async function genPullPayment(
 
   // 11. Return success — credits added to virtual balance
   trail.push(auditStep("credit_added", "passed",
-    `${creditsExpected} CRED added to balance`));
+    `USDC-denominated balance added`));
   return envelope("pull_payment", "verified", {
     auth_id: authRecord.id,
     tx_hash: txHash,
@@ -2352,6 +2368,347 @@ async function genPullPayment(
     client_id: clientId,
     message: "Pull payment successful. Credits added to virtual balance.",
   }, trail);
+}
+
+// ----------------------------------------------------------------------------
+// 4f. EVM SENTINEL M2M SCAN ENGINE (v5.0.0)
+// ----------------------------------------------------------------------------
+// High-speed M2M security scan tiers for x402 bots (sub-$1 USDC pricing):
+//   POST /evm-sentinel/v1/scan-quick  ($0.05) — honeypot / access-control fast check
+//   POST /evm-sentinel/v1/scan-deep   ($0.50) — full 9-scenario breach analysis
+//   incl. Permit2-drain + arbitrage-execution-manipulation patterns (BS-010/BS-011)
+// Pure static rule-engine (no LLM): parse+simulate runs in ~1-3ms. A 1-hour
+// result cache (Supabase scan_cache table, keyed by SHA-256 of the source)
+// brings repeat scans to ~50ms — well inside the x402 client 10-15s timeout.
+// Machine output contract (stable, bot-readable):
+//   { risk_score, breach_scenarios[], gas_ratio, action: ALLOW|BLOCK }
+// ----------------------------------------------------------------------------
+
+const SCAN_TTL_MS = 60 * 60 * 1000; // 1-hour cache
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// v5.0.0: BS-010 Permit2-Drain — permit-based approvals that pull the FULL
+// token balance (or an unbounded amount) without an explicit per-call cap
+// and without binding the digest to msg.sender. This is the signature shape
+// of wallet-drainer contracts (Inferno-style drains built on Permit2).
+function detectPermit2Drain(parsed: ParsedContract): {
+  risk_level: "low" | "medium" | "high" | "critical";
+  details: string[];
+  affected_functions: string[];
+} {
+  const details: string[] = [];
+  const affected: string[] = [];
+  let risk: "low" | "medium" | "high" | "critical" = "low";
+  const hasPermitish = /permit2|allowance\(|permit\(|approve\(/i.test(parsed.source);
+  if (!hasPermitish) return { risk_level: "low", details: ["No permit/approval surface detected."], affected_functions: [] };
+  // Full-balance pull patterns: type(uint256).max approvals, balanceOf(this) transfers
+  const maxApprove = /approve\s*\([^)]*type\s*\(\s*uint256\s*\)\s*\.\s*max/i.test(parsed.source);
+  const balanceSweep = /transfer(?:from)?\s*\([^)]*balanceof\s*\(\s*(this|address\s*\(\s*this\s*\)|msg\.sender)\s*\)/i.test(parsed.source);
+  const sig = parsed.signature_binding;
+  // v5.0.1: a permit2.permit()/ISignatureTransfer.permit() call site IS a
+  // signature-verification surface even without ecrecover/ECDSA literals in
+  // this file (verification happens inside Permit2). Treat it as unbound
+  // unless the digest is demonstrably bound here.
+  const permitCallSite = /permit2\s*\.\s*permit\s*\(|ISignatureTransfer|IAllowanceTransfer/.test(parsed.source);
+  const sigSurface = sig.has_signature_verification || permitCallSite;
+  if (maxApprove || balanceSweep) {
+    affected.push(...parsed.functions.filter(f => /approve|transfer|sweep|drain|withdraw/i.test(f.name)).map(f => f.name));
+    if (!sig.binds_msg_sender && sigSurface) {
+      risk = "critical"; // unbound signature + full-balance sweep = drainer shape
+      details.push("Permit/approval path combined with full-balance sweep and a signature NOT bound to msg.sender — classic wallet-drainer shape (BS-010).");
+    } else {
+      risk = "high";
+      details.push("Unbounded approval (type(uint256).max) or full-balance transfer on a permit path — cap approvals per call (BS-010).");
+    }
+  } else if (sig.risk_level === "medium" || sig.risk_level === "high") {
+    risk = "medium";
+    details.push("Signature verification present but digest not bound to msg.sender/contract — replay/front-run exposure on the approval path (BS-010 medium).");
+  } else {
+    details.push("Permit path present; no unbounded approval or full-balance sweep detected.");
+  }
+  return { risk_level: risk, details, affected_functions: affected };
+}
+
+// v5.0.0: BS-011 Arbitrage-Execution Manipulation — external-call execution
+// paths whose outcome depends on state an attacker can manipulate between
+// simulation and execution: unbounded minAmountOut=0 swaps, price feeds read
+// from a single manipulable pool (not an oracle), and callbacks
+// (unlockCallback/execute) that trust caller-controlled calldata.
+function detectArbitrageManipulation(parsed: ParsedContract): {
+  risk_level: "low" | "medium" | "high" | "critical";
+  details: string[];
+  affected_functions: string[];
+} {
+  const details: string[] = [];
+  const affected: string[] = [];
+  let risk: "low" | "medium" | "high" | "critical" = "low";
+  // minAmountOut = 0 (or omitted) swap — MEV sandwich bait.
+  // v5.0.1: also match positional zero args in swap calls — swap(0, ...) /
+  // swap(x, 0, ...) — and amountOutMin/amountOutMinimum aliases.
+  const zeroMin = /(?:swap|exchange)[^;{]*min(?:imum)?(?:amount)?out\s*=\s*0\b/i.test(parsed.source) ||
+    /min(?:imum)?(?:amount)?out\s*[,=]\s*0\b/i.test(parsed.source) ||
+    /\bswap\s*\(\s*0\s*[,)]/.test(parsed.source) ||
+    /\bswap\s*\(\s*[^()]*,\s*0\s*[,)]/.test(parsed.source);
+  // spot price from a pool the caller can manipulate (getReserves/getAmountsOut style) — not an oracle
+  const spotFeed = /(getreserves|getamountsout|getamountsin)\s*\(/i.test(parsed.source) && !/oracle|chainlink|twap/i.test(parsed.source);
+  // trust-caller-calldata callback execution
+  const trustCalldata = /(unlockcallback|execute|callbytes|opdata)\s*\(/i.test(parsed.source) &&
+    /abi\.decode\s*\(\s*msg\.data|calldata/i.test(parsed.source);
+  if (zeroMin) {
+    risk = "high";
+    affected.push(...parsed.functions.filter(f => /swap|exchange/i.test(f.name)).map(f => f.name));
+    details.push("Swap path with minAmountOut=0 (or omitted) — sandwich/MEV manipulation exposure (BS-011).");
+  }
+  if (spotFeed) {
+    risk = risk === "low" ? "medium" : risk;
+    details.push("Price read from a manipulable spot pool (getReserves/getAmountsOut) without TWAP/oracle protection — flash-loan price manipulation exposure (BS-011).");
+  }
+  if (trustCalldata) {
+    risk = risk === "low" ? "medium" : risk;
+    details.push("Callback execution decoding caller-controlled calldata — verify sender/authority before acting on decoded payload (BS-011).");
+  }
+  if (risk === "low") details.push("No arbitrage/manipulation-sensitive execution patterns detected.");
+  return { risk_level: risk, details, affected_functions: affected };
+}
+
+function scanRiskScore(
+  scenarios: BreachScenario[],
+  permitDrain: { risk_level: string },
+  arbitrage: { risk_level: string },
+  gasRatio: number,
+): number {
+  // 0 (clean) .. 1 (max risk). Weighted: critical scenario dominates.
+  const levelWeight: Record<string, number> = { low: 0.05, medium: 0.35, high: 0.7, critical: 1.0 };
+  let score = 0;
+  for (const s of scenarios) if (s.detected) score = Math.max(score, levelWeight[s.risk_level] ?? 0.05);
+  score = Math.max(score, levelWeight[permitDrain.risk_level] ?? 0.05);
+  score = Math.max(score, levelWeight[arbitrage.risk_level] ?? 0.05);
+  if (gasRatio > 12.5) score = Math.max(score, 0.95); // BS-008 validator-delay DoS
+  return Math.round(score * 100) / 100;
+}
+
+function scanAction(riskScore: number, overallRisk: string, replayRisk: string): "ALLOW" | "BLOCK" {
+  if (overallRisk === "critical" || replayRisk === "replay_detected" || riskScore >= 0.95) return "BLOCK";
+  return "ALLOW";
+}
+
+async function runEvmSentinelScan(tier: "quick" | "deep", source: string): Promise<Record<string, unknown>> {
+  const startTime = Date.now();
+  const validation = validateSoliditySyntax(source);
+  const hasErrors = validation.issues.some(i => i.severity === "error");
+  const parsed = parseSolidityContract(source);
+  const breachSimulation = simulateBreachScenarios(parsed);
+  const permitDrain = detectPermit2Drain(parsed);
+  const arbitrage = detectArbitrageManipulation(parsed);
+  const riskScore = hasErrors ? 1.0 : scanRiskScore(breachSimulation.scenarios, permitDrain, arbitrage, parsed.gas_asymmetry.compute_to_gas_ratio);
+  const action = hasErrors ? "BLOCK" : scanAction(riskScore, breachSimulation.overall_risk, "none");
+
+  const base: Record<string, unknown> = {
+    risk_score: riskScore,
+    breach_scenarios: hasErrors
+      ? ["SYNTAX_INVALID"]
+      : breachSimulation.scenarios.filter(s => s.detected).map(s => s.scenario_id)
+          .concat(permitDrain.risk_level === "high" || permitDrain.risk_level === "critical" ? ["BS-010"] : [])
+          .concat(arbitrage.risk_level === "high" || arbitrage.risk_level === "critical" ? ["BS-011"] : []),
+    gas_ratio: parsed.gas_asymmetry.compute_to_gas_ratio,
+    action,
+  };
+
+  if (tier === "quick") {
+    // Quick-Check: honeypot / access-control focus — compact output
+    return {
+      ...base,
+      scan_tier: "quick",
+      honeypot_indicators: {
+        open_mint: parsed.functions.some(f => /mint/i.test(f.name) && !f.has_access_control && !f.has_require),
+        hidden_transfer_restrictions: parsed.functions.some(f => /transfer/i.test(f.name) && !f.has_access_control && !f.has_require),
+        unrestricted_withdraw: parsed.functions.some(f => /withdraw/i.test(f.name) && !f.has_access_control && !f.has_require),
+      },
+      engine_latency_ms: Date.now() - startTime,
+    };
+  }
+
+  // Deep-Scan: full machine report
+  return {
+    ...base,
+    scan_tier: "deep",
+    contract_name: parsed.name,
+    scenario_detail: breachSimulation.scenarios.map(s => ({
+      scenario_id: s.scenario_id,
+      risk_level: s.risk_level,
+      detected: s.detected,
+      affected_functions: s.affected_functions,
+      mitigation: s.mitigation,
+    })),
+    permit2_drain: permitDrain,
+    arbitrage_manipulation: arbitrage,
+    signature_binding: parsed.signature_binding,
+    unbounded_iteration: parsed.unbounded_iteration,
+    gas_asymmetry: parsed.gas_asymmetry,
+    recommendations: breachSimulation.recommendations,
+    engine_latency_ms: Date.now() - startTime,
+  };
+}
+
+async function handleEvmSentinelScan(
+  req: Request,
+  tier: "quick" | "deep",
+): Promise<Response> {
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+  }
+  let body: { solidity_code?: string; source_code?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+  const source = body.solidity_code ?? body.source_code ?? "";
+  if (!source || source.length < 20) {
+    return jsonResponse({ error: "solidity_code required (min 20 chars)" }, 400);
+  }
+  if (source.length > 150000) {
+    return jsonResponse({ error: "solidity_code exceeds 150000 char limit" }, 413);
+  }
+
+  const startTime = Date.now();
+  const codeHash = await sha256Hex(source);
+  const cacheKey = `${codeHash}:${tier}`;
+  let cached: Record<string, unknown> | null = null;
+  let cacheHit = false;
+
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < SCAN_TTL_MS) {
+        cached = data[0].result as Record<string, unknown>;
+        cacheHit = true;
+      }
+    }
+  } catch (_) { /* cache miss on error — fall through to engine */ }
+
+  if (!cached) {
+    cached = await runEvmSentinelScan(tier, source);
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: tier, result: cached });
+    } catch (_) { /* non-fatal: cache write failure does not fail the scan */ }
+  }
+
+  const elapsed = Date.now() - startTime;
+  return jsonResponse({
+    ...cached,
+    cache: cacheHit ? "hit" : "miss",
+    total_latency_ms: elapsed,
+    cache_ttl_hours: 1,
+  });
+}
+
+// v5.0.0: billing wrapper for the scan routes — mirrors the main handler's
+// gatekeeper + 402 x402 + M2M envelope flow, specialized for scan_quick /
+// scan_deep. Returns the machine scan output inside the standard envelope.
+async function handleEvmSentinelScanWithBilling(
+  req: Request,
+  tier: "quick" | "deep",
+): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = tier === "quick" ? "scan_quick" : "scan_deep";
+
+  // v5.0.1: validate input BEFORE billing — malformed requests must fail
+  // with 400, not 402. Clients should never pay to discover their payload
+  // is invalid.
+  let preBody: { solidity_code?: string; source_code?: string };
+  try {
+    preBody = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const preSource = preBody.solidity_code ?? preBody.source_code ?? "";
+  if (!preSource || preSource.length < 20) {
+    return m2mError("INVALID_INPUT", "solidity_code required (min 20 chars).", serviceType, 400, 0, reqStartTime);
+  }
+  if (preSource.length > 150000) {
+    return m2mError("PAYLOAD_TOO_LARGE", "solidity_code exceeds 150000 char limit.", serviceType, 413, 0, reqStartTime);
+  }
+
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 5;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: `/evm-sentinel/v1/scan-${tier}`,
+        description: `EVM Sentinel ${tier === "quick" ? "Quick-Check" : "Deep-Scan"} — static Solidity security scan`,
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",  // Polygon PoS
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",  // Treasury
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one ${serviceType} scan.`,
+        },
+      }],
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  const scanResult = await handleEvmSentinelScan(req, tier);
+  const status = scanResult.status;
+  let respBody: Record<string, unknown> = {};
+  try { respBody = await scanResult.clone().json() as Record<string, unknown>; } catch (_) {}
+
+  if (status === 200) {
+    await Promise.all([
+      recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+      logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+    ]);
+    recordThroughput();
+    return m2mSuccess(respBody, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+  }
+  await logServiceCall(gatekeeper.clientId, serviceType, status, null, 0);
+  return m2mError(
+    String(respBody.error ?? "SCAN_INPUT_ERROR"),
+    String(respBody.error ?? "Scan input invalid."),
+    serviceType,
+    status,
+    0,
+    reqStartTime,
+  );
 }
 
 // -- Service Router -----------------------------------------------------------
@@ -2456,8 +2813,8 @@ const OPENAPI_SPEC = {
   info: {
     title: "Nexus Gateway",
     summary:
-      "M2M legal-code gateway: Solidity security dry-run, bilingual EN/ID legal contract generation, and structured data payloads. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "4.8.0",
+      "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 9+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
+    version: "5.0.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -2469,12 +2826,74 @@ const OPENAPI_SPEC = {
   },
   servers: [{ url: BASE_URL_DOCS }],
   paths: {
+    "/evm-sentinel/v1/scan-quick": {
+      post: {
+        summary: "EVM Sentinel Quick-Check — honeypot / access-control fast scan",
+        description:
+          "Static rule-engine scan focused on honeypot indicators and access control. Output: { risk_score, breach_scenarios[], gas_ratio, action: ALLOW|BLOCK }. Read-only static scan, no wallet approval required. Cost: $0.05 USDC.",
+        "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["honeypot-check", "drainer-detector", "risk-gate"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ScanRequest" },
+              example: { solidity_code: "contract Token { ... }" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries { risk_score, breach_scenarios, gas_ratio, action, honeypot_indicators }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+    "/evm-sentinel/v1/scan-deep": {
+      post: {
+        summary: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis",
+        description:
+          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
+        "x-pricing": "0.50 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["drainer-detector", "risk-gate", "permit2-drain", "arbitrage-manipulation"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ScanRequest" },
+              example: { solidity_code: "contract Vault { ... }" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries { risk_score, breach_scenarios, gas_ratio, action, scenario_detail, permit2_drain, arbitrage_manipulation, recommendations }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
     "/v1/code-modules": {
       post: {
         summary: "EVM Sentinel Quick Scan — audited Solidity code module",
         description:
-          "Generate a security-audited Solidity contract module (ERC20 / ERC721 / ESCROW) with a 5-point static audit report. Cost: 120 CRED = $1.20 USDC.",
-        "x-pricing": "1.20 USDC (120 CRED) per call, x402 exact, eip155:137",
+          "Generate a security-audited Solidity contract module (ERC20 / ERC721 / ESCROW) with a 5-point static audit report. Cost: $1.20 USDC.",
+        "x-pricing": "1.20 USDC per call, x402 exact, eip155:137",
         requestBody: {
           required: true,
           content: {
@@ -2548,8 +2967,8 @@ const OPENAPI_SPEC = {
       post: {
         summary: "Verified structured data payload generator",
         description:
-          "Generate a verified structured JSON payload for Web3, regulatory compliance, or cross-platform orchestration. type: ERC20 | ERC721 | REGULATORY | GENERIC. Cost: 20 CRED = $0.20 USDC.",
-        "x-pricing": "0.20 USDC (20 CRED) per call, x402 exact, eip155:137",
+          "Generate a verified structured JSON payload for Web3, regulatory compliance, or cross-platform orchestration. type: ERC20 | ERC721 | REGULATORY | GENERIC. Cost: $0.20 USDC.",
+        "x-pricing": "0.20 USDC per call, x402 exact, eip155:137",
         requestBody: {
           required: true,
           content: {
@@ -2580,6 +2999,27 @@ const OPENAPI_SPEC = {
   },
   components: {
     schemas: {
+      ScanRequest: {
+        type: "object",
+        required: ["solidity_code"],
+        properties: {
+          solidity_code: {
+            type: "string",
+            description: "Full Solidity source code to scan (max 150000 chars).",
+          },
+        },
+      },
+      ScanOutput: {
+        type: "object",
+        description:
+          "Machine scan output: { risk_score: 0.0-1.0, breach_scenarios: string[], gas_ratio: number, action: ALLOW|BLOCK }.",
+        properties: {
+          risk_score: { type: "number", minimum: 0, maximum: 1 },
+          breach_scenarios: { type: "array", items: { type: "string" } },
+          gas_ratio: { type: "number" },
+          action: { type: "string", enum: ["ALLOW", "BLOCK"] },
+        },
+      },
       CodeModulesRequest: {
         type: "object",
         required: ["service_type", "params"],
@@ -2660,20 +3100,34 @@ const OPENAPI_SPEC = {
 
 const LLMS_TXT = `# Nexus Gateway
 
-> M2M legal-code gateway for Web3 and regulatory compliance. Three paid
-> services for AI agents: a Solidity security dry-run engine, a bilingual
-> (English/Indonesian) legal contract generator mapped to code functions,
-> and a structured data payload generator. Pay per call in USDC on
-> Polygon PoS via the x402 protocol (HTTP 402). No account, no API key:
-> identify with the x-client-id header, then pay when the endpoint
-> answers 402.
+> EVM Sentinel + M2M legal-code gateway for Web3. High-speed static
+> security scans for AI agents (honeypot check, drainer detection,
+> 9+2 breach scenarios), a bilingual (English/Indonesian) legal contract
+> generator mapped to code functions, and structured data payloads.
+> Read-only static scan, no wallet approval required. Pay per call in
+> USDC on Polygon PoS via the x402 protocol (HTTP 402). No account, no
+> API key: identify with the x-client-id header, then pay when the
+> endpoint answers 402.
 
 Base URL: ${BASE_URL_DOCS}
 Human site: ${LANDING_URL}
 OpenAPI 3.1: ${BASE_URL_DOCS}/openapi.json
 Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
 
-## Endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
+## Security scans (paid, x402 exact, USDC on Polygon PoS eip155:137)
+
+- POST /evm-sentinel/v1/scan-quick — Quick-Check, $0.05 USDC. Fast
+  honeypot / access-control scan. Input: {"solidity_code":"..."}.
+  Output: { "risk_score": 0.0-1.0, "breach_scenarios": ["BS-001", ...],
+  "gas_ratio": number, "action": "ALLOW" | "BLOCK" }.
+- POST /evm-sentinel/v1/scan-deep — Deep-Scan, $0.50 USDC. Full breach
+  analysis: 9 core scenarios (BS-001..BS-009) + Permit2-drain detection
+  (BS-010) + arbitrage-execution manipulation (BS-011), with per-scenario
+  detail, mitigations, and recommendations. Same input; richer output.
+  Results cached 1 hour — repeat scans of the same code return in ~50ms.
+  Read-only static scan, no wallet approval required.
+
+## Other endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
 - POST /v1/code-modules — EVM Sentinel Quick Scan. Generate an audited
   Solidity module (ERC20/ERC721/ESCROW) with a 5-point security audit
@@ -2708,13 +3162,16 @@ with a payment-required header carrying a base64 JSON x402 envelope
 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, payTo treasury). Pay with
 any x402 client, or use the built-in pull-payment rail: the gateway
 > contract 0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683 on Polygon PoS
-> pulls USDC via EIP-712 permit and credits 100 CRED per 1 USDC.
+> pulls USDC via EIP-712 permit.
 
-1 CRED = $0.01. structured_data 20 CRED, code_modules 120 CRED,
-legal_code 300/450/800 CRED by tier.
+Prices: scan-quick $0.05 USDC, scan-deep $0.50 USDC,
+structured_data $0.20 USDC, code_modules $1.20 USDC,
+legal_code $3.00/$4.50/$8.00 USDC by tier.
 
 ## Response envelope
 
+Scan responses carry the machine fields at the top level of data:
+{ risk_score, breach_scenarios[], gas_ratio, action }.
 All paid responses use the M2M standard envelope:
 { status, payload_id, timestamp, service_type, data, metadata: { node_id,
 version, latency_ms, credits_charged } }.
@@ -2723,14 +3180,16 @@ version, latency_ms, credits_charged } }.
 const PRICING_TXT = `# Nexus Gateway — Pricing
 
 Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No account, no
-API key. 1 CRED = $0.01 USD; 1 USDC = 100 CRED.
+API key. Read-only static scans, no wallet approval required.
 
 ## Paid services
 
-- structured_data: 20 CRED = $0.20 per call
-- code_modules (EVM Sentinel Quick Scan): 120 CRED = $1.20 per call
-- legal_code: 300 CRED = $3.00 (light) / 450 CRED = $4.50 (standard) /
-  800 CRED = $8.00 (enterprise) per call, selected by params.tier
+- evm-sentinel scan-quick: $0.05 USDC per call (honeypot/access-control fast check)
+- evm-sentinel scan-deep: $0.50 USDC per call (full 9+2 scenario breach analysis)
+- structured_data: $0.20 USDC per call
+- code_modules: $1.20 USDC per call
+- legal_code: $3.00 (light) / $4.50 (standard) / $8.00 (enterprise) USDC
+  per call, selected by params.tier
 
 ## Free endpoints
 
@@ -2763,6 +3222,9 @@ in USDC on Polygon PoS.
    Legal-code outputs are contract drafts, not legal advice; no
    attorney-client relationship is formed. Security dry-run outputs are
    pre-deployment heuristics, not a substitute for a full audit.
+   Security scans are read-only static analysis, no wallet approval
+   required — the gateway never asks for, and never needs, any approval
+   or signature beyond the x402 payment itself.
 2. Payment. Calls are charged per invocation in USDC via x402. Payments
    settle on-chain to the treasury address declared in the 402 payment
    envelope and are non-refundable once a payload is delivered.
@@ -2929,6 +3391,7 @@ interface TwinMapping {
 interface ParsedFunction {
   name: string;
   signature: string;
+  body: string;                // v5.0.1: raw function body (brace-matched) for external-call surface analysis
   line: number;
   visibility: string;
   modifiers: string[];
@@ -2967,6 +3430,7 @@ interface ParsedStateVar {
 }
 
 interface ParsedContract {
+  source: string;             // v5.0.0: raw source retained for BS-010/BS-011 pattern detection
   name: string | null;
   pragma: string | null;
   license: string | null;
@@ -3182,6 +3646,7 @@ function parseSolidityContract(source: string): ParsedContract {
     functions.push({
       name: funcName,
       signature: `function ${funcName}(${params}) ${modifiersRaw.replace(/\s+/g, " ").trim()}`.trim(),
+      body: funcBody,
       line,
       visibility,
       modifiers,
@@ -3437,6 +3902,7 @@ function parseSolidityContract(source: string): ParsedContract {
   }
 
   return {
+    source,
     name,
     pragma,
     license,
@@ -3604,7 +4070,15 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   });
 
   // Scenario 6: Reentrancy risk (Phase 3.4: detects transient storage + nonReentrant + CEI pattern)
-  const externalCalls = parsed.functions.filter(f => f.visibility === "external" || /payable/i.test(f.signature));
+  // v5.0.1 FP fix: an "external function" is not automatically an external
+  // CALL. Only functions whose body actually performs an external call
+  // (.call/.transfer/.send or a low-level interaction) are reentrancy
+  // surfaces. A plain state setter/getter marked external has no external
+  // call to re-enter through.
+  const externalCalls = parsed.functions.filter(f =>
+    (f.visibility === "external" || /payable/i.test(f.signature)) &&
+    (/\.(call|transfer|send)\s*[(\{]/.test(f.body ?? "") || /\bdelegatecall\b/.test(f.body ?? ""))
+  );
   const hasExternalWithBalance = externalCalls.some(f =>
     f.has_require && /\b(balance|amount|value)\b/i.test(f.signature)
   );
@@ -3673,7 +4147,10 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
         ? `Permit2 detected — Permit2 has built-in chain binding and nonce management. Verify Permit2 integration is correct.${nonceFuncs.length > 0 ? ` Additional nonce functions: ${nonceFuncs.map(f => f.name).join(", ")}.` : ""}`
         : `Nonce/replay protection detected: ${nonceFuncs.map(f => f.name).join(", ") || "state variable mapping"}. Verify nonce increments per-user and is unique.`
       : "MEDIUM: No nonce/replay protection detected. If using EIP-712 permits, ensure nonce tracking (on-chain + DB UNIQUE INDEX on client_address + permit_nonce). NOTE: If using Permit2, chain binding is built-in.",
-    detected: !hasNonceProtection,
+    // v5.0.1 FP fix: nonce-absence fires on ~all contracts (noise, per Gate
+    // v1.1 design). Only flag when there is an actual signature/permit
+    // surface to replay.
+    detected: !hasNonceProtection && parsed.signature_binding.has_signature_verification,
   });
   if (!hasNonceProtection) {
     recommendations.push("Add nonce-based replay protection: on-chain nonce mapping + DB UNIQUE INDEX on (client_address, permit_nonce) for pull payment flows. NOTE: Permit2 provides built-in chain binding — no additional nonce needed if using Permit2 correctly.");
@@ -3737,7 +4214,10 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   }
 
   // Overall risk
-  const riskLevels = scenarios.map(s => s.risk_level);
+  // v5.0.1: overall risk must reflect DETECTED findings only. Non-detected
+  // scenarios carry a hypothetical risk_level (e.g. BS-007 defaults to
+  // "medium" when undetected) which inflated clean contracts to "medium".
+  const riskLevels = scenarios.filter(s => s.detected).map(s => s.risk_level);
   const riskOrder = { "low": 0, "medium": 1, "high": 2, "critical": 3 };
   const maxRisk = riskLevels.reduce((max, r) => riskOrder[r] > riskOrder[max] ? r : max, "low" as "low");
 
@@ -4307,6 +4787,21 @@ async function handler(req: Request): Promise<Response> {
     return serveAgentDocs(docsRoute);
   }
 
+  // 2h. EVM Sentinel M2M Scan Routes (v5.0.0)
+  // POST /evm-sentinel/v1/scan-quick — $0.05 USDC — honeypot/access-control fast check
+  // POST /evm-sentinel/v1/scan-deep  — $0.50 USDC — full 9+2 scenario breach analysis
+  // Billing flows through the standard gatekeeper (service_type scan_quick /
+  // scan_deep in PRICING_MODEL); 402 responses carry the x402 envelope.
+  if (req.method === "POST" && docsRoute === "/evm-sentinel/v1/scan-quick") {
+    return handleEvmSentinelScanWithBilling(req, "quick");
+  }
+  if (req.method === "POST" && docsRoute === "/evm-sentinel/v1/scan-deep") {
+    return handleEvmSentinelScanWithBilling(req, "deep");
+  }
+  if (req.method === "GET" && (docsRoute === "/evm-sentinel/v1/scan-quick" || docsRoute === "/evm-sentinel/v1/scan-deep")) {
+    return jsonResponse({ error: "Method not allowed. Use POST with {solidity_code}." }, 405);
+  }
+
   // 2. Manifest Discovery Endpoint
   // (GET catch-all preserved: any GET without a matching route returns the A2A
   // manifest.)
@@ -4403,7 +4898,7 @@ async function handler(req: Request): Promise<Response> {
           name: "USD Coin",
           version: "2",
           gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
-          note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, CRED credited. 1 USDC = 100 CRED.",
+          note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
         },
       }],
     };
@@ -4456,15 +4951,15 @@ async function handler(req: Request): Promise<Response> {
     await Promise.all([
       recordUsageAfterSuccess(
         gatekeeper.clientId,
-        gatekeeper.paymentPath,
-        gatekeeper.creditsToCharge,
+        gatekeeper.paymentPath ?? "credits",
+        gatekeeper.creditsToCharge ?? 0,
       ),
       logServiceCall(
         gatekeeper.clientId,
         serviceType,
         200,
         payloadId,
-        gatekeeper.creditsToCharge,
+        gatekeeper.creditsToCharge ?? 0,
       ),
     ]);
     recordStageTiming("db_logging", Date.now() - dbStart);
