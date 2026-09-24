@@ -2401,6 +2401,381 @@ const CORS_HEADERS: Record<string, string> = {
   "X-Client-ID-Required": "true",
 };
 
+// -- Agent-Readable Docs (v4.8.0) --------------------------------------------
+// Content served at the paths the x402-list site-signal checker probes.
+// Kept adjacent to the router so both stay in sync.
+
+const BASE_URL_DOCS =
+  "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world";
+const LANDING_URL = "https://rakhmadaa-gif.github.io/nexus-core-gateway/";
+
+const AGENT_DOCS_ROUTES = new Set([
+  "/",
+  "/openapi.json",
+  "/llms.txt",
+  "/pricing",
+  "/robots.txt",
+  "/terms",
+]);
+
+function textResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
+function serveAgentDocs(path: string): Response {
+  if (path === "/") {
+    // Homepage signal: redirect to the human landing page.
+    return new Response(null, {
+      status: 301,
+      headers: { ...CORS_HEADERS, "Location": LANDING_URL },
+    });
+  }
+  if (path === "/openapi.json") {
+    return jsonResponse(OPENAPI_SPEC, 200);
+  }
+  if (path === "/llms.txt") {
+    return textResponse(LLMS_TXT);
+  }
+  if (path === "/pricing") {
+    return textResponse(PRICING_TXT);
+  }
+  if (path === "/robots.txt") {
+    return textResponse(ROBOTS_TXT);
+  }
+  if (path === "/terms") {
+    return textResponse(TERMS_TXT);
+  }
+  return jsonResponse({ error: "DOCS_ROUTE_NOT_FOUND" }, 404);
+}
+
+const OPENAPI_SPEC = {
+  openapi: "3.1.0",
+  info: {
+    title: "Nexus Gateway",
+    summary:
+      "M2M legal-code gateway: Solidity security dry-run, bilingual EN/ID legal contract generation, and structured data payloads. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
+    version: "4.8.0",
+    contact: { name: "Nexus Gateway", url: LANDING_URL },
+    "x-endpoints-free": [
+      "GET /manifest.json",
+      "GET /samples",
+      "GET /metrics",
+      "POST /gateway/dry-run",
+      "GET /pricing.manifest.json",
+    ],
+  },
+  servers: [{ url: BASE_URL_DOCS }],
+  paths: {
+    "/v1/code-modules": {
+      post: {
+        summary: "EVM Sentinel Quick Scan — audited Solidity code module",
+        description:
+          "Generate a security-audited Solidity contract module (ERC20 / ERC721 / ESCROW) with a 5-point static audit report. Cost: 120 CRED = $1.20 USDC.",
+        "x-pricing": "1.20 USDC (120 CRED) per call, x402 exact, eip155:137",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/CodeModulesRequest" },
+              example: {
+                service_type: "code_modules",
+                params: { type: "ERC20", name: "NexusToken", symbol: "NEX" },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M success envelope with audited contract source + audit report",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description:
+              "Payment required. The x402 payment envelope is in the payment-required response header (base64 JSON, x402Version 2, accepts[] with USDC on eip155:137).",
+          },
+        },
+      },
+    },
+    "/v1/legal-code": {
+      post: {
+        summary: "Hybrid Legal-Code Pro — bilingual EN/ID legal contract + code mapping",
+        description:
+          "Generate a dual-twin bilingual (English-Indonesian) legal contract mapped to code functions. contract_type: escrow | token_sale. Tiers: light $3.00 / standard $4.50 / enterprise $8.00.",
+        "x-pricing":
+          "3.00 / 4.50 / 8.00 USDC per call by params.tier (light/standard/enterprise), x402 exact, eip155:137",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/LegalCodeRequest" },
+              example: {
+                service_type: "legal_code",
+                params: {
+                  contract_type: "escrow",
+                  tier: "standard",
+                  parties: ["Party A", "Party B"],
+                  jurisdiction: "ID",
+                  amount: "1000",
+                  currency: "USDC",
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M success envelope with bilingual contract + clause-to-code mapping",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+    "/v1/structured-data": {
+      post: {
+        summary: "Verified structured data payload generator",
+        description:
+          "Generate a verified structured JSON payload for Web3, regulatory compliance, or cross-platform orchestration. type: ERC20 | ERC721 | REGULATORY | GENERIC. Cost: 20 CRED = $0.20 USDC.",
+        "x-pricing": "0.20 USDC (20 CRED) per call, x402 exact, eip155:137",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/StructuredDataRequest" },
+              example: {
+                service_type: "structured_data",
+                params: { type: "ERC20", name: "NexusToken", symbol: "NEX", decimals: 18 },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M success envelope with the verified JSON payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      CodeModulesRequest: {
+        type: "object",
+        required: ["service_type", "params"],
+        properties: {
+          service_type: { const: "code_modules" },
+          params: {
+            type: "object",
+            required: ["type"],
+            properties: {
+              type: { type: "string", enum: ["ERC20", "ERC721", "ESCROW"] },
+              name: { type: "string", description: "Token name (ERC20/ERC721)" },
+              symbol: { type: "string", description: "Token symbol (ERC20/ERC721)" },
+            },
+          },
+        },
+      },
+      LegalCodeRequest: {
+        type: "object",
+        required: ["service_type", "params"],
+        properties: {
+          service_type: { const: "legal_code" },
+          params: {
+            type: "object",
+            required: ["contract_type"],
+            properties: {
+              contract_type: { type: "string", enum: ["escrow", "token_sale"] },
+              tier: {
+                type: "string",
+                enum: ["light", "standard", "enterprise"],
+                default: "standard",
+              },
+              parties: { type: "array", items: { type: "string" } },
+              jurisdiction: { type: "string", default: "ID" },
+              amount: { type: "string" },
+              currency: { type: "string", default: "USDC" },
+              deadline: { type: "string" },
+            },
+          },
+        },
+      },
+      StructuredDataRequest: {
+        type: "object",
+        required: ["service_type", "params"],
+        properties: {
+          service_type: { const: "structured_data" },
+          params: {
+            type: "object",
+            required: ["type"],
+            properties: {
+              type: {
+                type: "string",
+                enum: ["ERC20", "ERC721", "REGULATORY", "GENERIC"],
+              },
+              name: { type: "string" },
+              symbol: { type: "string" },
+              decimals: { type: "integer", default: 18 },
+              total_supply: { type: "integer" },
+            },
+          },
+        },
+      },
+      M2MEnvelope: {
+        type: "object",
+        description:
+          "Standard M2M response envelope: { status, payload_id, timestamp, service_type, data, metadata: { node_id, version, latency_ms, credits_charged } }.",
+        properties: {
+          status: { type: "string", enum: ["success", "failed"] },
+          payload_id: { type: ["string", "null"] },
+          timestamp: { type: "string", format: "date-time" },
+          service_type: { type: "string" },
+          data: { type: "object" },
+          metadata: { type: "object" },
+        },
+      },
+    },
+  },
+};
+
+const LLMS_TXT = `# Nexus Gateway
+
+> M2M legal-code gateway for Web3 and regulatory compliance. Three paid
+> services for AI agents: a Solidity security dry-run engine, a bilingual
+> (English/Indonesian) legal contract generator mapped to code functions,
+> and a structured data payload generator. Pay per call in USDC on
+> Polygon PoS via the x402 protocol (HTTP 402). No account, no API key:
+> identify with the x-client-id header, then pay when the endpoint
+> answers 402.
+
+Base URL: ${BASE_URL_DOCS}
+Human site: ${LANDING_URL}
+OpenAPI 3.1: ${BASE_URL_DOCS}/openapi.json
+Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
+
+## Endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
+
+- POST /v1/code-modules — EVM Sentinel Quick Scan. Generate an audited
+  Solidity module (ERC20/ERC721/ESCROW) with a 5-point security audit
+  report. Body: {"service_type":"code_modules","params":{"type":"ERC20","name":"...","symbol":"..."}}.
+  $1.20 per call.
+- POST /v1/legal-code — Hybrid Legal-Code Pro. Generate a bilingual
+  EN/ID legal contract mapped to code functions. Body:
+  {"service_type":"legal_code","params":{"contract_type":"escrow","tier":"standard","parties":["A","B"],"jurisdiction":"ID","amount":"1000","currency":"USDC"}}.
+  $3.00 light / $4.50 standard / $8.00 enterprise per call.
+- POST /v1/structured-data — Verified structured data payloads for
+  Web3, regulatory compliance, and cross-platform orchestration. Body:
+  {"service_type":"structured_data","params":{"type":"ERC20","name":"...","symbol":"..."}}.
+  $0.20 per call.
+
+## Free endpoints (no payment, no x-client-id)
+
+- POST /gateway/dry-run — free Solidity security dry-run: 9 breach
+  scenarios (BS-001..BS-009), gas asymmetry ratio, ERC-4626 vault
+  awareness, nonce/replay defense. Use this to pre-check any contract
+  before deploying or before buying a paid scan.
+- GET /manifest.json — A2A agent discovery manifest.
+- GET /samples — free multi-tier sample manifests (legal + code + matrix).
+- GET /metrics — live telemetry (uptime, latency, concurrency).
+- GET /pricing.manifest.json — machine-readable pricing.
+
+## Payment protocol
+
+Every paid call requires the x-client-id header (any stable string that
+identifies your agent). Without credits the endpoint answers HTTP 402
+with a payment-required header carrying a base64 JSON x402 envelope
+(x402Version 2, accepts[]: scheme exact, network eip155:137, asset USDC
+0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, payTo treasury). Pay with
+any x402 client, or use the built-in pull-payment rail: the gateway
+> contract 0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683 on Polygon PoS
+> pulls USDC via EIP-712 permit and credits 100 CRED per 1 USDC.
+
+1 CRED = $0.01. structured_data 20 CRED, code_modules 120 CRED,
+legal_code 300/450/800 CRED by tier.
+
+## Response envelope
+
+All paid responses use the M2M standard envelope:
+{ status, payload_id, timestamp, service_type, data, metadata: { node_id,
+version, latency_ms, credits_charged } }.
+`;
+
+const PRICING_TXT = `# Nexus Gateway — Pricing
+
+Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No account, no
+API key. 1 CRED = $0.01 USD; 1 USDC = 100 CRED.
+
+## Paid services
+
+- structured_data: 20 CRED = $0.20 per call
+- code_modules (EVM Sentinel Quick Scan): 120 CRED = $1.20 per call
+- legal_code: 300 CRED = $3.00 (light) / 450 CRED = $4.50 (standard) /
+  800 CRED = $8.00 (enterprise) per call, selected by params.tier
+
+## Free endpoints
+
+- POST /gateway/dry-run (Solidity security dry-run, 9 breach scenarios)
+- GET /manifest.json, /samples, /metrics, /pricing.manifest.json
+
+Machine-readable pricing: ${BASE_URL_DOCS}/pricing.manifest.json
+Full agent docs: ${BASE_URL_DOCS}/llms.txt
+`;
+
+const ROBOTS_TXT = `# Nexus Gateway — AI agents and crawlers welcome.
+User-agent: *
+Allow: /
+
+# Machine-readable discovery:
+# ${BASE_URL_DOCS}/llms.txt
+# ${BASE_URL_DOCS}/openapi.json
+# ${BASE_URL_DOCS}/pricing.manifest.json
+# ${BASE_URL_DOCS}/manifest.json
+`;
+
+const TERMS_TXT = `# Nexus Gateway — Terms of Service
+
+Nexus Gateway provides machine-to-machine (M2M) API services: Solidity
+security analysis, bilingual legal contract generation, and structured
+data payloads. Services are sold per call via the x402 payment protocol
+in USDC on Polygon PoS.
+
+1. Service scope. Outputs are generated payloads for machine consumption.
+   Legal-code outputs are contract drafts, not legal advice; no
+   attorney-client relationship is formed. Security dry-run outputs are
+   pre-deployment heuristics, not a substitute for a full audit.
+2. Payment. Calls are charged per invocation in USDC via x402. Payments
+   settle on-chain to the treasury address declared in the 402 payment
+   envelope and are non-refundable once a payload is delivered.
+3. Availability. The service targets 99.9% availability. Uptime and
+   latency are published live at ${BASE_URL_DOCS}/metrics.
+4. Acceptable use. No unlawful use, no attempts to disrupt the service,
+   no submitting malware or content you do not have rights to.
+5. Liability. Service is provided "as is". Liability is limited to the
+   amount paid for the individual call in question.
+6. Contact. rakhmadaa@gmail.com — subject line [SECURITY-INQUIRY] for
+   security matters; it is routed to the ingestion pipeline.
+`;
+
 // ----------------------------------------------------------------------------
 // 0d. M2M OUTPUT PAYLOAD STANDARDIZER (Phase 2.3)
 // ----------------------------------------------------------------------------
@@ -3902,6 +4277,34 @@ async function handler(req: Request): Promise<Response> {
   // return auto-reply draft with x402 payment rail. Records PoA ledger entry.
   if (url.pathname.endsWith("/ingest/security-inquiry") && req.method === "POST") {
     return await securityInquiryHandler(req);
+  }
+
+  // 2g. Agent-Readable Docs Routes (v4.8.0 — x402-list site signals)
+  // The x402-list monitor probes base_url + {/, /openapi.json, /llms.txt,
+  // /pricing, /robots.txt, /terms} and validates each by content type and
+  // shape (NOT by a plain 200). Our previous GET catch-all served the A2A
+  // manifest JSON on every path, which the checker rejects on all six
+  // signals. These routes serve the exact formats the checker accepts:
+  //   /openapi.json → application/json OpenAPI 3.1.0 spec
+  //   /llms.txt     → text/plain llms.txt (agent-first discovery doc)
+  //   /pricing      → text/plain pricing sheet (plain-text pricing page)
+  //   /robots.txt   → text/plain robots.txt
+  //   /terms        → text/plain terms of service
+  //   /             → 301 redirect to the human landing page (homepage)
+  // Reference implementations: crier.vimabrosta.com (6/6 green signals),
+  // x402-launch-pack (openapi:true served from a Supabase Edge Function).
+  // All routes are free, no billing, no x-client-id.
+  // Normalize to the path relative to base_url. The Supabase Deno runtime
+  // hands the function a pathname that still carries part of the mount
+  // prefix (observed live as /v1/hello-world/<path>; the full external
+  // form /functions/v1/hello-world/<path> is also handled). Strip every
+  // segment up to and including this function's own slug.
+  const rawSegments = url.pathname.split("/").filter(Boolean);
+  const fnIdx = rawSegments.lastIndexOf("hello-world");
+  const docsSegments = fnIdx >= 0 ? rawSegments.slice(fnIdx + 1) : rawSegments;
+  const docsRoute = "/" + docsSegments.join("/");
+  if (req.method === "GET" && AGENT_DOCS_ROUTES.has(docsRoute)) {
+    return serveAgentDocs(docsRoute);
   }
 
   // 2. Manifest Discovery Endpoint
