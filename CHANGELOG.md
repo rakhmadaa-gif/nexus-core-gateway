@@ -85,3 +85,28 @@ Digital Twin Engine Upgrade: deep parser (Phase 3.1), Automated Breach Simulatio
 M2M Output Standardizer, Pipeline Optimization, Concurrency Guard, Algorithmic
 Nudging, Interactive Dry-Run, Live Telemetry, Sample Manifests, Pull Payment Module
 (EIP-712 USDC on Polygon), mandatory x-client-id, free-trial bugfix.
+
+## [4.8.0-frontier] — 2026-09-24
+
+### Added
+- **Agent-Readable Docs Routes** — 6 routes served at base_url so agent
+  directories (x402-list site-signal checker) find valid content instead
+  of the manifest catch-all:
+  - `GET /openapi.json` — OpenAPI 3.1.0 spec (3 paid endpoints, request/response schemas, x-pricing extensions)
+  - `GET /llms.txt` — agent-first discovery doc (text/plain)
+  - `GET /pricing` — plain-text pricing sheet (text/plain)
+  - `GET /robots.txt` — crawler directives with discovery URLs (text/plain)
+  - `GET /terms` — terms of service (text/plain)
+  - `GET /` — 301 redirect to landing page (homepage signal)
+
+### Fixed
+- Route normalization for the Supabase Deno runtime mount prefix: the
+  runtime hands the function a pathname of `/v1/hello-world/<path>`
+  (not the full external `/functions/v1/hello-world/<path>`), which
+  broke naive prefix stripping. Normalization now slices after the
+  function slug, handling all observed mount styles.
+
+### Validation
+- 22/22 local harness PASS across 3 mount-path styles; live all 6
+  signals green; regressions intact (manifest, metrics, samples,
+  dry-run, 402/x402 paid flow). Commit af1e098. PoA a21f9e4d.
