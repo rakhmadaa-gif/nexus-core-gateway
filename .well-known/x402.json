@@ -1,0 +1,39 @@
+{
+  "x402Version": 2,
+  "service": "nexus-gateway",
+  "description": "M2M legal-code gateway for Web3: EVM Sentinel static security scans (quick $0.05 / deep $0.50), Solidity security dry-run engine (9+ breach scenarios, gas asymmetry ratio, ERC-4626 vault awareness), bilingual EN/ID legal-code contract generation, structured data payloads.",
+  "base_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
+  "network": "eip155:137",
+  "asset": {
+    "symbol": "USDC",
+    "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    "decimals": 6
+  },
+  "payTo": "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+  "endpoints": [
+    {
+      "path": "/evm-sentinel/v1/scan-quick",
+      "method": "POST",
+      "price": "50000",
+      "price_display": "$0.05 USDC",
+      "description": "Quick static security scan: risk_score, breach_scenarios, action ALLOW|BLOCK. Read-only, no wallet approval required.",
+      "input": { "solidity_code": "string (20-150000 chars)" },
+      "output": ["risk_score", "breach_scenarios", "gas_ratio", "action", "honeypot_indicators", "cache"]
+    },
+    {
+      "path": "/evm-sentinel/v1/scan-deep",
+      "method": "POST",
+      "price": "500000",
+      "price_display": "$0.50 USDC",
+      "description": "Deep scan: adds BS-010 Permit2 wallet-drainer detection + BS-011 arbitrage-execution manipulation analysis with per-scenario detail.",
+      "input": { "solidity_code": "string (20-150000 chars)" },
+      "output": ["risk_score", "breach_scenarios", "scenario_detail", "gas_ratio", "action", "cache"]
+    }
+  ],
+  "keywords": ["honeypot-check", "drainer-detector", "risk-gate"],
+  "discovery": {
+    "manifest": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/manifest.json",
+    "openapi": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/openapi.json",
+    "llms_txt": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/llms.txt"
+  }
+}

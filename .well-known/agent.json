@@ -3,7 +3,7 @@
   "node_id": "nexus.legal.contractdrafter",
   "node_name": "Nexus.Legal.ContractDrafter",
   "node_type": "M2M-service-provider",
-  "version": "4.0.0-frontier",
+  "version": "5.0.0-frontier",
   "description": "M2M Autonomous Legal, Smart Contract & Web3 Schema Verification Gateway",
   "runtime": "supabase-edge-deno",
   "base_url": "https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world",
@@ -21,9 +21,30 @@
     "legal.hybrid-contract-pro",
     "web3.solidity-audited-modules",
     "data.verified-structured-schema",
-    "compliance.mica-ready"
+    "compliance.mica-ready",
+    "security.honeypot-check",
+    "security.drainer-detector",
+    "security.risk-gate"
   ],
   "capabilities": [
+    {
+      "service_type": "scan_quick",
+      "description": "EVM Sentinel quick static security scan \u2014 risk_score, breach_scenarios, action ALLOW|BLOCK. Read-only, no wallet approval required.",
+      "cost_credits": 5,
+      "cost_usd": 0.05,
+      "currency": "USDC",
+      "endpoint": "/evm-sentinel/v1/scan-quick",
+      "free_trial": false
+    },
+    {
+      "service_type": "scan_deep",
+      "description": "EVM Sentinel deep scan \u2014 adds BS-010 Permit2 wallet-drainer detection + BS-011 arbitrage-execution manipulation analysis.",
+      "cost_credits": 50,
+      "cost_usd": 0.5,
+      "currency": "USDC",
+      "endpoint": "/evm-sentinel/v1/scan-deep",
+      "free_trial": false
+    },
     {
       "service_type": "structured_data",
       "description": "Verified JSON schemas for Web3, regulatory compliance, and cross-platform orchestration",
