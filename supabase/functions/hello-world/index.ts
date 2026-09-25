@@ -2926,9 +2926,9 @@ const OPENAPI_SPEC = {
       post: {
         summary: "Hybrid Legal-Code Pro — bilingual EN/ID legal contract + code mapping",
         description:
-          "Generate a dual-twin bilingual (English-Indonesian) legal contract mapped to code functions. contract_type: escrow | token_sale. Tiers: light $3.00 / standard $4.50 / enterprise $8.00.",
+          "Generate a dual-twin bilingual (English-Indonesian) legal contract mapped to code functions. contract_type: escrow | token_sale. Tiers: light $300 / standard $450 / enterprise $800.",
         "x-pricing":
-          "3.00 / 4.50 / 8.00 USDC per call by params.tier (light/standard/enterprise), x402 exact, eip155:137",
+          "300 / 450 / 800 USDC per call by params.tier (light/standard/enterprise), x402 exact, eip155:137",
         requestBody: {
           required: true,
           content: {
@@ -3136,7 +3136,7 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
 - POST /v1/legal-code — Hybrid Legal-Code Pro. Generate a bilingual
   EN/ID legal contract mapped to code functions. Body:
   {"service_type":"legal_code","params":{"contract_type":"escrow","tier":"standard","parties":["A","B"],"jurisdiction":"ID","amount":"1000","currency":"USDC"}}.
-  $3.00 light / $4.50 standard / $8.00 enterprise per call.
+  $300 light / $450 standard / $800 enterprise per call.
 - POST /v1/structured-data — Verified structured data payloads for
   Web3, regulatory compliance, and cross-platform orchestration. Body:
   {"service_type":"structured_data","params":{"type":"ERC20","name":"...","symbol":"..."}}.
@@ -3166,7 +3166,7 @@ any x402 client, or use the built-in pull-payment rail: the gateway
 
 Prices: scan-quick $0.05 USDC, scan-deep $0.50 USDC,
 structured_data $0.20 USDC, code_modules $1.20 USDC,
-legal_code $3.00/$4.50/$8.00 USDC by tier.
+legal_code $300/$450/$800 USDC by tier.
 
 ## Response envelope
 
@@ -3188,7 +3188,7 @@ API key. Read-only static scans, no wallet approval required.
 - evm-sentinel scan-deep: $0.50 USDC per call (full 9+2 scenario breach analysis)
 - structured_data: $0.20 USDC per call
 - code_modules: $1.20 USDC per call
-- legal_code: $3.00 (light) / $4.50 (standard) / $8.00 (enterprise) USDC
+- legal_code: $300 (light) / $450 (standard) / $800 (enterprise) USDC
   per call, selected by params.tier
 
 ## Free endpoints
