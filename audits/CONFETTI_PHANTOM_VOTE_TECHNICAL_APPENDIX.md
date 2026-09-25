@@ -3,6 +3,7 @@
 **Date**: 2026-09-16
 **Companion to**: [`CONFETTI_INCIDENT_RESPONSE_V1.md`](./CONFETTI_INCIDENT_RESPONSE_V1.md) (published 2026-09-15 under embargo)
 **Advisory**: [GHSA-3g9w-x8qp-2qpq](https://github.com/jk-labs-inc/confetti/security/advisories/GHSA-3g9w-x8qp-2qpq) — **PUBLISHED 2026-09-15 17:39:27 UTC**, severity **High**, CWE-284 (Improper Access Control), no CVE assigned
+**Verification trace**: [r/GHSA-3g9w-x8qp-2qpq](https://rakhmadaa-gif.github.io/nexus-core-gateway/r/GHSA-3g9w-x8qp-2qpq) — sig: `nexus-gateway/erc8004-636`
 **Embargo status**: LIFTED — this appendix is released after the advisory's public publication, per the embargo terms honored in the V1 report.
 
 ---

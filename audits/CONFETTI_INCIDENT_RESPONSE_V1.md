@@ -13,6 +13,8 @@
 | When | Event | Evidence |
 |---|---|---|
 | Sep 11 ~01:10 | Private vulnerability report submitted via GitHub Security Advisory API | GHSA-3g9w-x8qp-2qpq created (HTTP 201, severity HIGH, CWE-284/863) |
+
+**Verification trace**: [r/GHSA-3g9w-x8qp-2qpq](https://rakhmadaa-gif.github.io/nexus-core-gateway/r/GHSA-3g9w-x8qp-2qpq) — sig: `nexus-gateway/erc8004-636`
 | Sep 11 01:06 EDT | Maintainer (Siobhán McCaffery) merged fix commit `5851d715` "bugfix: check proposal exists (#6311)" | Fix = exactly the recommended guard; version bump 6.21 → 6.22; regression test added by maintainers |
 | Sep 11 11:52 | Maintainer email: contest running through Tuesday cannot be cancelled; public publication of the advisory held until contest ends | Email thread on GHSA (via notifications@github.com) |
 | Sep 14 14:01 | Follow-up PR #6324 (separate, LOW-severity event-data finding) closed with thanks — "we do not accept unsolicited PRs" | PR #6324 comment by siobh9 |
