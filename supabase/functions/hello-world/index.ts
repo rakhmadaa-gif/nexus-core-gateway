@@ -62,7 +62,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.0.0-frontier",
+  engine_version: "v5.1.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -405,7 +405,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.0.0-frontier",
+  version: "5.1.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -441,6 +441,11 @@ const NODE_MANIFEST = {
     "POST /evm-sentinel/v1/scan-deep": {
       description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis (BS-001..BS-009 + BS-010 Permit2-drain + BS-011 arbitrage-manipulation). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /x402/fitness": {
+      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. legal_weight: 0 — not legal advice, factual only. Input {repo, packages} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
+      billing: "0.05 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "POST /": {
@@ -534,7 +539,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.0.0-frontier (EVM Sentinel M2M Scan Tiers: scan-quick $0.05 / scan-deep $0.50 USDC, BS-010 Permit2-drain + BS-011 arbitrage-manipulation detection, 1-hour scan cache)",
+    version: "v5.1.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1139,6 +1144,9 @@ const PRICING_MODEL = {
     // 1 CRED = $0.01 → quick_check 5 CRED = $0.05, deep_scan 50 CRED = $0.50.
     scan_quick: { base_credits: 5, description: "EVM Sentinel Quick-Check — honeypot/access-control fast scan ($0.05)" },
     scan_deep: { base_credits: 50, description: "EVM Sentinel Deep-Scan — full 9-scenario breach analysis incl. Permit2-drain + arbitrage-manipulation patterns ($0.50)" },
+    // v5.1.0: Factual Fitness Attestation — GHSA/CVE + license + freshness +
+    // SBOM + deterministic 0-100 score. legal_weight: 0, facts only.
+    fitness_attestation: { base_credits: 5, description: "Fitness Attestation — factual GHSA/CVE scan, license check, freshness, SBOM, deterministic score ($0.05)" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -2711,6 +2719,351 @@ async function handleEvmSentinelScanWithBilling(
   );
 }
 
+// ----------------------------------------------------------------------------
+// 5b. FITNESS ATTESTATION ENGINE (v5.1.0 — Factual Fitness Attestation)
+// ----------------------------------------------------------------------------
+// Position: FACTS ONLY, legal_weight: 0. This is NOT legal advice and NOT a
+// compliance verdict. The engine reports verifiable facts (known advisories,
+// declared licenses, commit freshness) plus a deterministic score computed
+// from a fixed public formula. Every output field is reproducible by anyone
+// from public sources.
+//
+// Endpoint: POST /x402/fitness — $0.05 USDC (5 CRED)
+// Input:
+//   { "repo": "owner/name" }                          — GitHub repo attestation
+//   { "packages": [{"name":"...","ecosystem":"npm"}] } — dependency attestation
+//   Both may be combined; at least one is required.
+//
+// Facts gathered (Phase 1):
+//   - GHSA/CVE advisories via api.osv.dev (free, no key)
+//   - License via GitHub repo metadata (SPDX id) or package manifest
+//   - Freshness: days since last commit (GitHub repo API)
+//   - SBOM: CycloneDX 1.5 JSON of the input packages
+//
+// Deterministic score (fixed formula, published in the response):
+//   score = 100
+//         - 25 * critical_advisories
+//         - 15 * high_advisories
+//         - 15 * license_risk        (0 if none/unknown, 1 if copyleft/unclear)
+//         - 10 * freshness_penalty  (1 if last commit > 180 days, else 0)
+//   floored at 0. legal_weight: 0 — "Not legal advice, factual only."
+//
+// Exposure window (W5): for each advisory, days since its earliest public
+// disclosure, i.e. how long the code has been publicly known-exposed if the
+// advisory affects it. Factual elapsed-time measurement, not a claim.
+// ----------------------------------------------------------------------------
+
+const FITNESS_VERSION = "1.0.0";
+const FITNESS_TTL_MS = 10 * 60 * 1000; // 10-minute freshness cron window
+
+// SPDX ids we treat as copyleft or otherwise risky for downstream reuse.
+// Factual classification per the SPDX license list, not a legal opinion.
+const RISKY_LICENSES = new Set([
+  "GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later",
+  "AGPL-3.0-only", "AGPL-3.0-or-later", "LGPL-2.1-only", "LGPL-2.1-or-later",
+  "LGPL-3.0-only", "LGPL-3.0-or-later", "SSPL-1.0", "CC-BY-NC-4.0",
+  "CC-BY-NC-SA-4.0", "BUSL-1.1", "Elastic-2.0", "PolyForm-Small-Business-1.0.0",
+  // Deprecated SPDX forms still returned by the GitHub API.
+  "GPL-2.0", "GPL-3.0", "AGPL-3.0", "AGPL-1.0", "LGPL-2.1", "LGPL-3.0",
+]);
+
+async function osvQuery(pkg: { name: string; ecosystem: string }): Promise<{
+  advisories: Array<{ id: string; summary: string; severity_class: string; published: string; url: string }>;
+  error?: string;
+}> {
+  try {
+    const res = await fetch("https://api.osv.dev/v1/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ package: { name: pkg.name, ecosystem: pkg.ecosystem } }),
+    });
+    if (!res.ok) {
+      return { advisories: [], error: `OSV HTTP ${res.status}` };
+    }
+    const data = await res.json() as { vulns?: Array<Record<string, unknown>> };
+    const advisories = (data.vulns ?? []).map((v) => {
+      const sev = String(v.severity?.[0]?.score ?? "");
+      const dbSev = String((v.database_specific as Record<string, unknown> | undefined)?.severity ?? "");
+      // Map CVSS vector to a coarse class — factual reading of the vector.
+      let severity_class = "UNKNOWN";
+      const m = sev.match(/CVSS:[23]\/\d(\.\d)?\/AV:.*?\/(C|P):[HML]/);
+      const cvssBase = sev.match(/CVSS:[23]\/(\d)/)?.[1];
+      if (cvssBase === "9" || cvssBase === "8") severity_class = "CRITICAL";
+      else if (cvssBase === "7" || cvssBase === "6" || cvssBase === "4") severity_class = "HIGH";
+      else if (cvssBase) severity_class = "MEDIUM";
+      else if (dbSev.toUpperCase() === "CRITICAL" || sev.toUpperCase().includes("CRITICAL")) severity_class = "CRITICAL";
+      else if (dbSev.toUpperCase() === "HIGH" || sev.toUpperCase().includes("HIGH")) severity_class = "HIGH";
+      else if (dbSev.toUpperCase() === "MODERATE" || dbSev.toUpperCase() === "MEDIUM") severity_class = "MEDIUM";
+      return {
+        id: String(v.id),
+        summary: String(v.summary ?? v.details ?? "").slice(0, 200),
+        severity_class,
+        published: String(v.published ?? ""),
+        url: `https://osv.dev/vulnerability/${v.id}`,
+      };
+    });
+    return { advisories };
+  } catch (e) {
+    return { advisories: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function githubRepoFacts(repo: string, token?: string): Promise<{
+  license?: string;
+  last_commit_iso?: string;
+  pushed_at?: string;
+  stars?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = { "Accept": "application/vnd.github+json", "User-Agent": "nexus-gateway" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`https://api.github.com/repos/${repo}`, { headers });
+    if (!res.ok) return { error: `GitHub HTTP ${res.status}` };
+    const d = await res.json() as Record<string, any>;
+    return {
+      license: d.license?.spdx_id ?? undefined,
+      last_commit_iso: d.pushed_at ?? undefined,
+      pushed_at: d.pushed_at ?? undefined,
+      stars: d.stargazers_count ?? undefined,
+    };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; version?: string }>): Record<string, unknown> {
+  return {
+    bomFormat: "CycloneDX",
+    specVersion: "1.5",
+    version: 1,
+    metadata: {
+      timestamp: new Date().toISOString(),
+      tools: [{ vendor: "Nexus Gateway", name: "Fitness Attestation Engine", version: FITNESS_VERSION }],
+    },
+    components: packages.map((p, i) => ({
+      type: "library",
+      "bom-ref": `pkg-${i}`,
+      name: p.name,
+      purl: `pkg:${p.ecosystem ?? "generic"}/${p.name}${p.version ? "@" + p.version : ""}`,
+      ...(p.version ? { version: p.version } : {}),
+    })),
+  };
+}
+
+async function runFitnessAttestation(
+  input: { repo?: string; packages?: Array<{ name: string; ecosystem?: string; version?: string }> },
+): Promise<Record<string, unknown>> {
+  const startedAt = new Date().toISOString();
+  const advisories: Array<Record<string, unknown>> = [];
+  let criticalCount = 0;
+  let highCount = 0;
+  const osvErrors: string[] = [];
+
+  // 1. Advisory facts (OSV) for each declared package
+  for (const p of input.packages ?? []) {
+    const eco = p.ecosystem ?? "npm";
+    const result = await osvQuery({ name: p.name, ecosystem: eco });
+    if (result.error) osvErrors.push(`${p.name}: ${result.error}`);
+    for (const a of result.advisories) {
+      if (a.severity_class === "CRITICAL") criticalCount++;
+      else if (a.severity_class === "HIGH") highCount++;
+      // Exposure window (W5): days since public disclosure — factual
+      // elapsed time the advisory has been public. Not a claim that the
+      // code is exploitable.
+      let exposure_days: number | null = null;
+      if (a.published) {
+        const pubMs = Date.parse(a.published);
+        if (!Number.isNaN(pubMs)) {
+          exposure_days = Math.max(0, Math.round((Date.now() - pubMs) / 86400000));
+        }
+      }
+      advisories.push({ package: p.name, ...a, exposure_days });
+    }
+  }
+
+  // 2. Repo facts (license + freshness) when a repo is given
+  let license: string | null = null;
+  let licenseSource = "none";
+  let lastCommitDays: number | null = null;
+  let repoError: string | null = null;
+  let stars: number | null = null;
+  if (input.repo) {
+    const ghToken = Deno.env.get("GITHUB_TOKEN") ?? undefined;
+    const facts = await githubRepoFacts(input.repo, ghToken);
+    if (facts.error) {
+      repoError = facts.error;
+    } else {
+      if (facts.license && facts.license !== "NOASSERTION") {
+        license = facts.license;
+        licenseSource = "github";
+      }
+      if (facts.pushed_at) {
+        const ms = Date.now() - Date.parse(facts.pushed_at);
+        if (!Number.isNaN(ms)) lastCommitDays = Math.max(0, Math.round(ms / 86400000));
+      }
+      stars = facts.stars ?? null;
+    }
+  }
+
+  // 3. License risk — factual classification against the SPDX list.
+  let licenseRisk = 0;
+  if (license && RISKY_LICENSES.has(license)) licenseRisk = 1;
+
+  // 4. Freshness penalty — factual: last push older than 180 days.
+  const freshnessPenalty = lastCommitDays !== null && lastCommitDays > 180 ? 1 : 0;
+
+  // 5. Deterministic score — fixed public formula.
+  const score = Math.max(0, 100 - criticalCount * 25 - highCount * 15 - licenseRisk * 15 - freshnessPenalty * 10);
+
+  // 6. SBOM (CycloneDX 1.5) of the attested packages
+  const sbom = buildCycloneDxSbom(input.packages ?? []);
+
+  return {
+    attestation_version: FITNESS_VERSION,
+    attested_at: startedAt,
+    subject: {
+      repo: input.repo ?? null,
+      packages: input.packages ?? [],
+    },
+    facts: {
+      advisories,
+      advisory_counts: { critical: criticalCount, high: highCount, total: advisories.length },
+      license,
+      license_source: licenseSource,
+      last_commit_days: lastCommitDays,
+      stars,
+    },
+    score,
+    score_formula: "100 - 25*critical - 15*high - 15*license_risk - 10*(freshness>180d), floor 0",
+    exposure_window: advisories.length > 0
+      ? advisories.map((a) => ({
+          advisory: a.id,
+          published: a.published,
+          exposure_days: a.exposure_days,
+        }))
+      : "no known advisories at scan time",
+    sbom,
+    legal_weight: 0,
+    disclaimer: "Not legal advice, factual only. Facts and score are reproducible from public sources (osv.dev, GitHub, SPDX).",
+    erc8004: {
+      registry: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+      sibling_agent_id: 636,
+      note: "Attestation issued under the Nexus ERC-8004 identity family. On-chain signing of fitness attestations is planned; this payload is signed off-chain by the gateway until then.",
+    },
+    ...(osvErrors.length > 0 ? { data_warnings: osvErrors } : {}),
+    ...(repoError ? { repo_warning: repoError } : {}),
+  };
+}
+
+// v5.1.0: billing wrapper for the fitness attestation route — mirrors the
+// scan billing wrapper: validate input BEFORE billing, gatekeeper, 402 with
+// x402 envelope, 10-minute result cache.
+async function handleFitnessWithBilling(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = "fitness_attestation";
+
+  // Validate input BEFORE billing — malformed requests fail 400, not 402.
+  let preBody: { repo?: string; packages?: Array<{ name: string; ecosystem?: string; version?: string }> };
+  try {
+    preBody = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const repoOk = typeof preBody.repo === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(preBody.repo);
+  const pkgsOk = Array.isArray(preBody.packages) && preBody.packages.length > 0 && preBody.packages.length <= 25 &&
+    preBody.packages.every((p) => typeof p?.name === "string" && p.name.length > 0 && p.name.length <= 100);
+  if (!repoOk && !pkgsOk) {
+    return m2mError(
+      "INVALID_INPUT",
+      "Provide {repo: 'owner/name'} and/or {packages: [{name, ecosystem, version}]} (max 25 packages).",
+      serviceType, 400, 0, reqStartTime,
+    );
+  }
+
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 5;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: "/x402/fitness",
+        description: "Nexus Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one fitness attestation.`,
+        },
+      }],
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  // 10-minute cache keyed by subject hash — freshness matters for exposure
+  // windows, so TTL is short (not the 1h scan cache).
+  const subjectKey = JSON.stringify({ r: preBody.repo ?? null, p: preBody.packages ?? [] });
+  const cacheKey = `fitness:${await sha256Hex(subjectKey)}`;
+  let result: Record<string, unknown> | null = null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < FITNESS_TTL_MS) result = data[0].result as Record<string, unknown>;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  let cacheHit = false;
+  if (!result) {
+    result = await runFitnessAttestation(preBody);
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "fitness", result });
+    } catch (_) { /* non-fatal */ }
+  } else {
+    cacheHit = true;
+  }
+
+  await Promise.all([
+    recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+    logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+  ]);
+  recordThroughput();
+  return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+}
+
 // -- Service Router -----------------------------------------------------------
 
 const SERVICES: Record<string, (p: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
@@ -2814,7 +3167,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 9+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.0.0",
+    version: "5.1.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -2876,6 +3229,55 @@ const OPENAPI_SPEC = {
         responses: {
           "200": {
             description: "M2M envelope; data carries { risk_score, breach_scenarios, gas_ratio, action, scenario_detail, permit2_drain, arbitrage_manipulation, recommendations }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+    "/x402/fitness": {
+      post: {
+        summary: "Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
+        description:
+          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
+        "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["fitness-attestation", "cve-check", "license-check", "sbom", "exposure-window"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  repo: { type: "string", description: "GitHub repo as owner/name" },
+                  packages: {
+                    type: "array",
+                    maxItems: 25,
+                    items: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        ecosystem: { type: "string", description: "npm, crates.io, PyPI, Go, etc. (default npm)" },
+                        version: { type: "string" },
+                      },
+                      required: ["name"],
+                    },
+                  },
+                },
+              },
+              example: { repo: "Vectorized/solady", packages: [{ name: "ethers", ecosystem: "npm" }] },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries { facts, score, score_formula, exposure_window, sbom, legal_weight: 0, disclaimer }",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/M2MEnvelope" },
@@ -3127,6 +3529,20 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
   Read-only static scan, no wallet approval required.
 
+## Fitness attestation (paid, x402 exact, USDC on Polygon PoS eip155:137)
+
+- POST /x402/fitness — Fitness Attestation, $0.05 USDC. Factual fitness
+  facts — NOT legal advice (legal_weight: 0). Input:
+  {"repo":"owner/name"} and/or
+  {"packages":[{"name":"ethers","ecosystem":"npm"}]} (max 25).
+  Output: { "facts": {advisories (GHSA/CVE via osv.dev), license (SPDX),
+  last_commit_days, stars}, "score": 0-100 (deterministic fixed formula:
+  100 - 25*critical - 15*high - 15*license_risk - 10*(freshness>180d)),
+  "exposure_window": days each advisory has been public,
+  "sbom": CycloneDX 1.5, "legal_weight": 0, "disclaimer":
+  "Not legal advice, factual only" }. Results cached 10 minutes.
+  Every fact is reproducible from public sources (osv.dev, GitHub, SPDX).
+
 ## Other endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
 - POST /v1/code-modules — EVM Sentinel Quick Scan. Generate an audited
@@ -3164,7 +3580,7 @@ any x402 client, or use the built-in pull-payment rail: the gateway
 > contract 0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683 on Polygon PoS
 > pulls USDC via EIP-712 permit.
 
-Prices: scan-quick $0.05 USDC, scan-deep $0.50 USDC,
+Prices: scan-quick $0.05 USDC, scan-deep $0.50 USDC, fitness $0.05 USDC,
 structured_data $0.20 USDC, code_modules $1.20 USDC,
 legal_code $300/$450/$800 USDC by tier.
 
@@ -3186,6 +3602,8 @@ API key. Read-only static scans, no wallet approval required.
 
 - evm-sentinel scan-quick: $0.05 USDC per call (honeypot/access-control fast check)
 - evm-sentinel scan-deep: $0.50 USDC per call (full 9+2 scenario breach analysis)
+- fitness attestation: $0.05 USDC per call (factual GHSA/CVE + license +
+  freshness + SBOM + deterministic score; legal_weight 0, not legal advice)
 - structured_data: $0.20 USDC per call
 - code_modules: $1.20 USDC per call
 - legal_code: $300 (light) / $450 (standard) / $800 (enterprise) USDC
@@ -4800,6 +5218,17 @@ async function handler(req: Request): Promise<Response> {
   }
   if (req.method === "GET" && (docsRoute === "/evm-sentinel/v1/scan-quick" || docsRoute === "/evm-sentinel/v1/scan-deep")) {
     return jsonResponse({ error: "Method not allowed. Use POST with {solidity_code}." }, 405);
+  }
+
+  // 2i. Fitness Attestation Route (v5.1.0)
+  // POST /x402/fitness — $0.05 USDC — factual GHSA/CVE + license + freshness +
+  // SBOM + deterministic score. legal_weight: 0 — not legal advice, facts only.
+  // Input: {repo: "owner/name"} and/or {packages: [{name, ecosystem, version}]}.
+  if (req.method === "POST" && docsRoute === "/x402/fitness") {
+    return handleFitnessWithBilling(req);
+  }
+  if (req.method === "GET" && docsRoute === "/x402/fitness") {
+    return jsonResponse({ error: "Method not allowed. Use POST with {repo, packages}." }, 405);
   }
 
   // 2. Manifest Discovery Endpoint
