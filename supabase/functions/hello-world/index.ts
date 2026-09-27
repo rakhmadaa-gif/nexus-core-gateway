@@ -1147,6 +1147,14 @@ const PRICING_MODEL = {
     // v5.1.0: Factual Fitness Attestation — GHSA/CVE + license + freshness +
     // SBOM + deterministic 0-100 score. legal_weight: 0, facts only.
     fitness_attestation: { base_credits: 5, description: "Fitness Attestation — factual GHSA/CVE scan, license check, freshness, SBOM, deterministic score ($0.05)" },
+    // v5.2.0 (planned): Fitness upgrade tiers — W2W external, higher price,
+    // additional weapons. These are RESERVED entries; handlers are not live yet.
+    // Route returns 501 until the weapon implementations land. H+7/$1.25 Lite
+    // (Gas Efficiency Rank), H+14/$2.25 Full (+Exploitability Score + Attack
+    // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
+    fitness_lite: { base_credits: 125, description: "Fitness Lite — Phase 1 facts + Gas Efficiency Rank vs 100 ERC-8004 agents ($1.25) [PLANNED H+7]" },
+    fitness_full: { base_credits: 225, description: "Fitness Full — Lite + Exploitability Score + Attack Cost USD + Bytecode Match ($2.25) [PLANNED H+14]" },
+    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -5229,6 +5237,35 @@ async function handler(req: Request): Promise<Response> {
   }
   if (req.method === "GET" && docsRoute === "/x402/fitness") {
     return jsonResponse({ error: "Method not allowed. Use POST with {repo, packages}." }, 405);
+  }
+
+  // v5.2.0 (planned): Fitness upgrade tiers — W2W external pricing, additional
+  // weapons. Routes are RESERVED: return 501 Not Implemented with a structured
+  // descriptor so M2M clients can discover the roadmap without being billed.
+  // H+7 Lite ($1.25): + Gas Efficiency Rank (W4). H+14 Full ($2.25): +
+  // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
+  // H+21 Forensic ($3.50): + 3 exploit scenarios (reentrancy/oracle/flashloan)
+  // + IPFS timestamp (W6).
+  const fitnessTierRoutes: Record<string, { tier: string; price: string; weapons: string[] }> = {
+    "/x402/fitness/lite": { tier: "fitness_lite", price: "1.25", weapons: ["W1", "W5", "W4"] },
+    "/x402/fitness/full": { tier: "fitness_full", price: "2.25", weapons: ["W1", "W5", "W4", "W2", "W3"] },
+    "/x402/fitness/forensic": { tier: "fitness_forensic", price: "3.50", weapons: ["W1", "W5", "W4", "W2", "W3", "W6"] },
+  };
+  const fitnessTier = fitnessTierRoutes[docsRoute];
+  if (fitnessTier && req.method === "POST") {
+    return jsonResponse({
+      status: "not_implemented",
+      error_code: "TIER_NOT_LIVE",
+      message: `Fitness ${fitnessTier.tier} ($${fitnessTier.price}) is planned but not yet deployed. Phase 1 /x402/fitness ($0.05) is live.`,
+      tier: fitnessTier.tier,
+      planned_price_usdc: fitnessTier.price,
+      planned_weapons: fitnessTier.weapons,
+      live_alternative: { endpoint: "POST /x402/fitness", price_usdc: "0.05" },
+      legal_weight: 0,
+    }, 501);
+  }
+  if (fitnessTier && req.method === "GET") {
+    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
   }
 
   // 2. Manifest Discovery Endpoint
