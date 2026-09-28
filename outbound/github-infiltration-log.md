@@ -294,3 +294,32 @@ Per Phase 2 protocol: Issue/proposal submitted FIRST for developer discussion. N
 - sqrtDAO + gigahooker: no action; keep as passive discovery surface. Next check 2026-09-28 02:00 UTC.
 - Still pending user approval (carried from Week 2): (a) thank-you comment on z-fi PR #24, (b) closing dormant gigahooker PR #3, (c) adding z-fi #24 to profile README track record.
 - Recommendation: if no sqrtDAO engagement by Week 4 (22+ days), consider this target closed for active purposes and stop weekly monitoring of it — the repo's issue queue is demonstrably untriaged (116 open).
+
+---
+
+## Monitoring Check #4 — 2026-09-28 02:00 UTC (Week 4)
+
+### Summary
+
+| Target | Issue State | Issue Comments | Issue Reactions | PR State | PR Merged |
+|--------|------------|----------------|-----------------|----------|-----------|
+| sqrtDAO/contracts #113/#114 | OPEN | 0 | 0 | OPEN | No |
+| z-fi/zFi #23/#24 | OPEN | 0 | 0 | MERGED ✅ (2026-09-08) | YES |
+| gigahooker/hookers-contracts #2/#3 | OPEN | 0 | 0 | OPEN | No |
+
+### Status
+
+- **No changes since Week 3.** Zero comments, reactions, or state transitions across all 6 touchpoints, 4 weeks running (submitted 2026-09-06).
+- sqrtDAO: issue #113 open 22 days, 0 engagement. Repo active (pushed 2026-09-22) but 116 open issues untriaged — issue buried in queue, maintainers not working the backlog.
+- z-fi: campaign goal achieved Week 1 (PR #24 merged). No further action.
+- gigahooker: repo dormant 56 days (last push 2026-08-04). Dead target.
+
+### Verdict
+
+**STATUS: FINAL — 1 merged PR (z-fi #24), sqrtDAO + gigahooker unresponsive after 22 days. Week-4 recommendation from Check #3 now in effect: both targets CLOSED for active purposes.**
+
+### Next Steps
+
+- sqrtDAO + gigahooker: issues/PRs remain open as passive discovery surface only (zero maintenance cost). No further weekly monitoring warranted — this monitor's recurring checks for these targets can be retired.
+- Campaign outcome: 1/3 repos merged a fix (z-fi), validating the dry-run audit → issue + minimal-diff PR playbook. Phase 1 campaign CLOSED.
+- Still pending user approval (carried since Week 2): (a) thank-you comment on z-fi PR #24, (b) closing dormant gigahooker PR #3, (c) adding z-fi #24 to profile README track record.
