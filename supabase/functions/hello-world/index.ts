@@ -1152,7 +1152,7 @@ const PRICING_MODEL = {
     // Route returns 501 until the weapon implementations land. H+7/$1.25 Lite
     // (Gas Efficiency Rank), H+14/$2.25 Full (+Exploitability Score + Attack
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
-    fitness_lite: { base_credits: 125, description: "Fitness Lite — Phase 1 facts + Gas Efficiency Rank vs 100 ERC-8004 agents ($1.25) [PLANNED H+7]" },
+    fitness_lite: { base_credits: 125, description: "Fitness Lite — Phase 1 facts + W4 Gas Efficiency Rank: static heuristic vs fixed public cohort ($1.25) [SPEC v1.0 — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — Lite + Exploitability Score + Attack Cost USD + Bytecode Match ($2.25) [PLANNED H+14]" },
     fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
@@ -1174,6 +1174,72 @@ const PRICING_MODEL = {
     structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial ($0.20 value, covers one structured_data call)" },
     code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: $1.00 off code_modules — client pays $0.20 for a $1.20 service" },
   },
+};
+
+// ----------------------------------------------------------------------------
+// 2c-2b. GAS RANK MODEL — W4 FITNESS LITE PARAMETERS (v5.2.0-spec, M1 2026-09-28)
+// ----------------------------------------------------------------------------
+// Single source of truth for the W4 Gas Efficiency Rank weapon (Fitness Lite
+// tier, 125 CRED / $1.25). Full spec: specs/w4-gas-efficiency-rank.md.
+// Handler is NOT live yet (route stays 501 TIER_NOT_LIVE until M3) — these
+// constants are published ahead of M2/M3 so the parameter surface is fixed,
+// auditable, and reproducible from day one (same pattern as PRICING_MODEL).
+const GAS_RANK_MODEL = {
+  model_version: "1.0.0",
+  spec: "specs/w4-gas-efficiency-rank.md",
+  legal_weight: 0,
+  error_band: "±40% (static heuristic vs deployed actuals; optimizer + warm/cold order)",
+  gas_schedule: {
+    TX_BASE: 21000,
+    SSTORE_NEW: 22100, // 20,000 set (0→≠0) + 2,100 cold access
+    SSTORE_UPDATE: 7100, // 5,000 reset (≠0→≠0) + 2,100 cold access
+    SLOAD_COLD: 2100,
+    SLOAD_WARM: 100,
+    CALL_COLD: 2600,
+    CALL_WARM: 100,
+    CALL_VALUE: 9000,
+    LOG_BASE: 375,
+    LOG_TOPIC: 375, // per topic
+    LOG_DATA_BYTE: 8, // per byte
+    MEMORY_WORD: 3, // per 32-byte word
+    CALLDATA_ZERO: 4,
+    CALLDATA_NONZERO: 16,
+    KECCAK_BASE: 30,
+    KECCAK_WORD: 6,
+  },
+  loop_model: { unbounded_sample_ns: [1, 5, 10], scoring_n: 5 },
+  op_class_patterns: {
+    transfer_like: ["transfer", "send"],
+    approval_like: ["approve", "permit", "allowance"],
+    mint_like: ["mint"],
+    burn_like: ["burn"],
+    swap_like: ["swap"],
+    stake_like: ["stake", "deposit"],
+    claim_like: ["claim", "withdraw", "harvest"],
+    admin_like: ["onlyOwner", "onlyGovernance", "onlyAdmin"],
+  },
+  rank_bands: [
+    { band: "A", min: 80 }, { band: "B", min: 60 }, { band: "C", min: 40 },
+    { band: "D", min: 20 }, { band: "E", min: 0 },
+  ],
+  class_weight: { strong_pattern: 1.0, weak_pattern: 0.5 },
+  cohort: {
+    version: "1.0.0-seed50",
+    description: "Fixed public reference distribution per op-class (seed 50, target 100 at M4 calibration). Live ERC-8004 cohort sampling = v2.",
+    seed: {
+      transfer_like: { p25: 34000, median: 51000, p75: 66000, n: 8 },
+      approval_like: { p25: 24000, median: 46000, p75: 56000, n: 6 },
+      mint_like: { p25: 51000, median: 70000, p75: 95000, n: 6 },
+      burn_like: { p25: 30000, median: 45000, p75: 62000, n: 4 },
+      swap_like: { p25: 95000, median: 128000, p75: 175000, n: 8 },
+      stake_like: { p25: 80000, median: 120000, p75: 160000, n: 6 },
+      claim_like: { p25: 45000, median: 80000, p75: 120000, n: 6 },
+      admin_like: { p25: 28000, median: 44000, p75: 70000, n: 6 },
+    },
+  },
+  limits: { max_sol_files: 25, max_total_bytes: 153600, cache_ttl_seconds: 600 },
+  sla_target: "< 2s (static, no compilation)",
+  vendored_exclusions: ["node_modules/", "/lib/", "/vendor/", "@openzeppelin", "solmate", "solady"],
 };
 
 // ----------------------------------------------------------------------------
