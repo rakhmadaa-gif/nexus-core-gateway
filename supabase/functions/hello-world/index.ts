@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.3.0-frontier",
+  engine_version: "v5.3.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.3.0-frontier",
+  version: "5.3.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -540,7 +540,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.3.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.3.1-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4031,7 +4031,11 @@ function parseSolidityContract(source: string): ParsedContract {
       bodyEnd = i;
     }
     const funcBody = source.substring(funcBodyStart, bodyEnd);
-    const requireCount = (funcBody.match(/require\s*\(/g) || []).length;
+    // v5.3.1: if-revert idiom counts as a guard too — OZ v5 style
+    // "if (x == address(0)) revert Y();" is equivalent validation to require()
+    // (ERC721 transferFrom FP class, rematch 3 Okt).
+    const requireCount = (funcBody.match(/require\s*\(/g) || []).length +
+      (funcBody.match(/if\s*\([^)]*\)\s*\{?\s*revert/g) || []).length;
 
     // Phase 3.4: Detect nonReentrant modifier
     const hasNonReentrant = modifiers.some(m => /nonreentrant/i.test(m)) ||
@@ -4451,7 +4455,12 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // Scenario 1: Unauthorized minting
   // Phase 3.6 (v4.3.0): access control via modifier (onlyOwner etc.) now recognized —
   // previously a mint() with onlyOwner but no in-body require() was falsely flagged critical.
-  const mintFuncs = parsed.functions.filter(f => /\b(mint|_mint)\b/i.test(f.name));
+  // v5.3.1: only externally-reachable mints are attack surfaces. An internal _mint
+  // (OZ ERC20/ERC721 pattern) can never be called by an attacker directly — the
+  // public entry points that wrap it are what matter (OZ FP class, rematch 3 Okt).
+  const mintFuncs = parsed.functions.filter(f =>
+    /\b(mint|_mint)\b/i.test(f.name) &&
+    (f.visibility === "external" || f.visibility === "public"));
   const mintHasRequire = mintFuncs.some(f => f.has_require);
   const mintHasAccessControl = mintFuncs.some(f => f.has_access_control);
   // v4.7.0: on an ERC-4626 vault, mint() mints shares against paid-in assets by design.
@@ -4486,8 +4495,21 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // overrides as "no require" produced the largest recurring FP class (Enzyme x131, Robinhood Stock).
   // Only explicit super-delegation is credited: an override WITHOUT super call and without its own
   // require is still flagged (real BS-002 catch preserved).
-  const transferHasSuperDelegation = transferFuncs.some(f =>
-    /\bsuper\s*\.\s*(transfer|transferfrom)\s*\(/i.test(f.body));
+  // v5.3.1: delegation to a guarded internal helper counts too — OZ v5 pattern is
+  // transfer() -> _transfer/_update (internal, contains revert guards). If the
+  // delegated-to helper exists in this contract and carries guards, the public
+  // wrapper inherits that protection (rematch FP class, 3 Okt).
+  const internalGuardedHelper = (helperName: string): boolean => {
+    const h = parsed.functions.find(f => f.name === helperName);
+    return !!h && (h.has_require || /\brevert\b/.test(h.body ?? ""));
+  };
+  const transferHasSuperDelegation = transferFuncs.some(f => {
+    if (/\bsuper\s*\.\s*(transfer|transferfrom)\s*\(/i.test(f.body)) return true;
+    const deleg = f.body?.match(/\b_?transfer(?:From)?\s*\(|\b_update\s*\(/i);
+    if (!deleg) return false;
+    const helperName = deleg[0].replace(/\s*\($/, "").replace(/^_/, "_");
+    return internalGuardedHelper(helperName);
+  });
   scenarios.push({
     scenario_id: "BS-002",
     scenario_name: "Transfer Violation",
