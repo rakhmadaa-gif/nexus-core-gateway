@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.2.1-frontier",
+  engine_version: "v5.3.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.2.1-frontier",
+  version: "5.3.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -540,7 +540,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.2.1-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.3.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4041,8 +4041,18 @@ function parseSolidityContract(source: string): ParsedContract {
     const hasTransientStorage = /\b(tstore|tload)\b/.test(funcBody);
 
     // Phase 3.4: Detect checks-effects-interactions pattern (state change before external call)
-    const hasCEI = /(\bdelete\b|\b=\s*0\b|\b=\s*address\(0\)\b).*\b(\.call|\.transfer|\.send)\b/s.test(funcBody) ||
-      /(\bdelete\b|\b=\s*0\b).*\brequire\b/s.test(funcBody);
+    // v5.3: CEI credit requires the state zero-out to appear BEFORE the external call in
+    // the body (string order), not merely anywhere in it. The old unanchored .* regex
+    // credited "require(ok) after the call" as CEI protection (NC4 regression).
+    const hasCEI = (() => {
+      const zeroOut = /(\bdelete\b|\b\w+\s*=\s*0\b|\b\w+\s*=\s*address\(0\)\b)/g;
+      let zm;
+      while ((zm = zeroOut.exec(funcBody)) !== null) {
+        const after = funcBody.substring(zm.index + zm[0].length);
+        if (/\b(\.call|\.transfer|\.send)\b/.test(after)) return true;
+      }
+      return false;
+    })();
 
     // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS per-function flags
     const hasPush = /\.push\s*\(/.test(funcBody);
@@ -4289,8 +4299,11 @@ function parseSolidityContract(source: string): ParsedContract {
   // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS detection
   // Based on real bounty classes: Belong Staking #57717/#57790 (dust spam → O(n) withdraw OOG),
   // Belong #57458 (revert-blocking batch payout), Plume #51369 (stakeOnBehalf bloat).
+  // v5.3: trailing \b dropped — "withdrawAll"/"claimBatch"/"payoutMany" must match the
+  // payout-path class (NC2 regression: dust-spam combo was medium because withdrawAll
+  // escaped the word-boundary regex).
   const payoutish = (name: string) =>
-    /\b(withdraw|claim|payout|release|pay|distribute|reward|airdrop|refund|harvest)\b/i.test(name);
+    /\b(withdraw|claim|payout|release|pay|distribute|reward|airdrop|refund|harvest)/i.test(name);
   const publicAppendFuncs = functions.filter(f =>
     (f.visibility === "public" || f.visibility === "external") &&
     f.has_push && !f.has_length_cap && !f.has_access_control
@@ -4587,7 +4600,18 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   } else if (hasAnyReentrancyProtection) {
     reentrancyRiskLevel = "medium"; // Some protection but not comprehensive
   } else if (hasExternalWithBalance) {
-    reentrancyRiskLevel = "medium";
+    // v5.3: state write AFTER the external call = the classic exploit shape
+    // (call out, then update balances). That is HIGH, not medium — the medium
+    // tier is for guarded-but-unverified surfaces only (NC4 regression).
+    const stateWriteAfterCall = externalCalls.some(f => {
+      const body = f.body ?? "";
+      const callIdx = body.search(/\.(call|transfer|send)\s*[(\{]/);
+      if (callIdx < 0) return false;
+      const after = body.substring(callIdx);
+      return /\b\w+\s*(\[[^\]]*\]\s*)?(\+=|-=|=[^=])/.test(after) ||
+             /\b\w+\s*\.\w+\s*(\+=|-=)/.test(after);
+    });
+    reentrancyRiskLevel = stateWriteAfterCall ? "high" : "medium";
   } else {
     reentrancyRiskLevel = "high";
   }
