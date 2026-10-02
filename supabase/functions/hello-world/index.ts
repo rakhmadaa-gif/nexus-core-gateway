@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.1.0-frontier",
+  engine_version: "v5.2.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.1.0-frontier",
+  version: "5.2.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -540,7 +540,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.1.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.2.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4285,7 +4285,10 @@ function parseSolidityContract(source: string): ParsedContract {
   } else if (iterationFuncs.length > 0 && !functions.some(f => f.has_length_cap)) {
     // Only flag iteration-only when NO length cap exists anywhere in the contract —
     // a require(arr.length < N) elsewhere shows the developer bounded array growth.
-    const uncappedLoops = iterationFuncs.filter(f => !/\b(bound|limit|cap|max)\b/i.test(f.signature));
+    // v5.2.0: role-gated loops are not attacker-reachable — an admin-only batch operation
+    // cannot be grown or triggered by an attacker (Robinhood AccessControlsRegistry class).
+    const uncappedLoops = iterationFuncs.filter(f =>
+      !f.has_access_control && !/\b(bound|limit|cap|max)\b/i.test(f.signature));
     if (uncappedLoops.length > 0) {
       unboundedRisk = "medium";
       unboundedDetails.push(
@@ -4430,20 +4433,29 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // Scenario 2: Transfer violation
   const transferFuncs = parsed.functions.filter(f => /\b(transfer|transferfrom)\b/i.test(f.name));
   const transferHasRequire = transferFuncs.some(f => f.has_require);
+  // v5.2.0: Inheritance awareness — an override that delegates to super.transfer/super.transferFrom
+  // inherits the parent's balance/allowance checks (OZ ERC20 always enforces them). Flagging such
+  // overrides as "no require" produced the largest recurring FP class (Enzyme x131, Robinhood Stock).
+  // Only explicit super-delegation is credited: an override WITHOUT super call and without its own
+  // require is still flagged (real BS-002 catch preserved).
+  const transferHasSuperDelegation = transferFuncs.some(f =>
+    /\bsuper\s*\.\s*(transfer|transferfrom)\s*\(/i.test(f.body));
   scenarios.push({
     scenario_id: "BS-002",
     scenario_name: "Transfer Violation",
     description: "Can transfers bypass balance/allowance checks?",
-    risk_level: transferFuncs.length === 0 ? "low" : transferHasRequire ? "low" : "high",
+    risk_level: transferFuncs.length === 0 ? "low" : (transferHasRequire || transferHasSuperDelegation) ? "low" : "high",
     affected_functions: transferFuncs.map(f => f.name),
     mitigation: transferFuncs.length === 0
       ? "No transfer function detected — not applicable."
-      : transferHasRequire
-        ? "Transfer function has require() guards — verify balance/allowance checks."
+      : (transferHasRequire || transferHasSuperDelegation)
+        ? transferHasSuperDelegation
+          ? "Transfer override delegates to super (inherited ERC20 balance/allowance checks preserved)."
+          : "Transfer function has require() guards — verify balance/allowance checks."
         : "HIGH: Transfer function lacks require() guards. Add balance and allowance validation.",
-    detected: transferFuncs.length > 0 && !transferHasRequire,
+    detected: transferFuncs.length > 0 && !transferHasRequire && !transferHasSuperDelegation,
   });
-  if (transferFuncs.length > 0 && !transferHasRequire) {
+  if (transferFuncs.length > 0 && !transferHasRequire && !transferHasSuperDelegation) {
     recommendations.push("Add require() for balance and allowance checks in transfer functions.");
   }
 
