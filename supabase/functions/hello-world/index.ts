@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.2.0-frontier",
+  engine_version: "v5.2.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.2.0-frontier",
+  version: "5.2.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -540,7 +540,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.2.0-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.2.1-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -3844,6 +3844,7 @@ interface ParsedFunction {
   has_try_catch: boolean;             // try/catch isolation present
   has_ecrecover: boolean;             // ecrecover/ECDSA.recover signature verification
   has_access_control: boolean;        // onlyOwner/role modifier or msg.sender require guard
+  has_calldata_only_loop: boolean;     // v5.2.1: loop iterates only calldata params/constants — caller pays own gas
 }
 
 interface ParsedEvent {
@@ -3993,9 +3994,15 @@ function parseSolidityContract(source: string): ParsedContract {
   }
   // Parse functions with full signatures
   const functions: ParsedFunction[] = [];
-  const funcRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*([^{]*)\{/g;
+  // v5.2.1: interface declarations end with ';' — the regex below would otherwise match
+  // "function swap(...) external returns (uint256);" and brace-match the NEXT contract's
+  // body as the "function body" (body-bleed FP: ZkDesk CreditDesk swap() interface got
+  // credited with the whole contract's .push/loops). Skip any function declaration whose
+  // modifiers segment is terminated by ';' before the next '{'.
+  const funcRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*([^{;]*)(\{|;)/g;
   let funcMatch;
   while ((funcMatch = funcRegex.exec(source)) !== null) {
+    if (funcMatch[4] === ";") continue; // interface/abstract declaration — no body, skip
     const funcName = funcMatch[1];
     const params = funcMatch[2].trim();
     const modifiersRaw = funcMatch[3].trim();
@@ -4075,8 +4082,34 @@ function parseSolidityContract(source: string): ParsedContract {
       (customGuardedModifiers.get(m) === true) ||
       (!customGuardedModifiers.has(m) &&
         /^(requiresAuth|only[A-Z]\w*|authorized|restricted|hasRole|isAdmin|isAuthorized)$/.test(m))
-    ) || /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody);
+    ) || /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody) ||
+      // v5.2.1: if-revert guard idiom — "if (msg.sender != X) revert Y();" is equivalent
+      // access control (ZkDesk DeskGuardian class: timelock-only execute() with .call).
+      /if\s*\([^)]*msg\.sender\s*!=\s*\S+\s*\)\s*revert/.test(funcBody);
     const hasArrayIteration = hasLoop && /\.length\b/.test(funcBody);
+    // v5.2.1: calldata-only loop — the loop bound references a calldata parameter's .length
+    // (caller supplies and pays for it) or a compile-time constant, and the body makes no
+    // external calls. Not attacker-growable storage → not a dust-spam/OOG surface.
+    const paramsLower = params.toLowerCase();
+    let hasCalldataOnlyLoop = false;
+    if (hasLoop) {
+      const loopConds = [...funcBody.matchAll(/\bfor\s*\(\s*[^;]*;\s*([^;]+);/g)].map(m => m[1]);
+      const storageArrNames = new Set<string>();
+      // state arrays declared in this contract: type[] name  (top-level)
+      const stateArrRe = /\b\w+\s*\[\s*\]\s+(?:public\s+|private\s+|internal\s+)?(\w+)\s*[;=]/g;
+      let sm;
+      while ((sm = stateArrRe.exec(source)) !== null) storageArrNames.add(sm[1]);
+      hasCalldataOnlyLoop = loopConds.length > 0 && loopConds.every(c => {
+        const cl = c.toLowerCase();
+        // bound mentions a state array → storage iteration
+        for (const n of storageArrNames) if (n && cl.includes(n.toLowerCase())) return false;
+        // bound mentions .length of something not in params → could be storage; conservative: not calldata-only
+        const lenMatch = cl.match(/(\w+)\.length/);
+        if (lenMatch) return paramsLower.includes(lenMatch[1]);
+        // constant bound (SLOTS, 4, etc.) → caller-independent, bounded
+        return true;
+      }) && !hasExternalCallInLoop;
+    }
 
     functions.push({
       name: funcName,
@@ -4098,6 +4131,7 @@ function parseSolidityContract(source: string): ParsedContract {
       has_try_catch: hasTryCatch,
       has_ecrecover: hasEcrecover,
       has_access_control: hasAccessControl,
+      has_calldata_only_loop: hasCalldataOnlyLoop,
     });
   }
 
@@ -4288,7 +4322,8 @@ function parseSolidityContract(source: string): ParsedContract {
     // v5.2.0: role-gated loops are not attacker-reachable — an admin-only batch operation
     // cannot be grown or triggered by an attacker (Robinhood AccessControlsRegistry class).
     const uncappedLoops = iterationFuncs.filter(f =>
-      !f.has_access_control && !/\b(bound|limit|cap|max)\b/i.test(f.signature));
+      !f.has_access_control && !f.has_calldata_only_loop &&
+      !/\b(bound|limit|cap|max)\b/i.test(f.signature));
     if (uncappedLoops.length > 0) {
       unboundedRisk = "medium";
       unboundedDetails.push(
@@ -4524,7 +4559,12 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // call to re-enter through.
   const externalCalls = parsed.functions.filter(f =>
     (f.visibility === "external" || /payable/i.test(f.signature)) &&
-    (/\.(call|transfer|send)\s*[(\{]/.test(f.body ?? "") || /\bdelegatecall\b/.test(f.body ?? ""))
+    (/\.(call|transfer|send)\s*[(\{]/.test(f.body ?? "") || /\bdelegatecall\b/.test(f.body ?? "")) &&
+    // v5.2.1: access-controlled call surfaces are not attacker-reachable reentrancy
+    // surfaces. A timelock/guardian execute() (msg.sender != timelock revert) can only
+    // be triggered by trusted infrastructure — the attacker cannot reach the external
+    // call at all (ZkDesk DeskGuardian class). Public unguarded calls still flagged.
+    !f.has_access_control
   );
   const hasExternalWithBalance = externalCalls.some(f =>
     f.has_require && /\b(balance|amount|value)\b/i.test(f.signature)
