@@ -25,7 +25,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Wallet, Contract, JsonRpcProvider } from "npm:ethers@6";
-import { GAS_RANK_MODEL } from "./w4_gas_rank.ts";
+import { GAS_RANK_MODEL, buildGasRank } from "./w4_gas_rank.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.3.1-frontier",
+  engine_version: "v5.4.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.3.1-frontier",
+  version: "5.4.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -442,6 +442,11 @@ const NODE_MANIFEST = {
     "POST /evm-sentinel/v1/scan-deep": {
       description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis (BS-001..BS-009 + BS-010 Permit2-drain + BS-011 arbitrage-manipulation). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /x402/fitness/lite": {
+      description: "Fitness Lite — W4 Gas Efficiency Rank: deterministic static gas estimate per public/external function from Solidity source, ranked against a fixed public cohort (COHORT v1 seed-50). Band A-E, composite score 0-100, error band +/-40% stated. legal_weight: 0 — factual only. Input {repo} or {files} -> GAS_RANK_RESULT. Unrankable code returns 422 without charge. 10-minute cache.",
+      billing: "1.25 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "POST /x402/fitness": {
@@ -540,7 +545,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.3.1-frontier (Fitness Attestation: /x402/fitness $0.05 — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.4.0-frontier (Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 (W4 Gas Rank) — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1153,7 +1158,7 @@ const PRICING_MODEL = {
     // Route returns 501 until the weapon implementations land. H+7/$1.25 Lite
     // (Gas Efficiency Rank), H+14/$2.25 Full (+Exploitability Score + Attack
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
-    fitness_lite: { base_credits: 125, description: "Fitness Lite — Phase 1 facts + W4 Gas Efficiency Rank: static heuristic vs fixed public cohort ($1.25) [SPEC v1.0 — specs/w4-gas-efficiency-rank.md]" },
+    fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — Lite + Exploitability Score + Attack Cost USD + Bytecode Match ($2.25) [PLANNED H+14]" },
     fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
@@ -3081,6 +3086,197 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
   return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
 }
 
+// ----------------------------------------------------------------------------
+// W4 M3 — FITNESS LITE (v5.4.0): POST /x402/fitness/lite — $1.25 USDC (125 CRED)
+// ----------------------------------------------------------------------------
+// Spec: specs/w4-gas-efficiency-rank.md v1.0. Input: {repo:"owner/name"} or
+// {files:[{path,source}]}. Fetch .sol from GitHub (max 25 files / 150KB,
+// vendored filtered), run buildGasRank(). NO_RANKABLE_FUNCTIONS → 422
+// pre-billing (no charge for unrankable code). Rankable → gatekeeper charge
+// 125 CRED + 402 x402 envelope + m2mSuccess envelope + 10-min cache
+// (scan_cache tier "fitness_lite"). legal_weight: 0 — factual only.
+// ----------------------------------------------------------------------------
+
+const FITNESS_LITE_TTL_MS = 10 * 60 * 1000; // 10-minute freshness window
+
+// Vendored path filter (case-hunter lesson: vendored code is not the subject's work)
+function isVendoredSolPath(p: string): boolean {
+  const normalized = p.replace(/^\.\//, "");
+  return normalized.startsWith("node_modules/") || normalized.includes("/node_modules/") ||
+    normalized.includes("@openzeppelin") || normalized.includes("solmate") ||
+    normalized.includes("solady") || normalized.includes("forge-std") ||
+    /(^|\/)lib\//.test(normalized) || /(^|\/)vendor(s)?\//.test(normalized) ||
+    normalized.endsWith(".t.sol");
+}
+
+async function fetchRepoSolFilesForGasRank(repo: string): Promise<{ files: Array<{ path: string; source: string }>; error?: string }> {
+  try {
+    const headers: Record<string, string> = { "Accept": "application/vnd.github+json", "User-Agent": "nexus-gateway" };
+    const ghToken = Deno.env.get("GITHUB_TOKEN");
+    if (ghToken) headers.Authorization = `Bearer ${ghToken}`;
+    const repoRes = await fetch(`https://api.github.com/repos/${repo}`, { headers });
+    if (!repoRes.ok) return { files: [], error: `GitHub repo API HTTP ${repoRes.status} (repo not found or rate-limited)` };
+    const repoData = await repoRes.json() as Record<string, string>;
+    const branch = repoData.default_branch ?? "main";
+    const treeRes = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1`, { headers });
+    if (!treeRes.ok) return { files: [], error: `GitHub tree API HTTP ${treeRes.status}` };
+    const treeData = await treeRes.json() as { tree?: Array<{ path: string; type: string }> };
+    const solPaths = (treeData.tree ?? [])
+      .filter((e) => e.type === "blob" && e.path.endsWith(".sol") && !isVendoredSolPath(e.path))
+      .map((e) => e.path)
+      .slice(0, GAS_RANK_MODEL.limits.max_sol_files);
+    const files: Array<{ path: string; source: string }> = [];
+    let totalBytes = 0;
+    for (const p of solPaths) {
+      if (totalBytes >= GAS_RANK_MODEL.limits.max_total_bytes) break;
+      const rawRes = await fetch(`https://raw.githubusercontent.com/${repo}/${branch}/${p}`, { headers });
+      if (!rawRes.ok) continue;
+      const source = await rawRes.text();
+      const bytes = new TextEncoder().encode(source).length;
+      if (totalBytes + bytes > GAS_RANK_MODEL.limits.max_total_bytes) break;
+      files.push({ path: p, source });
+      totalBytes += bytes;
+    }
+    return { files };
+  } catch (e) {
+    return { files: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = "fitness_lite";
+
+  // Validate input BEFORE billing — malformed requests fail 400, not 402.
+  let preBody: { repo?: string; files?: Array<{ path: string; source: string }> };
+  try {
+    preBody = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const repoOk = typeof preBody.repo === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(preBody.repo);
+  const filesOk = Array.isArray(preBody.files) && preBody.files.length > 0 && preBody.files.length <= 25 &&
+    preBody.files.every((f) => typeof f?.path === "string" && f.path.length > 0 && f.path.length <= 300 &&
+      typeof f?.source === "string" && f.source.length > 0);
+  if (!repoOk && !filesOk) {
+    return m2mError(
+      "INVALID_INPUT",
+      "Provide {repo: 'owner/name'} or {files: [{path, source}]} (max 25 files, 150KB total).",
+      serviceType, 400, 0, reqStartTime,
+    );
+  }
+
+  // Gather input .sol files (pre-billing — fetch failures are not chargeable).
+  let inputFiles: Array<{ path: string; source: string }> = [];
+  if (repoOk) {
+    const fetched = await fetchRepoSolFilesForGasRank(preBody.repo!);
+    if (fetched.error) {
+      return m2mError("GITHUB_FETCH_FAILED", fetched.error, serviceType, 502, 0, reqStartTime);
+    }
+    inputFiles = fetched.files;
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "No non-vendored .sol files found in this repo.", serviceType, 422, 0, reqStartTime);
+    }
+  } else {
+    inputFiles = preBody.files!.filter((f) => !isVendoredSolPath(f.path));
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "All submitted files were filtered as vendored/test code.", serviceType, 422, 0, reqStartTime);
+    }
+  }
+
+  // Run the estimator BEFORE billing — unrankable code is never charged.
+  const rankResult = buildGasRank(inputFiles, { repo: preBody.repo });
+  if (rankResult.status === "NO_RANKABLE_FUNCTIONS") {
+    return m2mError(
+      "NO_RANKABLE_FUNCTIONS",
+      "No rankable public/external functions found in the submitted code. Nothing to rank — no charge.",
+      serviceType, 422, 0, reqStartTime,
+    );
+  }
+
+  // Rankable → gatekeeper + 402 x402 envelope (125 CRED = $1.25 USDC).
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 125;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: "/x402/fitness/lite",
+        description: "Nexus Fitness Lite — W4 Gas Efficiency Rank vs fixed public cohort",
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Lite gas rank.`,
+        },
+      }],
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  // 10-minute cache keyed by subject (repo name or file-path set).
+  const subjectKey = JSON.stringify({ r: preBody.repo ?? null, f: inputFiles.map((x) => x.path) });
+  const cacheKey = `fitness_lite:${await sha256Hex(subjectKey)}`;
+  let result: Record<string, unknown> | null = null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < FITNESS_LITE_TTL_MS) result = data[0].result as Record<string, unknown>;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  let cacheHit = false;
+  if (!result) {
+    result = rankResult as unknown as Record<string, unknown>;
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "fitness_lite", result });
+    } catch (_) { /* non-fatal */ }
+  } else {
+    cacheHit = true;
+  }
+
+  await Promise.all([
+    recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+    logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+  ]);
+  recordThroughput();
+  return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+}
+
 // -- Service Router -----------------------------------------------------------
 
 const SERVICES: Record<string, (p: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
@@ -3254,6 +3450,58 @@ const OPENAPI_SPEC = {
           },
           "402": {
             description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+    "/x402/fitness/lite": {
+      post: {
+        summary: "Fitness Lite — W4 Gas Efficiency Rank vs fixed public cohort",
+        description:
+          "Deterministic static gas estimate per public/external function from Solidity source (no compilation), ranked against a fixed public reference cohort (COHORT v1 seed-50). Composite score 0-100, band A-E, per-function estimates, loop/storage analysis, stated +/-40% error band. Unrankable code returns 422 without charge. legal_weight: 0 — factual only, not optimization advice. 10-minute result cache. Cost: $1.25 USDC.",
+        "x-pricing": "1.25 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["gas-rank", "gas-efficiency", "fitness-lite", "static-analysis"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  repo: { type: "string", description: "GitHub repo as owner/name (public)" },
+                  files: {
+                    type: "array",
+                    maxItems: 25,
+                    description: "Direct file input: [{path, source}] — max 25 .sol files, 150KB total",
+                    items: {
+                      type: "object",
+                      properties: {
+                        path: { type: "string" },
+                        source: { type: "string" },
+                      },
+                      required: ["path", "source"],
+                    },
+                  },
+                },
+              },
+              example: { repo: "Vectorized/solady" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries GAS_RANK_RESULT { attested_subject, functions_analyzed, total_gas_estimate, per-function estimates, loop_analysis, storage_analysis, composite_score, band, limits }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+          "422": {
+            description: "No rankable public/external functions (or no non-vendored .sol files) — not charged.",
           },
         },
       },
@@ -3559,6 +3807,15 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   "sbom": CycloneDX 1.5, "legal_weight": 0, "disclaimer":
   "Not legal advice, factual only" }. Results cached 10 minutes.
   Every fact is reproducible from public sources (osv.dev, GitHub, SPDX).
+- POST /x402/fitness/lite — Fitness Lite (W4 Gas Efficiency Rank), $1.25
+  USDC. Deterministic static gas estimate per public/external function
+  from Solidity source (no compilation), ranked against a fixed public
+  cohort (COHORT v1 seed-50). Output: GAS_RANK_RESULT with composite
+  score 0-100, band A-E, per-function estimates, loop analysis, storage
+  analysis, and a stated +/-40% error band. legal_weight: 0 — factual
+  only, not optimization advice. Input: {"repo":"owner/name"} or
+  {"files":[{"path":"...","source":"..."}]} (max 25 files, 150KB).
+  Unrankable code returns 422 without charge. Cached 10 minutes.
 
 ## Other endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
@@ -3598,6 +3855,7 @@ any x402 client, or use the built-in pull-payment rail: the gateway
 > pulls USDC via EIP-712 permit.
 
 Prices: scan-quick $0.05 USDC, scan-deep $0.50 USDC, fitness $0.05 USDC,
+fitness lite $1.25 USDC,
 structured_data $0.20 USDC, code_modules $1.20 USDC,
 legal_code $300/$450/$800 USDC by tier.
 
@@ -3621,6 +3879,9 @@ API key. Read-only static scans, no wallet approval required.
 - evm-sentinel scan-deep: $0.50 USDC per call (full 9+2 scenario breach analysis)
 - fitness attestation: $0.05 USDC per call (factual GHSA/CVE + license +
   freshness + SBOM + deterministic score; legal_weight 0, not legal advice)
+- fitness lite (W4 Gas Efficiency Rank): $1.25 USDC per call (deterministic
+  static gas estimate per public/external function, ranked vs fixed public
+  cohort, band A-E, +/-40% error band stated; legal_weight 0)
 - structured_data: $0.20 USDC per call
 - code_modules: $1.20 USDC per call
 - legal_code: $300 (light) / $450 (standard) / $800 (enterprise) USDC
@@ -5353,8 +5614,15 @@ async function handler(req: Request): Promise<Response> {
   // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
   // H+21 Forensic ($3.50): + 3 exploit scenarios (reentrancy/oracle/flashloan)
   // + IPFS timestamp (W6).
+  // W4 M3 (v5.4.0): /x402/fitness/lite is now LIVE — route to the billing
+  // handler before the 501 tier skeleton (full/forensic remain reserved).
+  if (req.method === "POST" && docsRoute === "/x402/fitness/lite") {
+    return handleFitnessLiteWithBilling(req);
+  }
+  if (req.method === "GET" && docsRoute === "/x402/fitness/lite") {
+    return jsonResponse({ error: "Method not allowed. Use POST with {repo} or {files}." }, 405);
+  }
   const fitnessTierRoutes: Record<string, { tier: string; price: string; weapons: string[] }> = {
-    "/x402/fitness/lite": { tier: "fitness_lite", price: "1.25", weapons: ["W1", "W5", "W4"] },
     "/x402/fitness/full": { tier: "fitness_full", price: "2.25", weapons: ["W1", "W5", "W4", "W2", "W3"] },
     "/x402/fitness/forensic": { tier: "fitness_forensic", price: "3.50", weapons: ["W1", "W5", "W4", "W2", "W3", "W6"] },
   };
