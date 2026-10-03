@@ -3361,18 +3361,56 @@ async function probePeerEndpoint(peerUrl: string): Promise<Record<string, unknow
 async function fetchX402ListMirror(peerUrl: string): Promise<Record<string, unknown>> {
   try {
     // Match x402-list listing by origin domain of the peer URL.
+    // The registry is paginated (853+ services, 25/page) — search by the
+    // first hostname token first (?search=), then fall back to scanning
+    // pages at per_page=100 (9 pages) for an exact origin match.
     const origin = new URL(peerUrl).origin;
-    const res = await fetch("https://x402-list.com/api/v1/services", {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return { source: "x402-list", listed: null, note: "Registry API unavailable." };
-    const data = await res.json() as { data?: Array<Record<string, unknown>> };
-    const services = data.data ?? [];
-    const match = services.find((s) => {
-      const candidates = [s.base_url, s.website_url].filter((x) => typeof x === "string") as string[];
-      return candidates.some((c) => { try { return new URL(c).origin === origin; } catch (_) { return false; } });
-    });
+    const host = new URL(peerUrl).hostname;
+    const firstToken = host.split(".")[0];
+    const candidates: Array<Record<string, unknown>> = [];
+    const seenSlugs = new Set<string>();
+    const collect = (services: Array<Record<string, unknown>>) => {
+      for (const s of services) {
+        const slug = String(s.slug ?? "");
+        if (slug && !seenSlugs.has(slug)) { seenSlugs.add(slug); candidates.push(s); }
+      }
+    };
+    // 1) targeted search
+    try {
+      const res = await fetch(`https://x402-list.com/api/v1/services?search=${encodeURIComponent(firstToken)}&per_page=100`, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { data?: Array<Record<string, unknown>> };
+        collect(data.data ?? []);
+      }
+    } catch (_) { /* fall through to page scan */ }
+    // 2) exact match on what search returned
+    const matchFrom = (list: Array<Record<string, unknown>>): Record<string, unknown> | undefined => {
+      return list.find((s) => {
+        const urls = [s.base_url, s.website_url].filter((x) => typeof x === "string") as string[];
+        return urls.some((c) => { try { return new URL(c).origin === origin; } catch (_) { return false; } });
+      });
+    };
+    let match = matchFrom(candidates);
+    // 3) fallback: scan all pages (max 9 at per_page=100) if search missed
+    if (!match) {
+      for (let page = 1; page <= 10; page++) {
+        const res = await fetch(`https://x402-list.com/api/v1/services?page=${page}&per_page=100`, {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) break;
+        const data = await res.json() as { data?: Array<Record<string, unknown>>; meta?: { total_pages?: number } };
+        collect(data.data ?? []);
+        match = matchFrom(candidates);
+        if (match) break;
+        const totalPages = data.meta?.total_pages ?? 1;
+        if (page >= totalPages) break;
+      }
+    }
+    const services = candidates;
     if (!match) return { source: "x402-list", listed: false, note: "Not found in x402-list registry." };
     const assessment = (match.assessment ?? {}) as Record<string, unknown>;
     return {
