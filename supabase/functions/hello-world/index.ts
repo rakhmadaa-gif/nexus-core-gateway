@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.4.1-frontier",
+  engine_version: "v5.4.2-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -440,7 +440,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /evm-sentinel/v1/scan-deep": {
-      description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis (BS-001..BS-009 + BS-010 Permit2-drain + BS-011 arbitrage-manipulation). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
+      description: "EVM Sentinel Deep-Scan — full 11+2 scenario breach analysis (BS-001..BS-009 core + BS-010 Permit2-drain + BS-011 arbitrage-manipulation + BS-012 bad randomness + BS-013 unprotected owner function). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -490,7 +490,7 @@ const NODE_MANIFEST = {
       auth: "none",
     },
     "POST /gateway/dry-run": {
-      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation (9 scenarios incl. unbounded iteration DoS + revert-blocking payout + signature binding) + nonce defense + Algorithmic Nudging urgency signal (free)",
+      description: "Interactive Solidity dry-run — static syntax validation + Digital Twin v3.1 matrix + breach simulation (13 scenarios incl. unbounded iteration DoS + revert-blocking payout + signature binding + bad randomness + unprotected owner function) + nonce defense + Algorithmic Nudging urgency signal (free)",
       billing: "FREE",
       auth: "none",
     },
@@ -550,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.4.1-frontier (Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 (W4 Gas Rank) — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.4.2-frontier (EVM Sentinel engine +13 breach scenarios: BS-012 bad randomness + BS-013 unprotected owner function; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2583,6 +2583,8 @@ async function runEvmSentinelScan(tier: "quick" | "deep", source: string): Promi
     arbitrage_manipulation: arbitrage,
     signature_binding: parsed.signature_binding,
     unbounded_iteration: parsed.unbounded_iteration,
+    bad_randomness: parsed.bad_randomness,
+    unprotected_privileged_setters: parsed.unprotected_privileged_setters,
     gas_asymmetry: parsed.gas_asymmetry,
     recommendations: breachSimulation.recommendations,
     engine_latency_ms: Date.now() - startTime,
@@ -3689,7 +3691,7 @@ const OPENAPI_SPEC = {
   info: {
     title: "Nexus Gateway",
     summary:
-      "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 9+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
+      "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
     version: "5.1.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
@@ -3737,7 +3739,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis",
         description:
-          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
+          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation + BS-012 bad randomness + BS-013 unprotected owner function, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
         "x-pricing": "0.50 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["drainer-detector", "risk-gate", "permit2-drain", "arbitrage-manipulation"],
         requestBody: {
@@ -4136,7 +4138,7 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Output: { "risk_score": 0.0-1.0, "breach_scenarios": ["BS-001", ...],
   "gas_ratio": number, "action": "ALLOW" | "BLOCK" }.
 - POST /evm-sentinel/v1/scan-deep — Deep-Scan, $0.50 USDC. Full breach
-  analysis: 9 core scenarios (BS-001..BS-009) + Permit2-drain detection
+  analysis: 11 core scenarios (BS-001..BS-009 + BS-012 bad randomness + BS-013 unprotected owner) + Permit2-drain detection
   (BS-010) + arbitrage-execution manipulation (BS-011), with per-scenario
   detail, mitigations, and recommendations. Same input; richer output.
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
@@ -4190,8 +4192,8 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
 
 ## Free endpoints (no payment, no x-client-id)
 
-- POST /gateway/dry-run — free Solidity security dry-run: 9 breach
-  scenarios (BS-001..BS-009), gas asymmetry ratio, ERC-4626 vault
+- POST /gateway/dry-run — free Solidity security dry-run: 13 breach
+  scenarios (BS-001..BS-009 + BS-012/BS-013), gas asymmetry ratio, ERC-4626 vault
   awareness, nonce/replay defense. Use this to pre-check any contract
   before deploying or before buying a paid scan.
 - GET /manifest.json — A2A agent discovery manifest.
@@ -4232,7 +4234,7 @@ API key. Read-only static scans, no wallet approval required.
 ## Paid services
 
 - evm-sentinel scan-quick: $0.05 USDC per call (honeypot/access-control fast check)
-- evm-sentinel scan-deep: $0.50 USDC per call (full 9+2 scenario breach analysis)
+- evm-sentinel scan-deep: $0.50 USDC per call (full 11+2 scenario breach analysis)
 - fitness attestation: $0.05 USDC per call (factual GHSA/CVE + license +
   freshness + SBOM + deterministic score; legal_weight 0, not legal advice)
 - fitness lite (W4 Gas Efficiency Rank): $1.25 USDC per call (deterministic
@@ -4248,7 +4250,7 @@ API key. Read-only static scans, no wallet approval required.
 
 ## Free endpoints
 
-- POST /gateway/dry-run (Solidity security dry-run, 9 breach scenarios)
+- POST /gateway/dry-run (Solidity security dry-run, 13 breach scenarios)
 - GET /manifest.json, /samples, /metrics, /pricing.manifest.json
 
 Machine-readable pricing: ${BASE_URL_DOCS}/pricing.manifest.json
@@ -4534,6 +4536,19 @@ interface ParsedContract {
     risk_level: "low" | "medium" | "high";
     details: string[];
   };
+  // v5.4.2: BS-012 bad randomness (theRun class, ToB not-so-smart-contracts)
+  bad_randomness: {
+    functions: string[];           // public functions using block-level entropy in game/payout logic
+    critical_functions: string[];  // entropy + fund transfer decided by it in the same function
+    risk_level: "low" | "medium" | "high" | "critical";
+    details: string[];
+  };
+  // v5.4.2: BS-013 unprotected privileged setter (Parity WalletLibrary / ToB Unprotected class)
+  unprotected_privileged_setters: {
+    functions: string[];           // public owner/admin assignment without access control
+    risk_level: "low" | "medium" | "high" | "critical";
+    details: string[];
+  };
   line_count: number;
 }
 
@@ -4612,6 +4627,29 @@ function parseSolidityContract(source: string): ParsedContract {
       /\b(onlyOwner|onlyRole|requiresAuth|auth|authority|canCall|isAuthorized|hasRole|isAdmin|isOwner|owner\(\)|admin\(\))\b/i.test(body);
     customGuardedModifiers.set(name, guarded);
   }
+  // Parse state variables
+  // v5.4.2 anti-FP: match only at contract-body brace depth. A local
+  // declaration inside a function ("address owner = _msgSender();" in OZ
+  // ERC20.transfer) previously parsed as a state var, which made BS-013
+  // flag transfer()/approve() as privileged takeovers. Compute brace depth
+  // up to each match and require depth === 1 (directly in the contract).
+  const stateVars: ParsedStateVar[] = [];
+  const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(public|private|internal|constant|immutable)?\s*(\w+)\s*[;=]/gm;
+  let svMatch;
+  while ((svMatch = stateVarRegex.exec(source)) !== null) {
+    const before = source.substring(0, svMatch.index);
+    const line = before.split("\n").length;
+    let depth = 0;
+    for (const ch of before) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+    if (depth !== 1) continue; // inside a function/struct/modifier body — not a state var
+    stateVars.push({
+      name: svMatch[3],
+      type: svMatch[1],
+      line,
+      visibility: svMatch[2] || "internal",
+    });
+  }
+
   // Parse functions with full signatures
   const functions: ParsedFunction[] = [];
   // v5.2.1: interface declarations end with ';' — the regex below would otherwise match
@@ -4619,11 +4657,19 @@ function parseSolidityContract(source: string): ParsedContract {
   // body as the "function body" (body-bleed FP: ZkDesk CreditDesk swap() interface got
   // credited with the whole contract's .push/loops). Skip any function declaration whose
   // modifiers segment is terminated by ';' before the next '{'.
-  const funcRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*([^{;]*)(\{|;)/g;
+  // v5.4.2: (\w+)? — unnamed legacy fallback "function() { ... }" (Solidity
+  // 0.4.x, theRun class) previously matched the keyword itself as the name
+  // (captured from a preceding comment "Fallback function"). Name it
+  // "fallback" instead; visibility stays public (externally reachable).
+  const funcRegex = /function\s*(\w+)?\s*\(([^)]*)\)\s*([^{;]*)(\{|;)/g;
   let funcMatch;
   while ((funcMatch = funcRegex.exec(source)) !== null) {
     if (funcMatch[4] === ";") continue; // interface/abstract declaration — no body, skip
-    const funcName = funcMatch[1];
+    // v5.4.2: when the name capture equals the keyword "function" itself, the
+    // regex consumed TWO "function" tokens (comment word + declaration) —
+    // that is the legacy unnamed fallback, not a function named "function".
+    let funcName = funcMatch[1] ?? "fallback";
+    if (funcName === "function") funcName = "fallback";
     const params = funcMatch[2].trim();
     const modifiersRaw = funcMatch[3].trim();
     const before = source.substring(0, funcMatch.index);
@@ -4769,6 +4815,112 @@ function parseSolidityContract(source: string): ParsedContract {
     });
   }
 
+  // ------------------------------------------------------------------------
+  // v5.4.2: BS-012 Bad Randomness + BS-013 Unprotected Privileged Setter
+  // Corpus-injected pattern classes (ToB not-so-smart-contracts: theRun,
+  // Unprotected/Parity WalletLibrary). Anti-FP exclusions derived from the
+  // regression corpus audit:
+  //   - require(...) lines stripped (deadline checks: require(x >= block.timestamp))
+  //   - time-delta accrual stripped (block.timestamp - last / last - block.timestamp)
+  //   - timestamp bookkeeping assignment stripped (lastAccrual = block.timestamp)
+  //   - BS-013: legacy constructor (function named like the contract) excluded;
+  //     one-time initializer idiom (initialize/init guarded by require(!x)) excluded
+  //     (EIP-1167 proxy pattern, corpus F3).
+  // ------------------------------------------------------------------------
+  const badRandomnessFuncs: string[] = [];
+  const badRandomnessCritical: string[] = [];
+  const badRandomnessDetails: string[] = [];
+  const unprotectedSetterFuncs: string[] = [];
+  const unprotectedSetterDetails: string[] = [];
+  const contractNameLc = (name ?? "").toLowerCase();
+  const ENTROPY_RE = /block\.(difficulty|prevrandao)\b|blockhash\s*\(|block\.number\b|block\.timestamp\b/;
+  const PRNG_CONTEXT_RE = /random|winner|reward|prize|jackpot|lottery|roll|raffle|lucky|draw|seed|payout/i;
+  const FUND_TRANSFER_RE = /\.send\s*\(|\.transfer\s*\(|\.call\{\s*value|\.call\s*\(\s*""|payable\s*\([^)]*\)\s*\.\s*(send|transfer)/;
+  // v5.4.2: entropy often lives in PRIVATE helpers reached from public entry
+  // points (theRun: fallback -> init -> Participate -> random). Build a
+  // one-file call graph and flag a public function if its transitive closure
+  // reaches an entropy-using PRNG function.
+  const entropyHelpers = new Set<string>();
+  for (const f of functions) {
+    const prngBody = f.body
+      .replace(/require\s*\([^;]*;/g, "")                                  // deadline/guard checks
+      .replace(/\w+(?:\[[^\]]*\])?\s*-\s*block\.timestamp|block\.timestamp\s*-\s*\w+/g, "") // time-delta accrual
+      .replace(/\w+(?:\[[^\]]*\])?\s*=\s*block\.timestamp\s*;/g, "");  // timestamp bookkeeping
+    const hasEntropy = ENTROPY_RE.test(prngBody);
+    const prngContext = PRNG_CONTEXT_RE.test(f.name) || PRNG_CONTEXT_RE.test(f.body);
+    if (hasEntropy && prngContext) entropyHelpers.add(f.name);
+  }
+  const callGraph = new Map<string, Set<string>>();
+  const allFuncNames = new Set(functions.map(f => f.name));
+  for (const f of functions) {
+    const callees = new Set<string>();
+    for (const m of f.body.matchAll(/\b(\w+)\s*\(/g)) {
+      if (m[1] !== f.name && allFuncNames.has(m[1])) callees.add(m[1]);
+    }
+    callGraph.set(f.name, callees);
+  }
+  const reachableHelpers = (entry: string): Set<string> => {
+    const seen = new Set<string>();
+    const stack = [...(callGraph.get(entry) ?? [])];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      for (const c of callGraph.get(cur) ?? []) if (!seen.has(c)) stack.push(c);
+    }
+    return seen;
+  };
+  const movesFundsInClosure = (entry: string): boolean => {
+    const f = functions.find(x => x.name === entry);
+    if (f && FUND_TRANSFER_RE.test(f.body)) return true;
+    for (const callee of reachableHelpers(entry)) {
+      const cf = functions.find(x => x.name === callee);
+      if (cf && FUND_TRANSFER_RE.test(cf.body)) return true;
+    }
+    return false;
+  };
+  for (const f of functions) {
+    const isPublic = f.visibility === "public" || f.visibility === "external";
+    if (!isPublic) continue;
+    // --- BS-012: block-level entropy deciding game/payout outcomes ---
+    // Direct use in the public function, OR reached via private helpers.
+    const directEntropy = entropyHelpers.has(f.name);
+    const reachedHelpers = [...reachableHelpers(f.name)].filter(h => entropyHelpers.has(h));
+    if (directEntropy || reachedHelpers.length > 0) {
+      const via = directEntropy ? "directly" : `via ${reachedHelpers.join(" -> ")}`;
+      badRandomnessFuncs.push(f.name);
+      const movesFunds = movesFundsInClosure(f.name);
+      if (movesFunds) badRandomnessCritical.push(f.name);
+      badRandomnessDetails.push(
+        `Function ${f.name}() uses block-level entropy (block.timestamp/block.number/blockhash/difficulty) in game/payout logic ${via}. ` +
+        `These values are predictable/biasable by validators and observable by MEV bots (class: theRun, ToB not-so-smart-contracts).` +
+        (movesFunds ? ` Funds are transferred based on the predictable outcome — full exploit path.` : ``)
+      );
+    }
+    // --- BS-013: public owner/admin assignment without access control ---
+    // v5.4.2 anti-FP: the assignment target must be a STATE variable named
+    // owner/admin. A local declaration ("address owner = _msgSender();" in OZ
+    // ERC20.transfer) is a shadowing local, not a privileged-role takeover.
+    // Also exclude typed local declarations generally (Type name = ...).
+    const privilegedStateVars = new Set(
+      stateVars.filter(v => /^(owner|admin)$/i.test(v.name)).map(v => v.name)
+    );
+    const assignsPrivileged = privilegedStateVars.size > 0 &&
+      [...f.body.matchAll(/\b(\w+)\s*=\s*[^=]/g)].some(m => privilegedStateVars.has(m[1]));
+    const isLegacyConstructor = contractNameLc !== "" && f.name.toLowerCase() === contractNameLc;
+    const isGuardedInitializer = /^(initialize|init)$/i.test(f.name) && /require\s*\(\s*!/.test(f.body);
+    if (assignsPrivileged && !f.has_access_control && !isLegacyConstructor && !isGuardedInitializer) {
+      unprotectedSetterFuncs.push(f.name);
+      unprotectedSetterDetails.push(
+        `Function ${f.name}() assigns a privileged role (owner/admin) and has NO access-control guard — anyone can call it and take over the contract (class: Parity WalletLibrary, ToB Unprotected).`
+      );
+    }
+  }
+  const badRandomnessRisk: "low" | "high" | "critical" =
+    badRandomnessCritical.length > 0 ? "critical" : badRandomnessFuncs.length > 0 ? "high" : "low";
+  const unprotectedSetterRisk: "low" | "critical" =
+    unprotectedSetterFuncs.length > 0 ? "critical" : "low";
+
   // Parse events with parameters
   const events: ParsedEvent[] = [];
   const evtRegex = /event\s+(\w+)\s*\(([^)]*)\)/g;
@@ -4793,21 +4945,6 @@ function parseSolidityContract(source: string): ParsedContract {
     modifiers.push({ name: modMatch[1], line });
   }
 
-
-  // Parse state variables
-  const stateVars: ParsedStateVar[] = [];
-  const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(public|private|internal|constant|immutable)?\s*(\w+)\s*[;=]/gm;
-  let svMatch;
-  while ((svMatch = stateVarRegex.exec(source)) !== null) {
-    const before = source.substring(0, svMatch.index);
-    const line = before.split("\n").length;
-    stateVars.push({
-      name: svMatch[3],
-      type: svMatch[1],
-      line,
-      visibility: svMatch[2] || "internal",
-    });
-  }
 
   // Capability detection (Phase 3.2 + 3.4)
   const sourceLower = source.toLowerCase();
@@ -5056,6 +5193,17 @@ function parseSolidityContract(source: string): ParsedContract {
       binds_contract_or_chain: bindsContractOrChain,
       risk_level: sigBindingRisk,
       details: sigBindingDetails,
+    },
+    bad_randomness: {
+      functions: badRandomnessFuncs,
+      critical_functions: badRandomnessCritical,
+      risk_level: badRandomnessRisk,
+      details: badRandomnessDetails,
+    },
+    unprotected_privileged_setters: {
+      functions: unprotectedSetterFuncs,
+      risk_level: unprotectedSetterRisk,
+      details: unprotectedSetterDetails,
     },
     line_count: lineCount,
   };
@@ -5364,6 +5512,43 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   });
   if (unbounded.risk_level !== "low") {
     recommendations.push("Unbounded Iteration DoS (BS-009): " + unbounded.details.join(" "));
+  }
+
+  // v5.4.2: Scenario 12 — Bad Randomness (BS-012, theRun class)
+  // Block-level entropy (timestamp/number/difficulty/prevrandao/blockhash) in
+  // game/payout logic. Validators and MEV bots can predict or bias outcomes.
+  const badRand = parsed.bad_randomness;
+  scenarios.push({
+    scenario_id: "BS-012",
+    scenario_name: "Bad Randomness (Block-Level Entropy in Game/Payout Logic)",
+    description: "Does any public function use block.timestamp/block.number/block.difficulty/prevrandao/blockhash to decide winners, payouts, or game outcomes? These values are predictable and biasable (class: theRun, ToB not-so-smart-contracts).",
+    risk_level: badRand.risk_level,
+    affected_functions: badRand.functions,
+    mitigation: badRand.risk_level === "low"
+      ? "No block-level entropy in game/payout logic detected."
+      : badRand.details.join(" ") + " Mitigations: use a verifiable randomness oracle (Chainlink VRF / Switchboard), a commit-reveal scheme with multiple participants, or off-chain RNG with on-chain verification.",
+    detected: badRand.risk_level !== "low",
+  });
+  if (badRand.risk_level !== "low") {
+    recommendations.push("Bad Randomness (BS-012): " + badRand.details.join(" "));
+  }
+
+  // v5.4.2: Scenario 13 — Unprotected Owner/Admin Function (BS-013, Parity class)
+  // Public privileged-role assignment without access control = instant takeover.
+  const unprot = parsed.unprotected_privileged_setters;
+  scenarios.push({
+    scenario_id: "BS-013",
+    scenario_name: "Unprotected Owner/Admin Function (Privilege Takeover)",
+    description: "Is there a public function that assigns owner/admin (or an equivalent privileged role) without an access-control guard? Anyone can call it and take over the contract (class: Parity WalletLibrary / ToB Unprotected).",
+    risk_level: unprot.risk_level,
+    affected_functions: unprot.functions,
+    mitigation: unprot.risk_level === "low"
+      ? "All privileged setters carry access-control guards (or none exist)."
+      : unprot.details.join(" ") + " Mitigations: apply onlyOwner/onlyRole modifier, or route the change through a timelock + governance.",
+    detected: unprot.risk_level !== "low",
+  });
+  if (unprot.risk_level !== "low") {
+    recommendations.push("Unprotected Owner Function (BS-013): " + unprot.details.join(" "));
   }
 
   // Overall risk
@@ -5789,6 +5974,9 @@ async function dryRunHandler(req: Request): Promise<Response> {
       // Phase 3.6 (v4.3.0): BS-009 + signature binding analysis
       unbounded_iteration: parsed.unbounded_iteration,
       signature_binding: parsed.signature_binding,
+      // v5.4.2: BS-012 + BS-013 detection blocks
+      bad_randomness: parsed.bad_randomness,
+      unprotected_privileged_setters: parsed.unprotected_privileged_setters,
       // Sprint 3 Task 2 (v4.6.0): quantitative gas asymmetry ratio
       gas_asymmetry: parsed.gas_asymmetry,
     },
