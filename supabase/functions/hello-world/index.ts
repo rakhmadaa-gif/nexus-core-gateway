@@ -5778,7 +5778,13 @@ function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contra
   const contractMatch = source.match(/contract\s+(\w+)/);
   const contractName = contractMatch ? contractMatch[1] : null;
   if (!contractName) {
-    issues.push({ severity: "error", line: 1, message: "No 'contract' keyword found. Invalid Solidity source.", rule: "CONTRACT_REQUIRED" });
+    // v5.5.3: free-function files (ERC-8042 diamond library style, no contract wrapper)
+    // are valid Solidity — a file with pragma + function declarations is scannable.
+    // Only flag as error when there is no contract AND no function declaration.
+    const hasFunctionDecl = /function\s+\w+\s*\(/.test(source);
+    if (!hasFunctionDecl) {
+      issues.push({ severity: "error", line: 1, message: "No 'contract' keyword found. Invalid Solidity source.", rule: "CONTRACT_REQUIRED" });
+    }
   }
 
   // Check balanced braces
