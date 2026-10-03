@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.5.1-frontier",
+  engine_version: "v5.5.2-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.5.1-frontier",
+  version: "5.5.2-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -550,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.5.1-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.1: modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.5.2-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.2: RHS msg.sender guard + modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4641,7 +4641,9 @@ function parseSolidityContract(source: string): ParsedContract {
       b.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
     const isGuardBody = (b: string): boolean => {
       const code = stripComments(b);
-      return /msg\.sender\s*(==|!=)/.test(code) ||
+      // v5.5.2: comparison in EITHER direction — Polymarket PositionManager
+      // `require(moduleById[moduleId] == msg.sender || ...)` has msg.sender on the RHS.
+      return /msg\.sender\s*(==|!=)|(==|!=)\s*msg\.sender/.test(code) ||
         /\brevert\b/.test(code) ||
         /\b(onlyOwner|onlyRole|requiresAuth|auth|authority|canCall|isAuthorized|hasRole|isAdmin|isOwner|owner\(\)|admin\(\))\b/i.test(code);
     };
