@@ -1,5 +1,33 @@
 # Nexus Gateway Changelog
 
+## v5.5.1-frontier (2026-10-03)
+
+**EVM Sentinel FP Precision Upgrade — bounty-sweep hardening**
+
+### Fixed (all FP classes found in BS-012 Sweep Round 1: Boros/Intuition/Ostium)
+- **Modifier helper-call guard resolution**: custom modifiers delegating the check to a
+  private helper (`modifier onlyVault() { _onlyVault(msg.sender); }` — Ostium pattern)
+  now resolve the helper body (one hop, with-arg and no-arg forms). Fake guards whose
+  helper contains no msg.sender check/revert still count as unguarded.
+- **Comment stripping in guard classification**: a comment saying "reverts if unauthorized"
+  inside a modifier/helper body no longer makes an unguarded modifier look guarded.
+- **BS-012 PRNG word boundaries**: `withdrawal` (contains "draw") no longer matches the
+  game-context regex — only whole-word PRNG terms (random/winner/raffle/...) count.
+- **BS-012 cooldown bookkeeping strip**: cast forms like `user.start = uint32(block.timestamp);`
+  (withdrawal cooldown bookkeeping, Boros MarketHubEntry) are stripped before entropy analysis.
+- **BS-013 initializer modifiers**: OZ `initializer`/`reinitializer`/`onlyInitializing`/
+  `disableInitializers` count as guarded initializers (Boros DepositBox, Ostium PriceUpKeep).
+- **Self-delegatecall trusted**: `address(this).delegatecall(...)` (Ostium retry/delegation
+  pattern) is not a reentrancy surface — target is own code, not attacker-controlled.
+  Bare/user-address delegatecall still counts.
+
+### Validation
+- Local bundle harness: 7 real trigger files (Boros MarketHubEntry/DepositBox, Ostium
+  LockedDepositNft/PriceUpKeep/Delegatable/Trading, Intuition TrustBonding) → all CLEAN.
+- Regression corpus: 12 fixtures + 11 negatives (3 new: NC9 fake-guard helper modifier
+  → BS-001 critical, NC10 raffle-withdraw → BS-012 high, NC11 attacker delegatecall →
+  BS-006 high) → 0 fail PASS.
+
 ## v5.0.0-frontier (2026-09-24)
 
 **EVM Sentinel M2M Scan Endpoints — USDC-only external pricing**

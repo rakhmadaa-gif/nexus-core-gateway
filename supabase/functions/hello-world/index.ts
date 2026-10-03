@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.5.0-frontier",
+  engine_version: "v5.5.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.5.0-frontier",
+  version: "5.5.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -550,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.5.0-frontier (EVM Sentinel engine +13 breach scenarios; v5.5: legacy 0.4.x call syntax + token-pull reentrancy (DAO 2016 + SpankChain 2018 classes), per-function reentrancy grading; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.5.1-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.1: modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4614,8 +4614,14 @@ function parseSolidityContract(source: string): ParsedContract {
   // authority/ACL (canCall, isAuthorized, hasRole, onlyOwner delegation), or
   // ownership/admin membership test. Custom modifiers WITHOUT guards (e.g. pure
   // logging or state-snapshot modifiers) do NOT count as access control.
+  // v5.5.1: modifier bodies that delegate the actual check to a private helper
+  // (Ostium pattern: `modifier onlyVault() { _onlyVault(msg.sender); }` with
+  // the msg.sender revert living in the helper) resolve the helper body too.
   const customGuardedModifiers = new Map<string, boolean>();
   const modBodyRegex = /modifier\s+(\w+)\s*\([^)]*\)\s*\{/g;
+  // helper function bodies by name (for modifier→helper guard resolution)
+  const helperBodies = new Map<string, string>();
+  const helperRegex = /function\s+(\w+)\s*\([^)]*\)\s*(?:external\s+|public\s+|internal\s+|private\s+)?view\s*[^{]*\{/g;
   let modBodyMatch;
   while ((modBodyMatch = modBodyRegex.exec(source)) !== null) {
     const name = modBodyMatch[1];
@@ -4629,10 +4635,35 @@ function parseSolidityContract(source: string): ParsedContract {
     }
     if (end === -1) continue;
     const body = source.substring(braceOpen + 1, end);
-    const guarded =
-      /msg\.sender\s*(==|!=)/.test(body) ||
-      /\brevert\b/.test(body) ||
-      /\b(onlyOwner|onlyRole|requiresAuth|auth|authority|canCall|isAuthorized|hasRole|isAdmin|isOwner|owner\(\)|admin\(\))\b/i.test(body);
+    // v5.5.1: strip comments first — a comment saying "reverts if unauthorized"
+    // inside a modifier body must not make an unguarded modifier look guarded.
+    const stripComments = (b: string): string =>
+      b.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+    const isGuardBody = (b: string): boolean => {
+      const code = stripComments(b);
+      return /msg\.sender\s*(==|!=)/.test(code) ||
+        /\brevert\b/.test(code) ||
+        /\b(onlyOwner|onlyRole|requiresAuth|auth|authority|canCall|isAuthorized|hasRole|isAdmin|isOwner|owner\(\)|admin\(\))\b/i.test(code);
+    };
+    let guarded = isGuardBody(body);
+    // v5.5.1: body delegates to a helper — resolve the helper's body (one hop).
+    // Matches both `_onlyVault(msg.sender)` and `_onlyGov()` (no-arg helper).
+    if (!guarded) {
+      const callM = body.match(/\b(_\w+)\s*\(\s*(?:msg\.sender\s*)?\)/);
+      if (callM) {
+        const hRegex = new RegExp(`function\\s+${callM[1]}\\s*\\([^)]*\\)\\s*[^{]*\\{`);
+        const hIdx = source.search(hRegex);
+        if (hIdx >= 0) {
+          const hBrace = source.indexOf("{", hIdx);
+          let d = 0, hEnd = -1;
+          for (let i = hBrace; i < source.length; i++) {
+            if (source[i] === "{") d++;
+            else if (source[i] === "}") { d--; if (d === 0) { hEnd = i; break; } }
+          }
+          if (hEnd > 0) guarded = isGuardBody(source.substring(hBrace + 1, hEnd));
+        }
+      }
+    }
     customGuardedModifiers.set(name, guarded);
   }
   // Parse state variables
@@ -4850,7 +4881,9 @@ function parseSolidityContract(source: string): ParsedContract {
   const unprotectedSetterDetails: string[] = [];
   const contractNameLc = (name ?? "").toLowerCase();
   const ENTROPY_RE = /block\.(difficulty|prevrandao)\b|blockhash\s*\(|block\.number\b|block\.timestamp\b/;
-  const PRNG_CONTEXT_RE = /random|winner|reward|prize|jackpot|lottery|roll|raffle|lucky|draw|seed|payout/i;
+  // v5.5.1: word boundaries — "withdrawal" contains "draw", "seeds" (farming)
+  // contains "seed". Only whole-word PRNG terms count as game context.
+  const PRNG_CONTEXT_RE = /\b(random|winner|reward|prize|jackpot|lottery|roll|raffle|lucky|draw|seed|payout)\b/i;
   const FUND_TRANSFER_RE = /\.send\s*\(|\.transfer\s*\(|\.call\{\s*value|\.call\s*\(\s*""|payable\s*\([^)]*\)\s*\.\s*(send|transfer)/;
   // v5.4.2: entropy often lives in PRIVATE helpers reached from public entry
   // points (theRun: fallback -> init -> Participate -> random). Build a
@@ -4861,7 +4894,8 @@ function parseSolidityContract(source: string): ParsedContract {
     const prngBody = f.body
       .replace(/require\s*\([^;]*;/g, "")                                  // deadline/guard checks
       .replace(/\w+(?:\[[^\]]*\])?\s*-\s*block\.timestamp|block\.timestamp\s*-\s*\w+/g, "") // time-delta accrual
-      .replace(/\w+(?:\[[^\]]*\])?\s*=\s*block\.timestamp\s*;/g, "");  // timestamp bookkeeping
+      // v5.5.1: bookkeeping strip covers cast forms — user.start = uint32(block.timestamp);
+      .replace(/\w+(?:\[[^\]]*\])?\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\s*=\s*[a-z0-9_]*\s*\(?block\.timestamp\)?\s*;/g, "");
     const hasEntropy = ENTROPY_RE.test(prngBody);
     const prngContext = PRNG_CONTEXT_RE.test(f.name) || PRNG_CONTEXT_RE.test(f.body);
     if (hasEntropy && prngContext) entropyHelpers.add(f.name);
@@ -4924,7 +4958,12 @@ function parseSolidityContract(source: string): ParsedContract {
     const assignsPrivileged = privilegedStateVars.size > 0 &&
       [...f.body.matchAll(/\b(\w+)\s*=\s*[^=]/g)].some(m => privilegedStateVars.has(m[1]));
     const isLegacyConstructor = contractNameLc !== "" && f.name.toLowerCase() === contractNameLc;
-    const isGuardedInitializer = /^(initialize|init)$/i.test(f.name) && /require\s*\(\s*!/.test(f.body);
+    // v5.5.1: OZ Initializable's initializer/reinitializer modifier IS the guard
+    // (reverts on double-init; deployment flow initializes in the same tx).
+    // Boros DepositBox.initialize / Ostium PriceUpKeep.initialize class.
+    const isGuardedInitializer =
+      (/^(initialize|init)$/i.test(f.name) && /require\s*\(\s*!/.test(f.body)) ||
+      f.modifiers.some(m => /^(initializer|reinitializer|onlyInitializing|disableInitializers)$/i.test(m));
     if (assignsPrivileged && !f.has_access_control && !isLegacyConstructor && !isGuardedInitializer) {
       unprotectedSetterFuncs.push(f.name);
       unprotectedSetterDetails.push(
@@ -5392,10 +5431,18 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     parsed.state_vars.filter(v => v.visibility === "immutable" || v.visibility === "constant").map(v => v.name)
   );
   const hasValueOutCall = (body: string): boolean =>
-    /\.call\s*(?:\.\w+\s*\([^)]*\)\s*)*\{[^}]*value|\.call\s*\.value|\.send\s*\(|\bdelegatecall\b|\.call\s*\(\s*bytes4/.test(body);
+    /\.call\s*(?:\.\w+\s*\([^)]*\)\s*)*\{[^}]*value|\.call\s*\.value|\.send\s*\(|\.call\s*\(\s*bytes4/.test(body);
+  // v5.5.1: self-delegatecall — `address(this).delegatecall(...)` re-enters
+  // THIS contract's own code (Ostium closeTradeMarketTimeout retry pattern,
+  // Delegatable.delegatedAction). The target is not attacker-controlled code,
+  // so it is not a reentrancy surface. A bare `delegatecall(...)` (assembly)
+  // or a delegatecall on a user-supplied address still counts.
+  const hasExternalDelegatecall = (body: string): boolean =>
+    /\bdelegatecall\b/.test(body) && !/address\s*\(\s*this\s*\)\s*\.?\s*delegatecall/.test(body);
   const isReentrancySurface = (f: ParsedFunction): boolean => {
     const body = f.body ?? "";
     if (hasValueOutCall(body)) return true;
+    if (hasExternalDelegatecall(body)) return true;
     // token/address .transfer/.transferFrom — base identifier must not be immutable
     const transfers = [...body.matchAll(/(\w+)\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\.transfer(?:From)?\s*\(/g)];
     // v5.5.0: super.* delegates to the inherited base contract (OZ ERC20
