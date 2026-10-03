@@ -4675,11 +4675,20 @@ function parseSolidityContract(source: string): ParsedContract {
   // flag transfer()/approve() as privileged takeovers. Compute brace depth
   // up to each match and require depth === 1 (directly in the contract).
   const stateVars: ParsedStateVar[] = [];
+  // v5.5.3: free-function files (ERC-8042 diamond library style — Compose "Mod" files,
+  // no contract/library wrapper). Solidity free functions can only be internal or
+  // private: they are never attacker-callable, and the file has no state variables.
+  // Without this guard the depth-1 filter treats function-body locals as state vars
+  // ("address owner = s.ownerOf[...]" became a fake privileged "owner" state var).
+  const isFreeFunctionFile = !/\b(contract|library|abstract contract)\b/.test(
+    source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
+  );
   // v5.5.0: visibility and immutability can appear in either order
   // ("IERC20 public immutable asset" previously captured name="immutable").
   const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(?:(public|private|internal)\s+)?(constant\s+|immutable\s+)?(?:(?:constant|immutable)\s+)?(\w+)\s*[;=]/gm;
   let svMatch;
   while ((svMatch = stateVarRegex.exec(source)) !== null) {
+    if (isFreeFunctionFile) break;
     const before = source.substring(0, svMatch.index);
     const line = before.split("\n").length;
     let depth = 0;
@@ -4721,9 +4730,10 @@ function parseSolidityContract(source: string): ParsedContract {
     const line = before.split("\n").length;
 
     // Extract visibility
-    let visibility = "public"; // default
+    // v5.5.3: in free-function files every function is internal (never attacker-callable)
+    let visibility = isFreeFunctionFile ? "internal" : "public"; // default
     const visMatch = modifiersRaw.match(/\b(public|private|external|internal)\b/);
-    if (visMatch) visibility = visMatch[1];
+    if (visMatch) visibility = isFreeFunctionFile && visMatch[1] === "public" ? "internal" : visMatch[1];
 
     // Extract modifier names (exclude visibility keywords and state mutability)
     const modPart = modifiersRaw
@@ -4818,7 +4828,8 @@ function parseSolidityContract(source: string): ParsedContract {
     ) || /require\s*\([^)]*msg\.sender\s*(==|!=)/.test(funcBody) ||
       // v5.2.1: if-revert guard idiom — "if (msg.sender != X) revert Y();" is equivalent
       // access control (ZkDesk DeskGuardian class: timelock-only execute() with .call).
-      /if\s*\([^)]*msg\.sender\s*!=\s*\S+\s*\)\s*revert/.test(funcBody);
+      // v5.5.3: brace form "if (msg.sender != X) { revert Y(); }" (Compose OwnerTransferMod class)
+      /if\s*\([^)]*msg\.sender\s*!=\s*\S+\s*\)\s*\{?\s*revert/.test(funcBody);
     // v5.5.3: guard via INTERNAL FUNCTION CALL in the body — Morpho VaultV2 pattern:
     // `function addAdapter(...) external { timelocked(); ... }` where timelocked() is an
     // internal function whose body enforces the gate (require executableAt/curator).
@@ -4991,7 +5002,10 @@ function parseSolidityContract(source: string): ParsedContract {
       stateVars.filter(v => /^(owner|admin)$/i.test(v.name)).map(v => v.name)
     );
     const assignsPrivileged = privilegedStateVars.size > 0 &&
-      [...f.body.matchAll(/\b(\w+)\s*=\s*[^=]/g)].some(m => privilegedStateVars.has(m[1]));
+      // v5.5.3: dotted member assignment (s.owner = x via ERC-8042 storage pointer) targets
+      // a struct member, not the top-level owner state var — Compose OwnerDataMod class.
+      // Real takeover class (Parity/Unprotected) is a direct `owner = _owner` (no dot).
+      [...f.body.matchAll(/(?<!\.)\b(\w+)\s*=\s*[^=]/g)].some(m => privilegedStateVars.has(m[1]));
     const isLegacyConstructor = contractNameLc !== "" && f.name.toLowerCase() === contractNameLc;
     // v5.5.1: OZ Initializable's initializer/reinitializer modifier IS the guard
     // (reverts on double-init; deployment flow initializes in the same tx).
@@ -5369,7 +5383,10 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   };
   const transferHasSuperDelegation = transferFuncs.some(f => {
     if (/\bsuper\s*\.\s*(transfer|transferfrom)\s*\(/i.test(f.body)) return true;
-    const deleg = f.body?.match(/\b_?transfer(?:From)?\s*\(|\b_update\s*\(/i);
+    // v5.5.3: prefixed internal helpers (internalTransferFrom, _transfer, _update) —
+    // Compose ERC721TransferFacet delegates to internalTransferFrom which carries
+    // the owner/approval revert guards. Word prefix before "transfer" is allowed.
+    const deleg = f.body?.match(/\b\w*transfer(?:From)?\s*\(|\b_update\s*\(/i);
     if (!deleg) return false;
     const helperName = deleg[0].replace(/\s*\($/, "").replace(/^_/, "_");
     return internalGuardedHelper(helperName);
