@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.4.2-frontier",
+  engine_version: "v5.5.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.4.2-frontier",
+  version: "5.5.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -550,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.4.2-frontier (EVM Sentinel engine +13 breach scenarios: BS-012 bad randomness + BS-013 unprotected owner function; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.5.0-frontier (EVM Sentinel engine +13 breach scenarios; v5.5: legacy 0.4.x call syntax + token-pull reentrancy (DAO 2016 + SpankChain 2018 classes), per-function reentrancy grading; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4445,6 +4445,14 @@ interface TwinMapping {
 }
 
 // Phase 3.1: Upgraded parser — richer function extraction
+// v5.5.0: external-call surface regex — includes Solidity 0.4.x legacy syntax.
+// The old pattern \\.(call|transfer|send)\\s*[(\\{] missed:
+//   - legacy value calls:  x.call.value(amount)()  /  x.send(gas)()  (DAO 2016 class)
+//   - approveAndCall idiom: x.call(bytes4(...), ...)               (SpankChain 2018 class)
+//   - token pulls/pushes to a user-controlled address: token.transferFrom(...) /
+//     token.transfer(...) on an address-typed state var or param (ERC777-hook reentrancy)
+const EXT_CALL_RE = /\.call\s*(?:\.\w+\s*\([^)]*\)\s*)*(\{|\(|bytes4)|\.send\s*\(|\.transfer\s*\(|\.transferFrom\s*\(|\bdelegatecall\b/;
+
 interface ParsedFunction {
   name: string;
   signature: string;
@@ -4634,7 +4642,9 @@ function parseSolidityContract(source: string): ParsedContract {
   // flag transfer()/approve() as privileged takeovers. Compute brace depth
   // up to each match and require depth === 1 (directly in the contract).
   const stateVars: ParsedStateVar[] = [];
-  const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(public|private|internal|constant|immutable)?\s*(\w+)\s*[;=]/gm;
+  // v5.5.0: visibility and immutability can appear in either order
+  // ("IERC20 public immutable asset" previously captured name="immutable").
+  const stateVarRegex = /^\s*(mapping|uint\w*|int\w*|bool|address|string|bytes\w*|\w+)\s+(?:(public|private|internal)\s+)?(constant\s+|immutable\s+)?(?:(?:constant|immutable)\s+)?(\w+)\s*[;=]/gm;
   let svMatch;
   while ((svMatch = stateVarRegex.exec(source)) !== null) {
     const before = source.substring(0, svMatch.index);
@@ -4643,10 +4653,12 @@ function parseSolidityContract(source: string): ParsedContract {
     for (const ch of before) { if (ch === "{") depth++; else if (ch === "}") depth--; }
     if (depth !== 1) continue; // inside a function/struct/modifier body — not a state var
     stateVars.push({
-      name: svMatch[3],
+      name: svMatch[4],
       type: svMatch[1],
       line,
-      visibility: svMatch[2] || "internal",
+      // v5.5.0: fold constant/immutable (group 3) into visibility so
+      // "IERC20 public immutable asset" reports visibility "immutable".
+      visibility: svMatch[3] ? "immutable" : (svMatch[2] || "internal"),
     });
   }
 
@@ -4715,11 +4727,15 @@ function parseSolidityContract(source: string): ParsedContract {
     // the body (string order), not merely anywhere in it. The old unanchored .* regex
     // credited "require(ok) after the call" as CEI protection (NC4 regression).
     const hasCEI = (() => {
-      const zeroOut = /(\bdelete\b|\b\w+\s*=\s*0\b|\b\w+\s*=\s*address\(0\)\b)/g;
+      // v5.5.0: dotted/indexed member zeroing counts as effects-first
+      // ("channel.ethBalances[0] = 0" — SpankChain byzantineCloseChannel class).
+      const zeroOut = /(\bdelete\b|\b\w+(?:\.\w+)*(?:\[[^\]]*\])*\s*=\s*0\b|\b\w+(?:\.\w+)*(?:\[[^\]]*\])*\s*=\s*address\(0\)\b)/g;
       let zm;
       while ((zm = zeroOut.exec(funcBody)) !== null) {
         const after = funcBody.substring(zm.index + zm[0].length);
-        if (/\b(\.call|\.transfer|\.send)\b/.test(after)) return true;
+        // v5.5.0: \b before "\." never matches after "]" (indexed member calls
+        // like partyAddresses[0].transfer) — drop the leading \b.
+        if (/(\.call|\.transfer|\.send)\b/.test(after)) return true;
       }
       return false;
     })();
@@ -4743,7 +4759,7 @@ function parseSolidityContract(source: string): ParsedContract {
         }
         const loopBody = funcBody.substring(braceOpen + 1, Math.max(braceOpen + 1, idx - 1));
         // External call patterns: raw .call{value:}(...) / .call(...) / .transfer(...) / .send(...)
-        hasExternalCallInLoop = /\.call\s*(\{|\()|\.transfer\s*\(|\.send\s*\(/.test(loopBody);
+        hasExternalCallInLoop = EXT_CALL_RE.test(loopBody);
       }
     }
     const hasTryCatch = /\btry\s+\S+/.test(funcBody) && /\bcatch\b/.test(funcBody);
@@ -5360,9 +5376,35 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // (.call/.transfer/.send or a low-level interaction) are reentrancy
   // surfaces. A plain state setter/getter marked external has no external
   // call to re-enter through.
+  // v5.5.0: reentrancy surface computation.
+  // (a) public functions count too — the DAO refund() reentrancy is a PUBLIC
+  //     non-payable function (state already on-chain; value flows out via
+  //     .call{value:...}). The old external/payable-only filter missed it.
+  // (b) legacy 0.4.x call syntax counts: .call.value(x)() / .send(gas)() (DAO class)
+  //     and the approveAndCall idiom .call(bytes4(...)) (SpankChain class).
+  // (c) token calls (transferFrom/transfer) are surfaces ONLY when the token
+  //     address is attacker-influenced: a user param or a mutable mapping/struct
+  //     member (SpankChain createChannel: Channels[_lcID].token.transferFrom).
+  //     A token held in an immutable/constant state var is a TRUSTED asset —
+  //     the standard ERC-4626 deposit pattern (asset in, shares credited after)
+  //     is not a reentrancy drain (re-entering requires paying in new assets).
+  const immutableVarNames = new Set(
+    parsed.state_vars.filter(v => v.visibility === "immutable" || v.visibility === "constant").map(v => v.name)
+  );
+  const hasValueOutCall = (body: string): boolean =>
+    /\.call\s*(?:\.\w+\s*\([^)]*\)\s*)*\{[^}]*value|\.call\s*\.value|\.send\s*\(|\bdelegatecall\b|\.call\s*\(\s*bytes4/.test(body);
+  const isReentrancySurface = (f: ParsedFunction): boolean => {
+    const body = f.body ?? "";
+    if (hasValueOutCall(body)) return true;
+    // token/address .transfer/.transferFrom — base identifier must not be immutable
+    const transfers = [...body.matchAll(/(\w+)\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\.transfer(?:From)?\s*\(/g)];
+    // v5.5.0: super.* delegates to the inherited base contract (OZ ERC20
+    // transferFrom) — trusted parent, not an attacker-controlled token.
+    return transfers.some(m => m[1] !== "super" && !immutableVarNames.has(m[1]));
+  };
   const externalCalls = parsed.functions.filter(f =>
-    (f.visibility === "external" || /payable/i.test(f.signature)) &&
-    (/\.(call|transfer|send)\s*[(\{]/.test(f.body ?? "") || /\bdelegatecall\b/.test(f.body ?? "")) &&
+    (f.visibility === "external" || f.visibility === "public" || /payable/i.test(f.signature)) &&
+    isReentrancySurface(f) &&
     // v5.2.1: access-controlled call surfaces are not attacker-reachable reentrancy
     // surfaces. A timelock/guardian execute() (msg.sender != timelock revert) can only
     // be triggered by trusted infrastructure — the attacker cannot reach the external
@@ -5381,27 +5423,50 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     parsed.has_transient_storage ||
     functionsWithCEI.length > 0;
 
-  // Reassess risk: if protection mechanisms exist, downgrade risk
+  // Reassess risk: v5.5.0 PER-FUNCTION assessment.
+  // Contract-level grading let ONE clean function (SpankChain byzantineCloseChannel,
+  // CEI-correct) mask a genuinely vulnerable sibling (createChannel). Protection
+  // is a property of the function that performs the call, not of the contract.
+  const stateWriteAfterCallFn = (f: ParsedFunction): boolean => {
+    const body = f.body ?? "";
+    // find the FIRST external call site (legacy .call.value()() included).
+    // A state write after that point is the classic checks-interactions-effects
+    // violation (DAO refund(): call.value() then balances/weiGiven zeroed AFTER).
+    const callIdx = body.search(EXT_CALL_RE);
+    if (callIdx < 0) return false;
+    const after = body.substring(callIdx);
+    // state-write patterns: mapping/array writes and var updates
+    const hasStateWrite = /\b\w+\s*(\[[^\]]*\]\s*){1,2}(\+=|-=|=[^=])/.test(after) ||
+           /\b\w+\s*\.\w+\s*(\+=|-=|=[^=])/.test(after) ||
+           /\b\w+\s*(\+=|-=|=[^=])/.test(after);
+    if (!hasStateWrite) return false;
+    // CEI credit: the same write must NOT already appear zeroed BEFORE the
+    // call (SpankChain byzantineCloseChannel zeroes balances first — clean).
+    const before = body.substring(0, callIdx);
+    // v5.5.0: handle dotted member zeroing (channel.ethBalances[0] = 0;)
+    const zeroedBefore = /\b\w+\s*(?:\.\w+\s*)?(?:\[[^\]]*\]\s*){0,2}=\s*0\s*;/.test(before);
+    return !zeroedBefore;
+  };
+  // surfaces with NO per-function protection (no nonReentrant, no transient
+  // guard, no CEI pattern in that same function)
+  const unprotectedSurfaces = externalCalls.filter(f =>
+    !f.has_nonReentrant && !f.has_transient_storage && !f.has_checks_effects_interactions
+  );
+  const hasVulnerableFunction = unprotectedSurfaces.some(f => stateWriteAfterCallFn(f));
   let reentrancyRiskLevel: "low" | "medium" | "high" | "critical";
   if (externalCalls.length === 0) {
     reentrancyRiskLevel = "low";
   } else if (hasAnyReentrancyProtection && functionsWithNonReentrant.length >= externalCalls.length * 0.5) {
     reentrancyRiskLevel = "low"; // Most external functions have nonReentrant
+  } else if (hasVulnerableFunction) {
+    // v5.5.0: an unprotected call surface with state writes after the call is
+    // the classic exploit shape (DAO refund, SpankChain createChannel) — HIGH
+    // regardless of how clean its sibling functions are.
+    reentrancyRiskLevel = "high";
   } else if (hasAnyReentrancyProtection) {
     reentrancyRiskLevel = "medium"; // Some protection but not comprehensive
   } else if (hasExternalWithBalance) {
-    // v5.3: state write AFTER the external call = the classic exploit shape
-    // (call out, then update balances). That is HIGH, not medium — the medium
-    // tier is for guarded-but-unverified surfaces only (NC4 regression).
-    const stateWriteAfterCall = externalCalls.some(f => {
-      const body = f.body ?? "";
-      const callIdx = body.search(/\.(call|transfer|send)\s*[(\{]/);
-      if (callIdx < 0) return false;
-      const after = body.substring(callIdx);
-      return /\b\w+\s*(\[[^\]]*\]\s*)?(\+=|-=|=[^=])/.test(after) ||
-             /\b\w+\s*\.\w+\s*(\+=|-=)/.test(after);
-    });
-    reentrancyRiskLevel = stateWriteAfterCall ? "high" : "medium";
+    reentrancyRiskLevel = "medium"; // guarded-but-unverified surfaces only (NC4 regression)
   } else {
     reentrancyRiskLevel = "high";
   }
@@ -5421,7 +5486,9 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
           : functionsWithTransientStorage.length > 0 || parsed.has_transient_storage
             ? "Transient storage (tstore/tload) reentrancy guard detected. This IS a valid reentrancy protection mechanism. Verify all external functions use it."
             : "Use checks-effects-interactions pattern and consider ReentrancyGuard. NOTE: transient storage (tstore/tload) is also a valid reentrancy guard.",
-    detected: externalCalls.length > 0 && !hasAnyReentrancyProtection,
+    // v5.5.0: per-function — a vulnerable unprotected surface counts even if
+    // sibling functions carry protection (SpankChain class).
+    detected: hasVulnerableFunction,
   });
   if (externalCalls.length > 0 && !hasAnyReentrancyProtection) {
     recommendations.push("Apply checks-effects-interactions pattern and consider OpenZeppelin ReentrancyGuard. NOTE: transient storage (tstore/tload) is also a valid reentrancy guard pattern.");
