@@ -158,6 +158,19 @@ M2M Output Standardizer, Pipeline Optimization, Concurrency Guard, Algorithmic
 Nudging, Interactive Dry-Run, Live Telemetry, Sample Manifests, Pull Payment Module
 (EIP-712 USDC on Polygon), mandatory x-client-id, free-trial bugfix.
 
+## [5.5.3] — 2026-10-03 (Sweep Round 2 FP fixes)
+
+5 fix FP dari adjudikasi Layer 1 target sweep nyata (Morpho vault-v2, nitro-contracts, Polymarket, Compose):
+
+- **Internal-call guard resolution**: `addAdapter(){ timelocked(); }` — guard via internal function call di body di-resolve satu hop (helper body berisi require/revert/msg.sender check, comment-stripped). Fake helper (bookkeeping only) tetap unguarded (NC12).
+- **Self-delegatecall loop exclusion**: `address(this).delegatecall` dalam loop (multicall pattern) bukan revert-blocking surface (Morpho VaultV2).
+- **Bounded MODEXP**: input fixed 32-byte (`abi.encode(32,32,32,...)`, nitro modExp256) tidak lagi BS-008 high; unbounded/dynamic tetap high (NC13).
+- **ERC-8042 free-function file awareness**: file tanpa contract/library wrapper (Compose "Mod" files) = semua function internal-only, tidak ada state vars. Sebelumnya local `address owner = s.ownerOf[...]` diparse sebagai state var privileged → BS-013 critical FP x16.
+- **Guard idiom extensions**: if-revert brace form `if (msg.sender != X) { revert }`; BS-002 delegation prefixed helper (internalTransferFrom); BS-013 dotted member assignment (s.owner = x) lookbehind.
+- **Validator**: CONTRACT_REQUIRED hanya error bila tidak ada contract DAN tidak ada function declaration (free-function file valid = 200).
+
+Validasi: regression 12 fixture + 13 negatives 0 fail; Compose 105/105 clean; ToB Unprotected real tetap BS-013 critical; Morpho VaultV2 + nitro + Polymarket clean; live PASS (latency 449ms). Commits: f27faa7, 980839a, 54e9925, 11ae767. PoA recorded.
+
 ## [4.8.0-frontier] — 2026-09-24
 
 ### Added
