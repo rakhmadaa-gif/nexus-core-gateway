@@ -5099,7 +5099,7 @@ function parseSolidityContract(source: string): ParsedContract {
     const hasSmallBound =
       /\.\s*length\s*<=?\s*(32|0x20)\b/i.test(source) ||
       /callDataSize|inputSize/i.test(source) ||
-      /\bmodexp\b[^;]{0,200}\b(32|0x20)\b/i.test(source);
+      /\bmodexp\w*\b[^;]{0,200}\b(32|0x20)\b/i.test(source) || /abi\.encode\s*\(\s*32\s*,\s*32\s*,\s*32\b/.test(source);
     if (hasSmallBound) {
       gasAsymmetryRatio = 0.4;
       ratioBasis = "MODEXP with small bounded inputs (<32B): ratio ~0.4 (below threshold).";
@@ -5129,8 +5129,14 @@ function parseSolidityContract(source: string): ParsedContract {
   const gasAsymmetryDetails: string[] = [];
   let gasAsymmetryRisk: "low" | "medium" | "high" = "low";
   if (hasModexp) {
-    gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s). MODEXP with 256-byte inputs can stall validators ~18s per 30M gas tx.`);
-    gasAsymmetryRisk = "high";
+    // v5.5.3: bounded MODEXP (small fixed inputs, e.g. abi.encode(32,32,32,...)) is cheap
+    // (~35K gas, ratio 0.4) — not an asymmetry vector. Only unbounded/dynamic MODEXP is high.
+    if (gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD) {
+      gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s). MODEXP with 256-byte inputs can stall validators ~18s per 30M gas tx.`);
+      gasAsymmetryRisk = "high";
+    } else {
+      gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected with small bounded inputs: ${modexpCalls} call site(s), ratio ${gasAsymmetryRatio.toFixed(1)} — below threshold, not a validator-delay vector.`);
+    }
   }
   if (hasTstoreLoop) {
     gasAsymmetryDetails.push(`TSTORE in loop pattern detected: ${tstoreCount} tstore calls. TSTORE at 100 gas/key enables ~9.15MB transient storage per 30M gas tx.`);
