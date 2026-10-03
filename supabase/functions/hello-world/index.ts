@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.4.0-frontier",
+  engine_version: "v5.4.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.4.0-frontier",
+  version: "5.4.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -442,6 +442,11 @@ const NODE_MANIFEST = {
     "POST /evm-sentinel/v1/scan-deep": {
       description: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis (BS-001..BS-009 + BS-010 Permit2-drain + BS-011 arbitrage-manipulation). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /x402/fitness/peer-check": {
+      description: "Transaction Peer-Check — direct factual probe of a peer x402 endpoint before you pay: reachable, http_status, latency_ms, content shape (read-only GET, 10s timeout), plus a separately-reported x402-list registry mirror with its data age. legal_weight: 0 — facts only, not a trust endorsement. Input {peer_url} or {peer_urls} (max 3) -> PeerCheckResult. 10-minute cache.",
+      billing: "0.05 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "POST /x402/fitness/lite": {
@@ -545,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.4.0-frontier (Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 (W4 Gas Rank) — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
+    version: "v5.4.1-frontier (Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 (W4 Gas Rank) — factual GHSA/CVE + license + freshness + SBOM + deterministic score, legal_weight 0; plus EVM Sentinel scan tiers $0.05/$0.50)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -3277,6 +3282,273 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
   return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
 }
 
+// ----------------------------------------------------------------------------
+// PEER-CHECK (v5.4.1): POST /x402/fitness/peer-check — $0.05 USDC (5 CRED)
+// ----------------------------------------------------------------------------
+// Design: reference/peer-check-design.md v0.1 (user-approved 2026-10-03).
+// Transaction peer-check for x402 buyers: probe a peer endpoint DIRECTLY
+// (read-only GET, 10s timeout) and report facts only — reachable, http_status,
+// latency, content shape. Registry mirror (x402-list) is reported SEPARATELY
+// with its data age (registry score != ground truth — Eval Case #1 A1/A2).
+// Incident history comes from bot_hunter passive observation snapshots.
+// legal_weight: 0 — factual probe results only, not a trust endorsement.
+// NO composite score in v0.1: a single-point-in-time probe is a fact, not an
+// opinion. Max 3 peer_urls per request (anti probe-relay abuse).
+// ----------------------------------------------------------------------------
+
+const PEER_CHECK_VERSION = "0.1";
+const PEER_CHECK_TTL_MS = 10 * 60 * 1000; // 10-minute cache
+const PEER_CHECK_MAX_URLS = 3;
+
+function isValidPeerUrl(u: unknown): u is string {
+  if (typeof u !== "string" || u.length === 0 || u.length > 500) return false;
+  try {
+    const parsed = new URL(u);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") && !!parsed.hostname;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function probePeerEndpoint(peerUrl: string): Promise<Record<string, unknown>> {
+  const started = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(peerUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "User-Agent": "nexus-fitness-attestor/0.1 (read-only peer probe)" },
+    });
+    clearTimeout(timer);
+    const latency = Date.now() - started;
+    const contentType = res.headers.get("content-type") ?? null;
+    let contentShape: string | null = null;
+    let bodyPeek = "";
+    try {
+      bodyPeek = (await res.text()).slice(0, 2048);
+    } catch (_) { /* empty body is a fact too */ }
+    if (bodyPeek.trim().length === 0) contentShape = "empty";
+    else if (contentType?.includes("json") || bodyPeek.trim().startsWith("{") || bodyPeek.trim().startsWith("[")) contentShape = "json";
+    else if (contentType?.includes("html")) contentShape = "html";
+    else contentShape = "text";
+    return {
+      peer_url: peerUrl,
+      probed_at: new Date().toISOString(),
+      reachable: true,
+      http_status: res.status,
+      latency_ms: latency,
+      content_type: contentType,
+      content_shape: contentShape,
+      probe_method: "GET (read-only, non-destructive)",
+    };
+  } catch (e) {
+    return {
+      peer_url: peerUrl,
+      probed_at: new Date().toISOString(),
+      reachable: false,
+      http_status: null,
+      latency_ms: Date.now() - started,
+      content_type: null,
+      content_shape: null,
+      probe_method: "GET (read-only, non-destructive)",
+      error: e instanceof Error ? (e.name === "AbortError" ? "timeout after 10000ms" : e.message) : String(e),
+    };
+  }
+}
+
+async function fetchX402ListMirror(peerUrl: string): Promise<Record<string, unknown>> {
+  try {
+    // Match x402-list listing by origin domain of the peer URL.
+    const origin = new URL(peerUrl).origin;
+    const res = await fetch("https://x402-list.com/api/v1/services", {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { source: "x402-list", listed: null, note: "Registry API unavailable." };
+    const data = await res.json() as { data?: Array<Record<string, unknown>> };
+    const services = data.data ?? [];
+    const match = services.find((s) => {
+      const candidates = [s.base_url, s.website_url].filter((x) => typeof x === "string") as string[];
+      return candidates.some((c) => { try { return new URL(c).origin === origin; } catch (_) { return false; } });
+    });
+    if (!match) return { source: "x402-list", listed: false, note: "Not found in x402-list registry." };
+    const assessment = (match.assessment ?? {}) as Record<string, unknown>;
+    return {
+      source: "x402-list",
+      listed: true,
+      slug: match.slug ?? null,
+      uptime_24h: match.uptime_24h ?? null,
+      avg_response_time_ms: match.avg_response_time_ms ?? null,
+      registry_site_signals: assessment.site ?? null,
+      registry_checked_at: (assessment.site as Record<string, unknown> | undefined)?.checked_at ?? null,
+      note: "Registry data is a third-party mirror and may lag the live state (see live_probe above).",
+    };
+  } catch (_) {
+    return { source: "x402-list", listed: null, note: "Registry lookup failed (non-fatal)." };
+  }
+}
+
+async function fetchPeerIncidentHistory(peerUrl: string): Promise<Record<string, unknown>> {
+  try {
+    let origin: string;
+    try { origin = new URL(peerUrl).origin; } catch (_) { return { observed_incidents: 0, source: "bot_hunter passive observation" }; }
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("peer_incidents")
+      .select("slug, incident_type, detail, observed_at, base_url")
+      .order("observed_at", { ascending: false })
+      .limit(500);
+    if (error || !data) return { observed_incidents: 0, source: "bot_hunter passive observation", note: "History unavailable (non-fatal)." };
+    // Match by base_url origin OR slug contained in the peer URL host.
+    const host = new URL(peerUrl).hostname;
+    const matched = (data as Array<Record<string, unknown>>).filter((r) => {
+      const bu = typeof r.base_url === "string" ? r.base_url : "";
+      try { if (bu && new URL(bu).origin === origin) return true; } catch (_) { /* skip */ }
+      const slug = typeof r.slug === "string" ? r.slug : "";
+      return slug.length > 0 && host.includes(slug.replace(/[^a-z0-9-]/g, "").slice(0, 12));
+    });
+    return {
+      observed_incidents: matched.length,
+      last_incident_at: matched.length > 0 ? matched[0].observed_at : null,
+      recent: matched.slice(0, 5).map((r) => ({ type: r.incident_type, detail: r.detail, observed_at: r.observed_at })),
+      source: "bot_hunter passive observation (2x daily public-telemetry snapshots)",
+      note: "Passive observation only — incidents seen from public telemetry, not a claim about the peer.",
+    };
+  } catch (_) {
+    return { observed_incidents: 0, source: "bot_hunter passive observation", note: "History unavailable (non-fatal)." };
+  }
+}
+
+async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = "fitness_attestation"; // billed at the $0.05 fitness rate per approved design
+
+  // Validate input BEFORE billing.
+  let preBody: { peer_url?: string; peer_urls?: string[]; peer_name?: string };
+  try {
+    preBody = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const urls: string[] = [];
+  if (isValidPeerUrl(preBody.peer_url)) urls.push(preBody.peer_url);
+  if (Array.isArray(preBody.peer_urls)) {
+    for (const u of preBody.peer_urls) if (isValidPeerUrl(u) && !urls.includes(u)) urls.push(u);
+  }
+  if (urls.length === 0) {
+    return m2mError(
+      "INVALID_INPUT",
+      "Provide {peer_url: 'https://...'} (or peer_urls array, max 3). Must be http(s) URL.",
+      serviceType, 400, 0, reqStartTime,
+    );
+  }
+  if (urls.length > PEER_CHECK_MAX_URLS) {
+    return m2mError("TOO_MANY_URLS", `Max ${PEER_CHECK_MAX_URLS} peer URLs per request.`, serviceType, 400, 0, reqStartTime);
+  }
+
+  // Gatekeeper + 402 x402 envelope (5 CRED = $0.05).
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 5;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: "/x402/fitness/peer-check",
+        description: "Nexus Transaction Peer-Check — direct factual probe of a peer endpoint",
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one transaction peer-check.`,
+        },
+      }],
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: "fitness_attestation",
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  // 10-minute cache keyed by the URL set.
+  const cacheKey = `peer_check:${await sha256Hex(JSON.stringify(urls))}`;
+  let result: Record<string, unknown> | null = null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < PEER_CHECK_TTL_MS) result = data[0].result as Record<string, unknown>;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  let cacheHit = false;
+  if (!result) {
+    // Probe all requested peers in parallel; mirror lookup runs alongside.
+    const probes = await Promise.all(urls.map((u) => probePeerEndpoint(u)));
+    const mirrors = await Promise.all(urls.map((u) => fetchX402ListMirror(u)));
+    const histories = await Promise.all(urls.map((u) => fetchPeerIncidentHistory(u)));
+    const peers = probes.map((probe, i) => ({
+      live_probe: probe,
+      registry_mirror: mirrors[i],
+      incident_history: histories[i],
+    }));
+    result = {
+      peer_check_version: PEER_CHECK_VERSION,
+      attested_subject: {
+        peer_urls: urls,
+        peer_name: typeof preBody.peer_name === "string" ? preBody.peer_name.slice(0, 200) : undefined,
+        checked_at: new Date().toISOString(),
+      },
+      peers,
+      legal_weight: 0,
+      disclaimer: "Factual probe results only. Not legal advice, not a trust endorsement. Registry mirror is third-party data and may lag the live state.",
+    };
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "peer_check", result });
+    } catch (_) { /* non-fatal */ }
+  } else {
+    cacheHit = true;
+  }
+
+  await Promise.all([
+    recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+    logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+  ]);
+  recordThroughput();
+  return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+}
+
 // -- Service Router -----------------------------------------------------------
 
 const SERVICES: Record<string, (p: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
@@ -3442,6 +3714,44 @@ const OPENAPI_SPEC = {
         responses: {
           "200": {
             description: "M2M envelope; data carries { risk_score, breach_scenarios, gas_ratio, action, scenario_detail, permit2_drain, arbitrage_manipulation, recommendations }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+        },
+      },
+    },
+    "/x402/fitness/peer-check": {
+      post: {
+        summary: "Transaction Peer-Check — direct factual probe of a peer endpoint",
+        description:
+          "Check the facts of a peer x402 endpoint before you pay: direct read-only GET probe (reachable, http_status, latency_ms, content shape, 10s timeout) plus a separately-reported x402-list registry mirror with its data age. No composite score in v0.1 — a single-point probe is a fact, not an opinion. legal_weight: 0 — not a trust endorsement. 10-minute cache. Cost: $0.05 USDC.",
+        "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["peer-check", "pre-payment-check", "uptime-probe", "x402"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  peer_url: { type: "string", description: "http(s) URL of the peer endpoint to probe" },
+                  peer_urls: { type: "array", maxItems: 3, items: { type: "string" } },
+                  peer_name: { type: "string", description: "Optional display name" },
+                },
+              },
+              example: { peer_url: "https://example-service.workers.dev/v1/resource" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries PeerCheckResult { peer_check_version, attested_subject, peers: [{ live_probe, registry_mirror }], legal_weight: 0, disclaimer }",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/M2MEnvelope" },
@@ -3816,6 +4126,14 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   only, not optimization advice. Input: {"repo":"owner/name"} or
   {"files":[{"path":"...","source":"..."}]} (max 25 files, 150KB).
   Unrankable code returns 422 without charge. Cached 10 minutes.
+- POST /x402/fitness/peer-check — Transaction Peer-Check, $0.05 USDC.
+  Check the facts of a peer x402 endpoint BEFORE you send USDC: direct
+  read-only GET probe (reachable, http_status, latency_ms, content
+  shape, 10s timeout) plus a separately-reported x402-list registry
+  mirror with its data age. legal_weight: 0 — facts only, not a trust
+  endorsement, no composite score (a single probe is a fact, not an
+  opinion). Input: {"peer_url":"https://..."} or {"peer_urls":[...]}
+  (max 3). Cached 10 minutes.
 
 ## Other endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
@@ -3882,6 +4200,9 @@ API key. Read-only static scans, no wallet approval required.
 - fitness lite (W4 Gas Efficiency Rank): $1.25 USDC per call (deterministic
   static gas estimate per public/external function, ranked vs fixed public
   cohort, band A-E, +/-40% error band stated; legal_weight 0)
+- fitness peer-check (transaction peer-check): $0.05 USDC per call (direct
+  read-only probe of a peer endpoint: reachable, latency, content shape;
+  registry mirror reported separately with data age; legal_weight 0)
 - structured_data: $0.20 USDC per call
 - code_modules: $1.20 USDC per call
 - legal_code: $300 (light) / $450 (standard) / $800 (enterprise) USDC
@@ -5614,6 +5935,14 @@ async function handler(req: Request): Promise<Response> {
   // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
   // H+21 Forensic ($3.50): + 3 exploit scenarios (reentrancy/oracle/flashloan)
   // + IPFS timestamp (W6).
+  // v5.4.1: Transaction Peer-Check — factual probe of a peer endpoint ($0.05).
+  if (req.method === "POST" && docsRoute === "/x402/fitness/peer-check") {
+    return handlePeerCheckWithBilling(req);
+  }
+  if (req.method === "GET" && docsRoute === "/x402/fitness/peer-check") {
+    return jsonResponse({ error: "Method not allowed. Use POST with {peer_url}." }, 405);
+  }
+
   // W4 M3 (v5.4.0): /x402/fitness/lite is now LIVE — route to the billing
   // handler before the 501 tier skeleton (full/forensic remain reserved).
   if (req.method === "POST" && docsRoute === "/x402/fitness/lite") {
