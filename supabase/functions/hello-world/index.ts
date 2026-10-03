@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.5.2-frontier",
+  engine_version: "v5.5.3-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.5.2-frontier",
+  version: "5.5.3-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -550,7 +550,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.5.2-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.2: RHS msg.sender guard + modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.5.3-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.3: internal-call guard resolution (timelocked) + RHS msg.sender guard + modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4792,7 +4792,11 @@ function parseSolidityContract(source: string): ParsedContract {
         }
         const loopBody = funcBody.substring(braceOpen + 1, Math.max(braceOpen + 1, idx - 1));
         // External call patterns: raw .call{value:}(...) / .call(...) / .transfer(...) / .send(...)
-        hasExternalCallInLoop = EXT_CALL_RE.test(loopBody);
+        // v5.5.3: self-delegatecall inside a loop (multicall pattern — caller supplies
+        // the calldata and pays the gas; target is this contract's own code) is not
+        // a revert-blocking external surface. Morpho VaultV2.multicall class.
+        const loopCode = loopBody.replace(/address\s*\(\s*this\s*\)\s*\.?\s*delegatecall/g, "");
+        hasExternalCallInLoop = EXT_CALL_RE.test(loopCode);
       }
     }
     const hasTryCatch = /\btry\s+\S+/.test(funcBody) && /\bcatch\b/.test(funcBody);
@@ -4806,7 +4810,7 @@ function parseSolidityContract(source: string): ParsedContract {
     // Solmate Auth's requiresAuth) are evaluated by name convention: onlyXxx / requiresAuth /
     // authorized / restricted. Non-guard inherited modifiers (whenNotPaused, initializer,
     // nonReentrant) do not match and do not count.
-    const hasAccessControl = modifiers.some(m =>
+    let hasAccessControl = modifiers.some(m =>
       /\bonly(owner|role|admin|authorized|operator|minter|pauser|signer)\b/i.test(m) ||
       (customGuardedModifiers.get(m) === true) ||
       (!customGuardedModifiers.has(m) &&
@@ -4815,6 +4819,35 @@ function parseSolidityContract(source: string): ParsedContract {
       // v5.2.1: if-revert guard idiom — "if (msg.sender != X) revert Y();" is equivalent
       // access control (ZkDesk DeskGuardian class: timelock-only execute() with .call).
       /if\s*\([^)]*msg\.sender\s*!=\s*\S+\s*\)\s*revert/.test(funcBody);
+    // v5.5.3: guard via INTERNAL FUNCTION CALL in the body — Morpho VaultV2 pattern:
+    // `function addAdapter(...) external { timelocked(); ... }` where timelocked() is an
+    // internal function whose body enforces the gate (require executableAt/curator).
+    // Same one-hop resolution as modifier helper-calls (v5.5.1), applied to bodies.
+    if (!hasAccessControl) {
+      const guardCallRegex = /\b(timelocked|_?only\w*|_?check\w*|_?require\w*|_?validate\w*|_?assert\w*|_?verify\w*|_?guard\w*)\s*\(\s*\)\s*;/g;
+      let gm;
+      while ((gm = guardCallRegex.exec(funcBody)) !== null) {
+        const helperName = gm[1];
+        const hRegex = new RegExp(`function\\s+${helperName}\\s*\\([^)]*\\)\\s*[^{]*\\{`);
+        const hIdx = source.search(hRegex);
+        if (hIdx < 0) continue;
+        const hBrace = source.indexOf("{", hIdx);
+        let d = 0, hEnd = -1;
+        for (let i = hBrace; i < source.length; i++) {
+          if (source[i] === "{") d++;
+          else if (source[i] === "}") { d--; if (d === 0) { hEnd = i; break; } }
+        }
+        if (hEnd > 0) {
+          const helperBody = source.substring(hBrace + 1, hEnd)
+            .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+          if (/require\s*\(/.test(helperBody) || /\brevert\b/.test(helperBody) ||
+              /msg\.sender\s*(==|!=)|(==|!=)\s*msg\.sender/.test(helperBody)) {
+            hasAccessControl = true;
+            break;
+          }
+        }
+      }
+    }
     const hasArrayIteration = hasLoop && /\.length\b/.test(funcBody);
     // v5.2.1: calldata-only loop — the loop bound references a calldata parameter's .length
     // (caller supplies and pays for it) or a compile-time constant, and the body makes no
