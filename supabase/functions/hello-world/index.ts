@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.4.1-frontier",
+  version: "5.4.2-frontier",
   runtime: "supabase-edge-deno",
 };
 
