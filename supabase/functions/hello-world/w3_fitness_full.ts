@@ -420,7 +420,12 @@ export function cvss31BaseFromVector(vector: string): number | null {
       : { N: 0.85, L: 0.68, H: 0.5 }[prVal ?? ""];
     if (pr === undefined) return null;
     const iscBase = 1 - (1 - c) * (1 - i) * (1 - a);
-    const impact = s === "U" ? 6.42 * iscBase : 7.52 * (iscBase - 0.029) - 3.25 * Math.pow(iscBase - 0.02, 15);
+    // CVSS v3.1 spec (FIRST): S:U → 6.42×ISC; S:C → 7.52×(ISC−0.029) −
+    // 3.25×(ISC−0.973)^13. (v5.7.2 fix: the previous line used the v3.0
+    // term (ISC−0.02)^15 — wrong for CVSS:3.1 vectors.)
+    const impact = s === "U"
+      ? 6.42 * iscBase
+      : 7.52 * (iscBase - 0.029) - 3.25 * Math.pow(iscBase - 0.973, 13);
     const exploitability = 8.22 * av * ac * pr * ui;
     if (impact <= 0) return 0;
     const base = s === "U"
@@ -430,6 +435,31 @@ export function cvss31BaseFromVector(vector: string): number | null {
   } catch {
     return null;
   }
+}
+
+/** W3.1/v5.7.2: cvss component from an OSV advisory. Order of precedence
+ *  (deterministic, published):
+ *    1. Raw CVSS v3.x vector string ("CVSS:3.1/AV:N/...") → base score × 10
+ *    2. Numeric score string ("7.5") → × 10
+ *    3. GHSA database_specific severity label (CRITICAL/HIGH/MODERATE/LOW —
+ *       npm advisories carry the label, not the vector) → fixed published
+ *       mapping: CRITICAL=95, HIGH=80, MODERATE|MEDIUM=55, LOW=25
+ *    4. Nothing → 50 neutral (stated, never fabricated) */
+export function cvssFromAdvisory(vector: string | null, label: string | null): number {
+  if (vector && vector.startsWith("CVSS:")) {
+    const base = cvss31BaseFromVector(vector);
+    if (base !== null) return Math.round(base * 10);
+  }
+  if (vector) {
+    const n = parseFloat(vector);
+    if (Number.isFinite(n) && n > 0) return Math.round(Math.min(10, n) * 10);
+  }
+  const l = (label ?? "").toUpperCase();
+  if (l === "CRITICAL") return 95;
+  if (l === "HIGH") return 80;
+  if (l === "MODERATE" || l === "MEDIUM") return 55;
+  if (l === "LOW") return 25;
+  return W3_MODEL.neutral.cvss;
 }
 
 /** reachability: does the advisory-affected function appear in the static

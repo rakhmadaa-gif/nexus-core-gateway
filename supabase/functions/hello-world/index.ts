@@ -30,6 +30,7 @@ import {
   W3_MODEL, validateFullInput, computeExploitability, cvssComponent,
   reachabilityComponent, exploitMaturityComponent, freshnessPenaltyComponent,
   assetExposureComponent, buildSourceMatch, extractSolidityImports, mergeDependencyLists,
+  cvssFromAdvisory,
 } from "./w3_fitness_full.ts";
 
 // ----------------------------------------------------------------------------
@@ -68,7 +69,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.7.1-frontier",
+  engine_version: "v5.7.2-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -411,7 +412,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.7.1-frontier",
+  version: "5.7.2-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -560,7 +561,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.7.1-frontier (EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 (W3: exploitability + source-match; W3.1: packages input + auto import extraction) + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.7.2-frontier (EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 (W3: exploitability + source-match; W3.1: packages + auto import extraction; v5.7.2: real CVSS vector parsing) + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2807,7 +2808,7 @@ const RISKY_LICENSES = new Set([
 ]);
 
 async function osvQuery(pkg: { name: string; ecosystem: string }): Promise<{
-  advisories: Array<{ id: string; summary: string; severity_class: string; published: string; url: string }>;
+  advisories: Array<{ id: string; summary: string; severity_class: string; published: string; url: string; cvss_vector: string | null; severity_label: string | null }>;
   error?: string;
 }> {
   try {
@@ -2823,6 +2824,11 @@ async function osvQuery(pkg: { name: string; ecosystem: string }): Promise<{
     const advisories = (data.vulns ?? []).map((v) => {
       const sev = String(v.severity?.[0]?.score ?? "");
       const dbSev = String((v.database_specific as Record<string, unknown> | undefined)?.severity ?? "");
+      // v5.7.2: expose the raw CVSS vector + GHSA severity label so the
+      // exploitability formula can compute the cvss component from real data
+      // instead of the 50 neutral default (W3.1 roadmap item).
+      const cvssVector = sev.startsWith("CVSS:") ? sev : null;
+      const severityLabel = dbSev || null;
       // Map CVSS vector to a coarse class — factual reading of the vector.
       let severity_class = "UNKNOWN";
       const m = sev.match(/CVSS:[23]\/\d(\.\d)?\/AV:.*?\/(C|P):[HML]/);
@@ -2839,6 +2845,8 @@ async function osvQuery(pkg: { name: string; ecosystem: string }): Promise<{
         severity_class,
         published: String(v.published ?? ""),
         url: `https://osv.dev/vulnerability/${v.id}`,
+        cvss_vector: cvssVector,
+        severity_label: severityLabel,
       };
     });
     return { advisories };
@@ -3407,10 +3415,13 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
       advisoriesForAttestation.push({
         id: adv.id, summary: adv.summary, severity_class: adv.severity_class,
         published: adv.published, url: adv.url, package: pkg.name, source: pkg.origin,
+        cvss_vector: adv.cvss_vector, severity_label: adv.severity_label,
       });
       // Exploitability components (spec §3.1):
-      //   cvss — osvQuery does not return the raw vector in v5.7.1 → 50
-      //     neutral (v5.7.2 candidate: pass the vector through).
+      //   cvss — v5.7.2: raw CVSS v3.x vector from OSV → base score × 10;
+      //     fallback numeric score; fallback GHSA severity label
+      //     (CRITICAL=95/HIGH=80/MODERATE=55/LOW=25, published mapping);
+      //     nothing → 50 neutral (stated, never fabricated).
       //   reachability — dependency imported by the subject = 60 (present);
       //     direct-call confirmation is not statically provable pre-compile →
       //     not claimed.
@@ -3423,7 +3434,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
         ? Math.max(0, Math.floor((Date.now() - new Date(adv.published).getTime()) / 86_400_000))
         : null;
       const components = {
-        cvss: 50,
+        cvss: cvssFromAdvisory(adv.cvss_vector, adv.severity_label),
         reachability: 60,
         exploit_maturity: W3_MODEL.neutral.exploit_maturity,
         freshness_penalty: freshnessPenaltyComponent(daysSincePublished),
