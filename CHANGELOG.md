@@ -1,5 +1,38 @@
 # Nexus Gateway Changelog
 
+## v5.6.0-frontier (2026-10-04) — W4 M4: Mainnet Calibration + Static Reference Cohort
+
+W4 (Gas Efficiency Rank) milestone 4 complete. `/x402/fitness/lite` now ranks against a
+mainnet-calibrated reference cohort.
+
+### Engine (w4_gas_rank.ts)
+- **Modifier-body inlining**: body modifiers (USDC `notBlacklisted`/`whenNotPaused` class) now
+  inlined into callers — their SLOADs are counted (previously invisible).
+- **Cross-file union**: modifier bodies + internal fns merged across all repo files (inheritance
+  chains live in sibling files: FiatTokenV1 uses notBlacklisted declared in Blacklistable.sol).
+- **Read-before-write SSTORE classification**: a state var read before write implies non-zero
+  slot → SSTORE_UPDATE (7100) not SSTORE_NEW (22100). WMATIC withdraw error -69% → -25%.
+
+### Cohort v1.2.0-m4-static-cohort
+- Distribution built from STATIC ESTIMATES of reference contracts (USDC FiatTokenV1, WMATIC WETH9,
+  OZ ERC20 v5, Solady ERC20, OZ ERC20Burnable, Uniswap V2 Router/Pair + V3 Pool, Sushi MasterChef)
+  — same estimator basis as ranked subjects, so systematic static-vs-runtime bias cancels out.
+- Mainnet measurements (Polygon PoS 2026-10-04: USDC 368 transfer / 65 transferFrom / 28 approve
+  txs, QuickSwap-class router swaps, WMATIC withdraw) validate the ±40% error band, NOT the cohort
+  distribution (measured-vs-static would be apples-vs-oranges ranking).
+
+### Tests
+- M4-CALIBRATION suite: NC 422-class ×3 (no-sol, vendored-only, interface-only), determinism
+  byte-identical, cohort version — 35/35 total green (M2 30 + M4 5).
+- Offline handler harness: fitness-lite 19/19, GAS_RANK_RESULT structure 10/10, peer-check 20/20.
+- Live E2E: manifest 5.6.0-frontier (16 endpoints), fitness/lite paid call 125 CRED charged
+  (cohort 1.2.0, composite 25/D on SimpleToken), cache hit 200, 422 NO_SOL_FILES pre-billing
+  credits 0, dry-run regression green (pragma contract deployable true), scan-quick/fitness/
+  peer-check 402 paywalls intact, docs routes 200.
+- PoA: engine_v5.6.0_w4_m4_calibration (184cf385).
+
+---
+
 ## v5.5.1-frontier (2026-10-03)
 
 **EVM Sentinel FP Precision Upgrade — bounty-sweep hardening**
