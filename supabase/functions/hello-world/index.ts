@@ -4449,6 +4449,19 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   only, not optimization advice. Input: {"repo":"owner/name"} or
   {"files":[{"path":"...","source":"..."}]} (max 25 files, 150KB).
   Unrankable code returns 422 without charge. Cached 10 minutes.
+- POST /x402/fitness/full — Fitness Full (W3), $2.25 USDC. Everything in
+  Lite plus base attestation (license, freshness), per-advisory
+  Exploitability Score from a fixed public formula (0.35*cvss +
+  0.25*reachability + 0.15*exploit_maturity + 0.15*freshness_penalty +
+  0.10*asset_exposure), and source-match: your submitted Solidity source
+  compared against the explorer-verified on-chain source for your
+  {address}. Unverified deployed contracts are reported as a factual
+  fitness signal. legal_weight: 0 — factual only, never safe/unsafe.
+  Input: {"repo":"owner/name"} or {"files":[{"path":"...","source":"..."}]}
+  (max 200 files, 2 MiB) + {"address":"0x..."} (required) +
+  {"chain":"polygon"} (v5.7.0: polygon only). Fatal pre-billing failures
+  (no code at address, explorer down, no rankable functions) return 422
+  without charge. Cached 10 minutes — cache is speed, not discount.
 - POST /x402/fitness/peer-check — Transaction Peer-Check, $0.05 USDC.
   Check the facts of a peer x402 endpoint BEFORE you send USDC: direct
   read-only GET probe (reachable, http_status, latency_ms, content
