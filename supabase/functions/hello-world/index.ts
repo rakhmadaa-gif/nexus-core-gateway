@@ -63,7 +63,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.5.3-frontier",
+  engine_version: "v5.6.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +406,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.5.3-frontier",
+  version: "5.6.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -450,7 +450,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /x402/fitness/lite": {
-      description: "Fitness Lite — W4 Gas Efficiency Rank: deterministic static gas estimate per public/external function from Solidity source, ranked against a fixed public cohort (COHORT v1 seed-50). Band A-E, composite score 0-100, error band +/-40% stated. legal_weight: 0 — factual only. Input {repo} or {files} -> GAS_RANK_RESULT. Unrankable code returns 422 without charge. 10-minute cache.",
+      description: "Fitness Lite — W4 Gas Efficiency Rank: deterministic static gas estimate per public/external function from Solidity source, ranked against a mainnet-calibrated reference cohort (COHORT v1.2.0: USDC, WMATIC, OZ v5, Solady, Uniswap V2/V3, MasterChef static estimates). Band A-E, composite score 0-100, error band +/-40% stated. legal_weight: 0 — factual only. Input {repo} or {files} -> GAS_RANK_RESULT. Unrankable code returns 422 without charge. 10-minute cache.",
       billing: "1.25 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },

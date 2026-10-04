@@ -52,17 +52,17 @@ export const GAS_RANK_MODEL = {
   ],
   class_weight: { strong_pattern: 1.0, weak_pattern: 0.5 },
   cohort: {
-    version: "1.0.0-seed50",
-    description: "Fixed public reference distribution per op-class (seed 50, target 100 at M4 calibration). Live ERC-8004 cohort sampling = v2.",
+    version: "1.2.0-m4-static-cohort",
+    description: "Fixed reference distribution per op-class, built from STATIC ESTIMATES of well-known reference contracts (USDC FiatTokenV1, WMATIC WETH9, OZ ERC20 v5, Solady ERC20, OZ ERC20Burnable, Uniswap V2 Router/Pair + V3 Pool, Sushi MasterChef) — same estimator basis as ranked subjects, so systematic static-vs-runtime bias cancels out. Mainnet measurements (Polygon PoS 2026-10-04: USDC 368 transfer / 65 transferFrom / 28 approve txs, router swaps, WMATIC withdraw) validate the error band, not the cohort. Live ERC-8004 cohort sampling = v2.",
     seed: {
-      transfer_like: { p25: 34000, median: 51000, p75: 66000, n: 8 },
-      approval_like: { p25: 24000, median: 46000, p75: 56000, n: 6 },
-      mint_like: { p25: 51000, median: 70000, p75: 95000, n: 6 },
-      burn_like: { p25: 30000, median: 45000, p75: 62000, n: 4 },
-      swap_like: { p25: 95000, median: 128000, p75: 175000, n: 8 },
-      stake_like: { p25: 80000, median: 120000, p75: 160000, n: 6 },
-      claim_like: { p25: 45000, median: 80000, p75: 120000, n: 6 },
-      admin_like: { p25: 28000, median: 44000, p75: 70000, n: 6 },
+      transfer_like: { p25: 28720, median: 43097, p75: 53360, n: 12 },
+      approval_like: { p25: 24166, median: 28720, p75: 44166, n: 8 },
+      mint_like: { p25: 32193, median: 69377, p75: 76198, n: 7 },
+      burn_like: { p25: 25810, median: 45412, p75: 75297, n: 5 },
+      swap_like: { p25: 37248, median: 37760, p75: 58877, n: 8 },
+      stake_like: { p25: 54012, median: 74321, p75: 87885, n: 8 },
+      claim_like: { p25: 42396, median: 68922, p75: 82134, n: 3 },
+      admin_like: { p25: 32193, median: 40936, p75: 46050, n: 9 },
     },
   },
   limits: { max_sol_files: 25, max_total_bytes: 153600, cache_ttl_seconds: 600 },
@@ -84,6 +84,10 @@ export interface ParsedContract {
   stateVars: Map<string, { isMapping: boolean; isConstant: boolean }>;
   functions: ParsedFunction[];
   events: Map<string, { args: number; indexed: number }>;
+  /** internal/private functions by name — for M4 internal-call inlining (wrapper pattern) */
+  internalFns: Map<string, ParsedFunction>;
+  /** modifier declarations with bodies — for M4 modifier inlining (USDC blacklist-class) */
+  modifierBodies: Map<string, string>;
 }
 
 export interface OpCount {
@@ -145,6 +149,8 @@ export function parseContract(source: string): ParsedContract {
   const stateVars = new Map<string, { isMapping: boolean; isConstant: boolean }>();
   const events = new Map<string, { args: number; indexed: number }>();
   const functions: ParsedFunction[] = [];
+  const internalFns = new Map<string, ParsedFunction>();
+  const modifierBodies = new Map<string, string>();
 
   // Events: event Transfer(address indexed from, address to, uint256 value);
   const evRe = /\bevent\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g;
@@ -187,6 +193,14 @@ export function parseContract(source: string): ParsedContract {
   }
 
   // Functions with bodies (public/external only matter for ranking).
+  // Modifier declarations: `modifier name(args) { ... }` — body kept for inlining.
+  const modRe = /\bmodifier\s+([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*\{/g;
+  for (let m = modRe.exec(src); m; m = modRe.exec(src)) {
+    const openIdx = m.index + m[0].length - 1;
+    const closeIdx = matchBrace(src, openIdx);
+    if (closeIdx < 0) continue;
+    modifierBodies.set(m[1], src.slice(openIdx + 1, closeIdx));
+  }
   const fnRe2 = /\bfunction\s+([A-Za-z_]\w*)?\s*\(([^)]*)\)\s*([^\{;]*)\{/g;
   for (let m = fnRe2.exec(src); m; m = fnRe2.exec(src)) {
     const openIdx = m.index + m[0].length - 1;
@@ -197,15 +211,60 @@ export function parseContract(source: string): ParsedContract {
       : /\binternal\b/.test(tail) ? "internal" : /\bprivate\b/.test(tail) ? "private" : "default";
     const mods = (tail.match(/\b[A-Za-z_]\w*(?=\s*(?:\(|$|\s))/g) ?? [])
       .filter((w) => !["external", "public", "internal", "private", "view", "pure", "payable", "virtual", "override", "returns", "memory", "calldata"].includes(w));
-    functions.push({
+    const parsedFn: ParsedFunction = {
       name: m[1] ?? "(anonymous)",
       visibility: vis,
       modifiers: mods,
       params: m[2] ?? "",
       body: src.slice(openIdx + 1, closeIdx),
-    });
+    };
+    functions.push(parsedFn);
+    if (vis === "internal" || vis === "private") internalFns.set(parsedFn.name, parsedFn);
   }
-  return { stateVars, functions, events };
+  return { stateVars, functions, events, internalFns, modifierBodies };
+}
+
+// ---------------------------------------------------------------------------
+// Internal-call inlining (M4 calibration fix): a public wrapper like USDC's
+// `transfer() { _transfer(msg.sender, to, value); }` delegates all real work to
+// an internal function. Without inlining the estimate is TX_BASE + calldata
+// only (measured: -63% vs mainnet). Inline internal/private call bodies into
+// the caller, one level deep, cycle-guarded (no self-recursive chains).
+// ---------------------------------------------------------------------------
+export function inlineInternalCalls(fn: ParsedFunction, contract: ParsedContract): ParsedFunction {
+  const seen = new Set<string>([fn.name]);
+  let body = fn.body;
+  let changed = true;
+  let guard = 0;
+  while (changed && guard < 8) {
+    changed = false;
+    guard++;
+    for (const [name, inner] of contract.internalFns) {
+      if (seen.has(name)) continue;
+      const callRe = new RegExp(`\\b${name}\\s*\\(`, "g");
+      if (callRe.test(body)) {
+        seen.add(name);
+        body = body + "\n" + inner.body;
+        changed = true;
+      }
+    }
+  }
+  return { ...fn, body };
+}
+
+// ---------------------------------------------------------------------------
+// Modifier inlining (M4 calibration fix): USDC-class tokens gate every entry
+// point with body modifiers (whenNotPaused, notBlacklisted(x)) whose bodies do
+// real SLOADs. Without inlining, estimates under-count by ~1 modifier-sload
+// each. Inline each used modifier's body once into the caller.
+// ---------------------------------------------------------------------------
+export function inlineModifierBodies(fn: ParsedFunction, contract: ParsedContract): ParsedFunction {
+  let extra = "";
+  for (const mod of fn.modifiers) {
+    const body = contract.modifierBodies.get(mod);
+    if (body) extra += "\n" + body;
+  }
+  return extra ? { ...fn, body: fn.body + extra } : fn;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +292,13 @@ export function estimateFunctionGas(
     logs: 0, logTopics: 0, logBytes: 0, keccak: 0, memoryWords: 0,
     loopCost: 0, loopRange: null,
   };
-  const locals = localVarNames(fn.body);
+  const fnInlined = inlineModifierBodies(inlineInternalCalls(fn, contract), contract);
+  const locals = localVarNames(fnInlined.body);
 
   // --- loops first: cost each loop body in a FRESH op-counter (single pass),
   // then multiply by the iteration model into ops.loopCost. The main body is
   // costed with loop regions blanked, so loop ops are never double-counted.
-  let body = fn.body;
+  let body = fnInlined.body;
   const loopRe = /\b(for|while)\s*\(([^)]*)\)\s*\{/g;
   const loopSegments: Array<{ kind: string; cond: string; body: string }> = [];
   for (let m = loopRe.exec(body); m; m = loopRe.exec(body)) {
@@ -323,8 +383,17 @@ function estimateBodyCost(
     const totalUses = count(new RegExp(`\\b${name}\\b`, "g"));
     const reads = Math.max(0, totalUses - writes - (meta.isMapping ? 0 : 0));
     if (writes > 0) {
-      ops.sstoreNew += 1;
-      ops.sstoreUpdate += writes - 1;
+      // M4 calibration fix: read-before-write implies the slot is already
+      // non-zero → first write is an UPDATE (7100), not NEW (22100). Measured
+      // on WMATIC withdraw: -15k over-estimate eliminated. A write with no
+      // prior read in the body (e.g. constructor-style init) stays SSTORE_NEW.
+      const readBeforeWrite = reads > 0;
+      if (readBeforeWrite) {
+        ops.sstoreUpdate += writes;
+      } else {
+        ops.sstoreNew += 1;
+        ops.sstoreUpdate += writes - 1;
+      }
       if (meta.isMapping) ops.keccak += writes;
     }
     if (reads > 0 && !(meta.isMapping && reads === keyUses && writes === 0 && totalUses === 0)) {
@@ -428,11 +497,28 @@ export function buildGasRank(files: GasRankInput[], subject: { repo?: string } =
   const screened = files.filter((f) => f.path.endsWith(".sol") && !isVendoredPath(f.path));
   const skippedVendored = files.filter((f) => f.path.endsWith(".sol") && isVendoredPath(f.path)).length;
 
+  // M4: union of modifier bodies + internal fns ACROSS files (inheritance chain
+  // lives in sibling files: FiatTokenV1 uses notBlacklisted declared in
+  // Blacklistable.sol). Merge into every per-file contract view so modifier and
+  // internal-call inlining resolve cross-file.
+  const unionModifierBodies = new Map<string, string>();
+  const unionInternalFns = new Map<string, ParsedFunction>();
+  const parsedAll = screened.slice(0, G.limits.max_sol_files).map((f) => parseContract(f.source));
+  for (const p of parsedAll) {
+    for (const [k, v] of p.modifierBodies) if (!unionModifierBodies.has(k)) unionModifierBodies.set(k, v);
+    for (const [k, v] of p.internalFns) if (!unionInternalFns.has(k)) unionInternalFns.set(k, v);
+  }
+
   const fnResults: Array<Record<string, unknown>> = [];
   const ranked: Array<{ percentile: number; weight: number }> = [];
 
-  for (const f of screened.slice(0, G.limits.max_sol_files)) {
-    const parsed = parseContract(f.source);
+  for (let i = 0; i < parsedAll.length; i++) {
+    const f = screened[i];
+    const parsed = {
+      ...parsedAll[i],
+      modifierBodies: unionModifierBodies,
+      internalFns: unionInternalFns,
+    };
     for (const fn of parsed.functions) {
       if (fn.visibility !== "public" && fn.visibility !== "external") continue;
       const { estimate, ops, breakdown } = estimateFunctionGas(fn, parsed);

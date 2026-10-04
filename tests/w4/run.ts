@@ -235,5 +235,39 @@ contract Defect {
   check("loop body still costed via loopCost", ops.loopCost > 0 && ops.loopRange !== null);
 }
 
+// =========================== M4: calibration suite ===========================
+const M4_TESTS: Array<[string, () => boolean]> = [
+  ["M4-NC1 no-sol repo returns NO_RANKABLE_FUNCTIONS 422-class", () => {
+    const r = buildGasRank([{ path: "README.md", source: "hello" }], { repo: "empty" }) as any;
+    return r.status === "NO_RANKABLE_FUNCTIONS" && r.http_status_hint === 422;
+  }],
+  ["M4-NC2 vendored-only returns 422-class", () => {
+    const r = buildGasRank([{ path: "lib/forge-src/V.sol", source: "contract V { function transfer() external {} }" }], { repo: "v" }) as any;
+    return r.status === "NO_RANKABLE_FUNCTIONS" && r.http_status_hint === 422;
+  }],
+  ["M4-NC3 interface-only returns 422-class", () => {
+    const r = buildGasRank([{ path: "I.sol", source: "interface IFoo { function transfer(address a, uint256 b) external; }" }], { repo: "i" }) as any;
+    return r.status === "NO_RANKABLE_FUNCTIONS";
+  }],
+  ["M4-DET determinism: identical input → byte-identical output", () => {
+    const files = [{ path: "a.sol", source: "contract A { mapping(address => uint256) public balanceOf; function transfer(address to, uint256 v) external { balanceOf[msg.sender] -= v; balanceOf[to] += v; } }" }];
+    return JSON.stringify(buildGasRank(files, { repo: "x" })) === JSON.stringify(buildGasRank(files, { repo: "x" }));
+  }],
+  ["M4-COH cohort version is 1.2.0-m4-static-cohort", () => {
+    const r = buildGasRank([{ path: "a.sol", source: "contract A { mapping(address => uint256) public balanceOf; function transfer(address to, uint256 v) external { balanceOf[msg.sender] -= v; balanceOf[to] += v; } }" }], { repo: "x" }) as any;
+    return r.cohort_version === "1.2.0-m4-static-cohort";
+  }],
+];
+
+// Run M4-CALIBRATION suite
+let m4pass = 0, m4fail = 0;
+for (const [name, t] of M4_TESTS) {
+  let ok = false, detail = "";
+  try { ok = t(); } catch (e: any) { detail = e.message; }
+  if (ok) m4pass++; else m4fail++;
+  console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? " — " + detail : ""}`);
+}
+
 console.log(`\n${"=".repeat(60)}\nW4 M2 SUITE: ${pass} PASS, ${fail} FAIL`);
-if (fail > 0) process.exit(1);
+console.log(`W4 M4-CALIBRATION SUITE: ${m4pass} PASS, ${m4fail} FAIL`);
+if (fail > 0 || m4fail > 0) process.exit(1);
