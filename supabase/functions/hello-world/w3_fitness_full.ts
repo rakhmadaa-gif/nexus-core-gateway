@@ -109,7 +109,7 @@ export async function fetchExplorerSource(
     polygon: "https://polygon.blockscout.com/api/v2",
   };
   const base = explorers[chain];
-  if (!base) return { kind: "unavailable", error: `chain ${chain} not supported in v5.7.0` };
+  if (!base) return { kind: "unavailable", error: `chain ${chain} not supported in v5.7.x` };
   try {
     const res = await fetchFn(`${base}/smart-contracts/${address}`, {
       headers: { "User-Agent": "nexus-gateway" },
@@ -190,6 +190,7 @@ export type W3Input = {
   mode: "repo" | "files";
   repo?: string;
   files?: Array<{ path: string; source: string }>;
+  packages?: Array<{ name: string; ecosystem?: string; version?: string }>;
   address: string;
   chain: string;
 };
@@ -246,9 +247,118 @@ export function validateFullInput(
     if (total > W3_MODEL.limits.max_total_bytes) {
       return { ok: false, error: "files: total size exceeds 2 MiB." };
     }
-    return { ok: true, input: { mode: "files", files: norm, address: b.address as string, chain } };
+    // W3.1: optional packages list (max 25) — drives per-advisory exploitability.
+    const packages = parsePackagesField(b.packages);
+    if (typeof packages === "string") return { ok: false, error: packages };
+    return { ok: true, input: { mode: "files", files: norm, packages, address: b.address as string, chain } };
   }
-  return { ok: true, input: { mode: "repo", repo: b.repo as string, address: b.address as string, chain } };
+  const packages = parsePackagesField(b.packages);
+  if (typeof packages === "string") return { ok: false, error: packages };
+  return { ok: true, input: { mode: "repo", repo: b.repo as string, packages, address: b.address as string, chain } };
+}
+
+function parsePackagesField(
+  v: unknown,
+): Array<{ name: string; ecosystem?: string; version?: string }> | string {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) return "packages must be an array: [{name, ecosystem?, version?}].";
+  if (v.length > 25) return "packages: max 25 entries.";
+  const out: Array<{ name: string; ecosystem?: string; version?: string }> = [];
+  for (const p of v) {
+    if (typeof p !== "object" || p === null || typeof (p as Record<string, unknown>).name !== "string" ||
+      (p as Record<string, unknown>).name.length === 0) {
+      return "each package needs {name: string} (ecosystem/version optional).";
+    }
+    const r = p as Record<string, unknown>;
+    out.push({
+      name: r.name as string,
+      ecosystem: typeof r.ecosystem === "string" ? r.ecosystem : undefined,
+      version: typeof r.version === "string" ? r.version : undefined,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// W3.1: automatic dependency extraction from Solidity import directives.
+// Import statements are top-level AST constructs — a directive-level scan is
+// the deterministic, compile-free way to detect dependencies (no guessing
+// inside function bodies). Maps import paths to package names.
+// ---------------------------------------------------------------------------
+
+/** Dev/test tooling — never runtime attack surface. */
+const DEV_TOOLING_PACKAGES = new Set(["forge-std", "ds-test", "ds-script", "script", "test"]);
+
+/** Well-known Solidity library path -> npm package name. */
+const IMPORT_PACKAGE_ALIASES: Array<[RegExp, string]> = [
+  [/^@openzeppelin\/contracts-upgradeable\//, "@openzeppelin/contracts-upgradeable"],
+  [/^openzeppelin\/contracts\//, "@openzeppelin/contracts"],
+  [/^solady\//, "solady"],
+  [/^solmate\//, "solmate"],
+  [/^murky\//, "murky"],
+  [/^erc4626\//, "erc4626"],
+];
+
+/** Extract dependency packages imported by the given .sol sources.
+ *  Returns [{name, ecosystem, origin: "imports"}] — deterministic order. */
+export function extractSolidityImports(
+  files: Array<{ path: string; source: string }>,
+): Array<{ name: string; ecosystem: string; origin: "imports" }> {
+  const found = new Map<string, { name: string; ecosystem: string; origin: "imports" }>();
+  // Import directives: `import "path";` / `import X from "path";` / `import {a,b} from "path";`
+  const importRe = /import\s+(?:[\w{},\s]+\s+from\s+)?["']([^"']+)["']/g;
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    importRe.lastIndex = 0;
+    while ((m = importRe.exec(f.source)) !== null) {
+      const pkg = mapImportPathToPackage(m[1]);
+      if (pkg && !found.has(pkg)) found.set(pkg, { name: pkg, ecosystem: "npm", origin: "imports" });
+    }
+  }
+  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mapImportPathToPackage(importPath: string): string | null {
+  // Local/relative imports are not external dependencies.
+  if (importPath.startsWith("./") || importPath.startsWith("../") || importPath.startsWith("/")) return null;
+  for (const [re, alias] of IMPORT_PACKAGE_ALIASES) {
+    if (re.test(importPath)) return alias;
+  }
+  // Scoped packages: @scope/name/... -> @scope/name
+  if (importPath.startsWith("@")) {
+    const parts = importPath.split("/");
+    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+    return null;
+  }
+  // Bare paths: name/... -> name (skip dev tooling; single file names are local)
+  if (!importPath.includes("/")) return null;
+  const first = importPath.split("/")[0];
+  if (!first || DEV_TOOLING_PACKAGES.has(first)) return null;
+  return first;
+}
+
+/** Merge user-supplied packages with auto-extracted imports (dedup, cap 25).
+ *  User-supplied wins on ecosystem/version; imports add origin "imports". */
+export function mergeDependencyLists(
+  userPackages: Array<{ name: string; ecosystem?: string; version?: string }> | undefined,
+  imported: Array<{ name: string; ecosystem: string; origin: "imports" }>,
+): {
+  packages: Array<{ name: string; ecosystem: string; version?: string; origin: "input" | "imports" }>;
+  truncated: boolean;
+} {
+  const merged = new Map<string, { name: string; ecosystem: string; version?: string; origin: "input" | "imports" }>();
+  for (const p of userPackages ?? []) {
+    merged.set(p.name.toLowerCase(), { name: p.name, ecosystem: p.ecosystem ?? "npm", version: p.version, origin: "input" });
+  }
+  for (const p of imported) {
+    const key = p.name.toLowerCase();
+    if (!merged.has(key)) merged.set(key, { name: p.name, ecosystem: p.ecosystem, origin: "imports" });
+  }
+  const all = [...merged.values()];
+  // Deterministic order: user-supplied first, then imports alphabetically.
+  all.sort((a, b) => a.origin === b.origin ? a.name.localeCompare(b.name) : a.origin === "input" ? -1 : 1);
+  const truncated = all.length > 25;
+  return { packages: all.slice(0, 25), truncated };
 }
 
 // ---------------------------------------------------------------------------

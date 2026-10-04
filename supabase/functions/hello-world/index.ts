@@ -29,7 +29,7 @@ import { GAS_RANK_MODEL, buildGasRank } from "./w4_gas_rank.ts";
 import {
   W3_MODEL, validateFullInput, computeExploitability, cvssComponent,
   reachabilityComponent, exploitMaturityComponent, freshnessPenaltyComponent,
-  assetExposureComponent, buildSourceMatch,
+  assetExposureComponent, buildSourceMatch, extractSolidityImports, mergeDependencyLists,
 } from "./w3_fitness_full.ts";
 
 // ----------------------------------------------------------------------------
@@ -68,7 +68,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.7.0-frontier",
+  engine_version: "v5.7.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -411,7 +411,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.7.0-frontier",
+  version: "5.7.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -460,7 +460,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /x402/fitness/full": {
-      description: "Fitness Full — W3: everything in Lite (gas rank vs mainnet-calibrated cohort) + base attestation (license, freshness) + per-advisory Exploitability Score from a fixed public formula (0.35*cvss + 0.25*reachability + 0.15*exploit_maturity + 0.15*freshness_penalty + 0.10*asset_exposure) + source-match: submitted source vs explorer-verified on-chain source for {address} (bytecode-match via self-compile is a v5.8+ roadmap item; unverified contracts are reported as a factual fitness signal). legal_weight: 0 — factual only, never safe/unsafe. Input {repo}|{files} + {address} (required) + {chain=polygon} -> FullResult. Fatal pre-billing failures (no code at address, explorer down, no rankable functions) return 422 without charge. 10-minute cache (cache = speed, not discount).",
+      description: "Fitness Full — W3: everything in Lite (gas rank vs mainnet-calibrated cohort) + base attestation (license, freshness) + per-advisory Exploitability Score from a fixed public formula (0.35*cvss + 0.25*reachability + 0.15*exploit_maturity + 0.15*freshness_penalty + 0.10*asset_exposure) + source-match: submitted source vs explorer-verified on-chain source for {address} (bytecode-match via self-compile is a v5.8+ roadmap item; unverified contracts are reported as a factual fitness signal). W3.1: optional {packages:[{name, ecosystem?, version?}]} (max 25) merged with dependencies auto-extracted from Solidity import directives drive per-advisory OSV queries; no dependency list → transparent dependency_notice, never fabricated. legal_weight: 0 — factual only, never safe/unsafe. Input {repo}|{files} + {address} (required) + {chain=polygon} + optional {packages} -> FullResult. Fatal pre-billing failures (no code at address, explorer down, no rankable functions) return 422 without charge. 10-minute cache (cache = speed, not discount).",
       billing: "2.25 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -560,7 +560,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.5.3-frontier (EVM Sentinel engine +13 breach scenarios; v5.5.3: internal-call guard resolution (timelocked) + RHS msg.sender guard + modifier helper-call guard resolution + BS-012 PRNG word-boundary + cooldown bookkeeping strip + BS-013 initializer modifier + self-delegatecall trusted; Fitness Attestation: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.7.1-frontier (EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 (W3: exploitability + source-match; W3.1: packages input + auto import extraction) + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1175,7 +1175,6 @@ const PRICING_MODEL = {
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
     fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — W3: gas rank + base attestation + per-advisory Exploitability Score (fixed public formula) + source-match vs explorer-verified on-chain source ($2.25) [LIVE — reference/w3-fitness-full-spec.md]" },
-    fitness_full: { base_credits: 225, description: "Fitness Full — Lite + Exploitability Score + Attack Cost USD + Bytecode Match ($2.25) [PLANNED H+14]" },
     fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
@@ -3388,13 +3387,62 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
     if (repoFacts.error) degraded = true;
   }
 
-  // 6. Exploitability — deterministic formula over available advisories.
-  //    Advisories for the subject repo come from OSV GHSA queries only when
-  //    the caller supplies packages; repo-mode has no package list, so the
-  //    per-advisory list is empty and max_exploitability_score is 0 — honest,
-  //    never fabricated. (packages input arrives with the W3.1 extension.)
+  // 6. Exploitability (W3.1) — deterministic formula over available advisories.
+  //    Dependency list = user-supplied {packages} MERGED with packages
+  //    auto-extracted from Solidity import directives in the input files.
+  //    Advisories are queried via OSV per package (pre-billing, non-fatal:
+  //    OSV down → degraded: true, cvss component = 50 neutral — spec §4).
+  //    No dependency list at all → transparent notice, baseline score,
+  //    never fabricated data (legal_weight: 0 discipline).
+  const imported = extractSolidityImports(inputFiles);
+  const merged = mergeDependencyLists(input.packages, imported);
   const perAdvisory: Array<Record<string, unknown>> = [];
   let maxExploitability = 0;
+  let osvDegraded = false;
+  const advisoriesForAttestation: Array<Record<string, unknown>> = [];
+  for (const pkg of merged.packages) {
+    const osv = await osvQuery({ name: pkg.name, ecosystem: pkg.ecosystem || "npm" });
+    if (osv.error) osvDegraded = true;
+    for (const adv of osv.advisories) {
+      advisoriesForAttestation.push({
+        id: adv.id, summary: adv.summary, severity_class: adv.severity_class,
+        published: adv.published, url: adv.url, package: pkg.name, source: pkg.origin,
+      });
+      // Exploitability components (spec §3.1):
+      //   cvss — osvQuery does not return the raw vector in v5.7.1 → 50
+      //     neutral (v5.7.2 candidate: pass the vector through).
+      //   reachability — dependency imported by the subject = 60 (present);
+      //     direct-call confirmation is not statically provable pre-compile →
+      //     not claimed.
+      //   exploit_maturity — no KEV feed in v5.7.1; non-advisory-db
+      //     references are not exposed by osvQuery → 30 conservative.
+      //   freshness_penalty — days since advisory published (no patch date
+      //     exposed) → min(100, days*2).
+      //   asset_exposure — TVL per-address not mappable via DefiLlama → 50.
+      const daysSincePublished = adv.published
+        ? Math.max(0, Math.floor((Date.now() - new Date(adv.published).getTime()) / 86_400_000))
+        : null;
+      const components = {
+        cvss: 50,
+        reachability: 60,
+        exploit_maturity: W3_MODEL.neutral.exploit_maturity,
+        freshness_penalty: freshnessPenaltyComponent(daysSincePublished),
+        asset_exposure: W3_MODEL.neutral.asset_exposure,
+      };
+      const score = computeExploitability(components);
+      if (score > maxExploitability) maxExploitability = score;
+      perAdvisory.push({
+        id: adv.id, package: pkg.name, source: pkg.origin,
+        exploitability_score: score,
+        components,
+      });
+    }
+  }
+  const dependencyNotice = merged.packages.length === 0
+    ? "Advisory detail skipped due to missing package manifest (no packages supplied and no external imports detected); baseline global score applied."
+    : merged.truncated
+      ? "Dependency list capped at 25 packages (user-supplied first, then auto-extracted imports) — advisories beyond the cap are not queried."
+      : null;
 
   // 7. Rankable + matchable -> gatekeeper + 402 x402 envelope (225 CRED).
   const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
@@ -3487,15 +3535,17 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
           ? Math.floor((Date.now() - new Date(repoFacts.pushed_at).getTime()) / 86_400_000)
           : null,
         stars: repoFacts.stars ?? null,
-        advisories: [],
+        advisories: advisoriesForAttestation,
+        dependencies: merged.packages,
       },
       exploitability: {
         per_advisory: perAdvisory,
         max_exploitability_score: maxExploitability,
-        note: "No package list supplied — per-advisory exploitability requires {packages}. Score formula is fixed and published in the spec.",
+        dependency_notice: dependencyNotice,
+        note: "Per-advisory exploitability from the fixed public formula (weights in w3_model). Components use neutral defaults where a data source is not available in v5.7.1 — stated, never fabricated.",
       },
       source_match: sourceMatch,
-      degraded,
+      degraded: degraded || osvDegraded,
       w3_model: { spec_version: W3_MODEL.spec_version, weights: W3_MODEL.exploitability_weights },
     };
     try {
@@ -4113,6 +4163,20 @@ const OPENAPI_SPEC = {
                     },
                   },
                   address: { type: "string", description: "Deployed contract address (0x + 40 hex) — REQUIRED, the source-match subject" },
+                  packages: {
+                    type: "array",
+                    maxItems: 25,
+                    description: "W3.1 optional dependency list [{name, ecosystem?, version?}] — merged with packages auto-extracted from Solidity import directives to drive per-advisory OSV queries",
+                    items: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        ecosystem: { type: "string", description: "Default: npm" },
+                        version: { type: "string" },
+                      },
+                      required: ["name"],
+                    },
+                  },
                   chain: { type: "string", enum: ["polygon"], description: "v5.7.0: polygon only; enum open for expansion" },
                 },
                 required: ["address"],
