@@ -26,6 +26,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Wallet, Contract, JsonRpcProvider } from "npm:ethers@6";
 import { GAS_RANK_MODEL, buildGasRank } from "./w4_gas_rank.ts";
+import {
+  W3_MODEL, validateFullInput, computeExploitability, cvssComponent,
+  reachabilityComponent, exploitMaturityComponent, freshnessPenaltyComponent,
+  assetExposureComponent, buildSourceMatch,
+} from "./w3_fitness_full.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -63,7 +68,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.6.0-frontier",
+  engine_version: "v5.7.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -406,7 +411,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.6.0-frontier",
+  version: "5.7.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -452,6 +457,11 @@ const NODE_MANIFEST = {
     "POST /x402/fitness/lite": {
       description: "Fitness Lite — W4 Gas Efficiency Rank: deterministic static gas estimate per public/external function from Solidity source, ranked against a mainnet-calibrated reference cohort (COHORT v1.2.0: USDC, WMATIC, OZ v5, Solady, Uniswap V2/V3, MasterChef static estimates). Band A-E, composite score 0-100, error band +/-40% stated. legal_weight: 0 — factual only. Input {repo} or {files} -> GAS_RANK_RESULT. Unrankable code returns 422 without charge. 10-minute cache.",
       billing: "1.25 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /x402/fitness/full": {
+      description: "Fitness Full — W3: everything in Lite (gas rank vs mainnet-calibrated cohort) + base attestation (license, freshness) + per-advisory Exploitability Score from a fixed public formula (0.35*cvss + 0.25*reachability + 0.15*exploit_maturity + 0.15*freshness_penalty + 0.10*asset_exposure) + source-match: submitted source vs explorer-verified on-chain source for {address} (bytecode-match via self-compile is a v5.8+ roadmap item; unverified contracts are reported as a factual fitness signal). legal_weight: 0 — factual only, never safe/unsafe. Input {repo}|{files} + {address} (required) + {chain=polygon} -> FullResult. Fatal pre-billing failures (no code at address, explorer down, no rankable functions) return 422 without charge. 10-minute cache (cache = speed, not discount).",
+      billing: "2.25 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "POST /x402/fitness": {
@@ -1164,6 +1174,7 @@ const PRICING_MODEL = {
     // (Gas Efficiency Rank), H+14/$2.25 Full (+Exploitability Score + Attack
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
     fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
+    fitness_full: { base_credits: 225, description: "Fitness Full — W3: gas rank + base attestation + per-advisory Exploitability Score (fixed public formula) + source-match vs explorer-verified on-chain source ($2.25) [LIVE — reference/w3-fitness-full-spec.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — Lite + Exploitability Score + Attack Cost USD + Bytecode Match ($2.25) [PLANNED H+14]" },
     fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
@@ -3285,6 +3296,223 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
 }
 
 // ----------------------------------------------------------------------------
+// FITNESS FULL (W3, v5.7.0): POST /x402/fitness/full — $2.25 USDC (225 CRED)
+// ----------------------------------------------------------------------------
+// Spec: reference/w3-fitness-full-spec.md v1.0-FINAL (Fitness.Attestor).
+// D1 decision (user-ratified 2026-10-04): source-match via Blockscout explorer,
+// NOT self-compile — self-compile deferred to v5.8+. Unverified deployed
+// contract is itself reported as a factual fitness signal.
+// D2 decision (user-ratified 2026-10-04): cache hit still charges full price
+// (cache = speed, not discount — consistent with fitness/lite and scan).
+// Execution order (spec §5, permanent rule #2): validate (400) -> resolve
+// sources + explorer (422 on fatal) -> BILL 225 -> compute -> 200.
+// legal_weight: 0 — factual only, never "safe/unsafe".
+// ----------------------------------------------------------------------------
+
+const FITNESS_FULL_TTL_MS = 10 * 60 * 1000;
+
+async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = "fitness_full";
+
+  // 1. Validate input BEFORE anything — 400 class, never charged.
+  let body: unknown;
+  try {
+    body = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const validated = validateFullInput(body);
+  if (!validated.ok) {
+    return m2mError("INVALID_INPUT", validated.error, serviceType, 400, 0, reqStartTime);
+  }
+  const input = validated.input;
+
+  // 2. Resolve .sol files (pre-billing — fetch failures are not chargeable).
+  let inputFiles: Array<{ path: string; source: string }> = [];
+  if (input.mode === "repo") {
+    const fetched = await fetchRepoSolFilesForGasRank(input.repo!);
+    if (fetched.error) {
+      return m2mError("GITHUB_FETCH_FAILED", fetched.error, serviceType, 502, 0, reqStartTime);
+    }
+    inputFiles = fetched.files;
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "No non-vendored .sol files found in this repo.", serviceType, 422, 0, reqStartTime);
+    }
+  } else {
+    inputFiles = input.files!.filter((f) => !isVendoredSolPath(f.path));
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "All submitted files were filtered as vendored/test code.", serviceType, 422, 0, reqStartTime);
+    }
+  }
+
+  // 3. Source-match vs explorer (pre-billing — spec §5: fatal failures 422).
+  //    no_code (empty address) and explorer-down are fatal: bytecode_match is
+  //    the tier differentiator, so we never charge for a run without it.
+  //    "unverified" is NOT fatal — it is a factual fitness signal we report.
+  const sm = await buildSourceMatch(inputFiles, input.address, input.chain, sha256Hex);
+  if ("unavailable" in sm) {
+    return m2mError(
+      "EXPLORER_UNAVAILABLE",
+      `Explorer source unavailable: ${sm.unavailable}. Source-match is the core of this tier — no charge when it cannot run.`,
+      serviceType, 422, 0, reqStartTime,
+    );
+  }
+  if ("no_code" in sm) {
+    return m2mError(
+      "ADDRESS_HAS_NO_CODE",
+      "eth_getCode/explorer returned no contract at this address. Nothing to match — no charge.",
+      serviceType, 422, 0, reqStartTime,
+    );
+  }
+  const sourceMatch = sm;
+
+  // 4. Gas rank (identical to Lite — pre-billing gate).
+  const rankResult = buildGasRank(inputFiles, { repo: input.mode === "repo" ? input.repo : undefined });
+  if (rankResult.status === "NO_RANKABLE_FUNCTIONS") {
+    return m2mError(
+      "NO_RANKABLE_FUNCTIONS",
+      "No rankable public/external functions found in the submitted code. Nothing to rank — no charge.",
+      serviceType, 422, 0, reqStartTime,
+    );
+  }
+
+  // 5. Base attestation (repo facts: license/freshness/stars; OSV advisories
+  //    are fetched per-package only — repo-mode has no package list, so
+  //    exploitability is computed from repo advisories when present, else
+  //    reported empty. Factual, never fabricated.)
+  let repoFacts: Awaited<ReturnType<typeof githubRepoFacts>> = {};
+  let degraded = false;
+  if (input.mode === "repo") {
+    repoFacts = await githubRepoFacts(input.repo!, Deno.env.get("GITHUB_TOKEN"));
+    if (repoFacts.error) degraded = true;
+  }
+
+  // 6. Exploitability — deterministic formula over available advisories.
+  //    Advisories for the subject repo come from OSV GHSA queries only when
+  //    the caller supplies packages; repo-mode has no package list, so the
+  //    per-advisory list is empty and max_exploitability_score is 0 — honest,
+  //    never fabricated. (packages input arrives with the W3.1 extension.)
+  const perAdvisory: Array<Record<string, unknown>> = [];
+  let maxExploitability = 0;
+
+  // 7. Rankable + matchable -> gatekeeper + 402 x402 envelope (225 CRED).
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 225;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: "/x402/fitness/full",
+        description: "Nexus Fitness Full — gas rank + attestation + exploitability + source-match",
+        mimeType: "application/json",
+      },
+      accepts: [{
+        scheme: "exact",
+        network: "eip155:137",
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Full attestation.`,
+        },
+      }],
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  // 8. 10-minute cache (cache = speed, NOT discount — full charge on hit, D2).
+  const subjectKey = JSON.stringify({
+    r: input.mode === "repo" ? input.repo : null,
+    f: inputFiles.map((x) => x.path),
+    a: input.address.toLowerCase(),
+    c: input.chain,
+  });
+  const cacheKey = `fitness_full:${await sha256Hex(subjectKey)}`;
+  let cachedResult: Record<string, unknown> | null = null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < FITNESS_FULL_TTL_MS) cachedResult = data[0].result as Record<string, unknown>;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  let result: Record<string, unknown>;
+  let cacheHit = false;
+  if (cachedResult) {
+    result = cachedResult;
+    cacheHit = true;
+  } else {
+    result = {
+      schema_version: W3_MODEL.schema_version,
+      service: W3_MODEL.service,
+      legal_weight: 0,
+      disclaimer: W3_MODEL.disclaimer,
+      generated_at: new Date().toISOString(),
+      input_digest: `sha256:${await sha256Hex(subjectKey)}`,
+      gas_rank: rankResult,
+      attestation: {
+        repo: input.mode === "repo" ? input.repo : null,
+        license: repoFacts.license ?? null,
+        license_risk: repoFacts.license ? RISKY_LICENSES.has(repoFacts.license) : null,
+        freshness_days: repoFacts.pushed_at
+          ? Math.floor((Date.now() - new Date(repoFacts.pushed_at).getTime()) / 86_400_000)
+          : null,
+        stars: repoFacts.stars ?? null,
+        advisories: [],
+      },
+      exploitability: {
+        per_advisory: perAdvisory,
+        max_exploitability_score: maxExploitability,
+        note: "No package list supplied — per-advisory exploitability requires {packages}. Score formula is fixed and published in the spec.",
+      },
+      source_match: sourceMatch,
+      degraded,
+      w3_model: { spec_version: W3_MODEL.spec_version, weights: W3_MODEL.exploitability_weights },
+    };
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "fitness_full", result });
+    } catch (_) { /* non-fatal */ }
+  }
+
+  await Promise.all([
+    recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+    logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+  ]);
+  recordThroughput();
+  return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+}
+
+// ----------------------------------------------------------------------------
 // PEER-CHECK (v5.4.1): POST /x402/fitness/peer-check — $0.05 USDC (5 CRED)
 // ----------------------------------------------------------------------------
 // Design: reference/peer-check-design.md v0.1 (user-approved 2026-10-03).
@@ -3852,6 +4080,61 @@ const OPENAPI_SPEC = {
           },
           "422": {
             description: "No rankable public/external functions (or no non-vendored .sol files) — not charged.",
+          },
+        },
+      },
+    },
+    "/x402/fitness/full": {
+      post: {
+        summary: "Fitness Full — gas rank + attestation + exploitability + source-match",
+        description:
+          "Everything in Lite (deterministic static gas rank vs fixed public cohort) plus base attestation (license, freshness), per-advisory Exploitability Score from a fixed public formula, and source-match: the submitted Solidity source compared against the explorer-verified on-chain source for the given {address}. Unverified deployed contracts are reported as a factual fitness signal. legal_weight: 0 — factual only, never safe/unsafe. Fatal pre-billing failures return 422 without charge. 10-minute cache (full charge on hit — cache is speed, not discount). Cost: $2.25 USDC.",
+        "x-pricing": "2.25 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["fitness-full", "exploitability-score", "source-match", "verified-source", "gas-rank"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  repo: { type: "string", description: "GitHub repo as owner/name (public)" },
+                  files: {
+                    type: "array",
+                    maxItems: 200,
+                    description: "Direct file input: [{path, source}] — max 200 files, 2 MiB total",
+                    items: {
+                      type: "object",
+                      properties: {
+                        path: { type: "string" },
+                        source: { type: "string" },
+                      },
+                      required: ["path", "source"],
+                    },
+                  },
+                  address: { type: "string", description: "Deployed contract address (0x + 40 hex) — REQUIRED, the source-match subject" },
+                  chain: { type: "string", enum: ["polygon"], description: "v5.7.0: polygon only; enum open for expansion" },
+                },
+                required: ["address"],
+              },
+              example: { repo: "Vectorized/solady", address: "0x0000000000000000000000000000000000000000" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries FullResult { gas_rank, attestation, exploitability, source_match, degraded, input_digest }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "402": {
+            description: "Payment required (x402 envelope in payment-required header).",
+          },
+          "422": {
+            description: "Fatal pre-billing failure (no code at address, explorer unavailable, no rankable functions) — not charged.",
           },
         },
       },
@@ -6355,8 +6638,15 @@ async function handler(req: Request): Promise<Response> {
   if (req.method === "GET" && docsRoute === "/x402/fitness/lite") {
     return jsonResponse({ error: "Method not allowed. Use POST with {repo} or {files}." }, 405);
   }
+  // W3 (v5.7.0): /x402/fitness/full is now LIVE — route to the billing
+  // handler before the 501 tier skeleton (forensic remains reserved).
+  if (req.method === "POST" && docsRoute === "/x402/fitness/full") {
+    return handleFitnessFullWithBilling(req);
+  }
+  if (req.method === "GET" && docsRoute === "/x402/fitness/full") {
+    return jsonResponse({ error: "Method not allowed. Use POST with {repo}|{files} + {address}." }, 405);
+  }
   const fitnessTierRoutes: Record<string, { tier: string; price: string; weapons: string[] }> = {
-    "/x402/fitness/full": { tier: "fitness_full", price: "2.25", weapons: ["W1", "W5", "W4", "W2", "W3"] },
     "/x402/fitness/forensic": { tier: "fitness_forensic", price: "3.50", weapons: ["W1", "W5", "W4", "W2", "W3", "W6"] },
   };
   const fitnessTier = fitnessTierRoutes[docsRoute];
