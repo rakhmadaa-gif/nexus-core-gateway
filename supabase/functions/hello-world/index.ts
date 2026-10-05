@@ -32,6 +32,10 @@ import {
   assetExposureComponent, buildSourceMatch, extractSolidityImports, mergeDependencyLists,
   cvssFromAdvisory,
 } from "./w3_fitness_full.ts";
+import {
+  X402_CONFIG, verifyIncomingPayment, settleTransferWithAuthorization,
+  buildPaymentResponseHeader,
+} from "./x402_settlement.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -69,7 +73,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.7.2-frontier",
+  engine_version: "v5.8.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -412,7 +416,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.7.2-frontier",
+  version: "5.8.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -561,7 +565,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.7.2-frontier (EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 (W3: exploitability + source-match; W3.1: packages + auto import extraction; v5.7.2: real CVSS vector parsing) + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.8.0-frontier (x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -3921,7 +3925,7 @@ function buildTrialInfo(
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-client-id",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-client-id, PAYMENT-SIGNATURE",
   "X-Client-ID-Required": "true",
 };
 
@@ -6956,6 +6960,228 @@ async function handler(req: Request): Promise<Response> {
 
 async function telemetryWrapper(req: Request): Promise<Response> {
   const startTime = Date.now();
+
+  // -- P0: x402 PAYMENT-SIGNATURE interception (v5.8.0) ----------------------
+  // A spec-compliant x402 client retries the request with a PAYMENT-SIGNATURE
+  // header after receiving our 402. Complete the handshake here — one
+  // interception point makes every endpoint payable by standard x402 clients:
+  //   verify (local EIP-3009) → settle (on-chain transferWithAuthorization)
+  //   → credit balance instantly (record_x402_credits) → run original request
+  //   → attach PAYMENT-RESPONSE header.
+  // Model: pay-to-top-up. Payment adds CRED balance (1 USDC = 100 CRED); the
+  // request then proceeds through the normal gatekeeper. If the service costs
+  // more than the payment, the client gets a fresh 402 with the remaining
+  // price — credits are never lost.
+  const paymentSignatureHeader = req.headers.get("payment-signature");
+  if (paymentSignatureHeader) {
+    const settlementClientId = req.headers.get("x-client-id") || "x402-anonymous";
+    const x402Start = Date.now();
+    TELEMETRY.total_requests++;
+    TELEMETRY.last_request_at = x402Start;
+
+    const verification = verifyIncomingPayment(paymentSignatureHeader, X402_CONFIG.treasury);
+    if (!verification.ok) {
+      // Invalid payment → 400 per x402 error mapping (Invalid Payment)
+      await logServiceCall(settlementClientId, "x402_settlement", 400, null, 0);
+      TELEMETRY.error_count++;
+      recordLatency(Date.now() - x402Start);
+      return m2mError(
+        verification.error_code ?? "INVALID_PAYMENT",
+        verification.message ?? "Payment verification failed.",
+        "x402_settlement",
+        400,
+        0,
+        x402Start,
+      );
+    }
+
+    // Replay guard at DB level: if this exact nonce was already settled by us,
+    // skip re-settlement (on-chain would revert) and just re-run the request.
+    const supabase = getSupabaseClient();
+    const payloadNonce = verification.nonce ?? "";
+    const { data: alreadySettled } = await supabase
+      .from("virtual_credit_ledger")
+      .select("id, pull_tx_hash, credits_balance_after")
+      .eq("entry_type", "credit_x402")
+      .eq("reason_code", payloadNonce)
+      .maybeSingle();
+
+    let txHash: string;
+    if (alreadySettled?.pull_tx_hash) {
+      // Idempotent replay: nonce already settled & credited — do not charge twice.
+      txHash = alreadySettled.pull_tx_hash;
+    } else {
+      const privateKey = Deno.env.get("POLYGON_PRIVATE_KEY") || "";
+      if (!privateKey) {
+        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        TELEMETRY.error_count++;
+        recordLatency(Date.now() - x402Start);
+        return m2mError(
+          "SETTLEMENT_WALLET_UNCONFIGURED",
+          "POLYGON_PRIVATE_KEY not set — cannot settle x402 payments.",
+          "x402_settlement",
+          500,
+          0,
+          x402Start,
+        );
+      }
+
+      const settlement = await settleTransferWithAuthorization(
+        verification.payload!,
+        privateKey,
+      );
+      if (!settlement.ok) {
+        // Reconciliation: if the nonce is now used on-chain, the settlement
+        // actually landed (tx confirmed after our timeout, or a concurrent
+        // request settled it). The payment is valid — credit it.
+        if (settlement.nonce_used && settlement.error_code === "NONCE_ALREADY_USED") {
+          // Check whether WE already recorded this nonce in the ledger.
+          const { data: priorCredit } = await supabase
+            .from("virtual_credit_ledger")
+            .select("id, pull_tx_hash, client_id")
+            .eq("entry_type", "credit_x402")
+            .eq("reason_code", payloadNonce)
+            .maybeSingle();
+          if (priorCredit?.pull_tx_hash && priorCredit.client_id === settlementClientId) {
+            // Already credited for THIS client — idempotent success.
+            txHash = priorCredit.pull_tx_hash;
+          } else if (priorCredit?.pull_tx_hash) {
+            // Nonce credited to a DIFFERENT client — captured-payload replay.
+            // Do not credit the replaying client; run the request normally
+            // (their own balance applies, typically 402).
+            await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+            TELEMETRY.error_count++;
+            recordLatency(Date.now() - x402Start);
+            return m2mError(
+              "PAYMENT_ALREADY_CLAIMED",
+              "This payment was already claimed by another client.",
+              "x402_settlement",
+              402,
+              0,
+              x402Start,
+            );
+          } else {
+            // Nonce consumed on-chain but not yet credited — credit now.
+            // We cannot know the exact tx hash from here; record with the
+            // nonce as the idempotency key (unique index on reason_code).
+            txHash = `pending:${payloadNonce}`;
+            const amountAtomic2 = Number(verification.amount_atomic ?? "0");
+            const amountUsdc2 = amountAtomic2 / 10 ** X402_CONFIG.usdc_decimals;
+            const creditsMinted2 = Math.floor(amountUsdc2 * X402_CONFIG.cred_per_usdc);
+            const clientIdHashBytes2 = new TextEncoder().encode(settlementClientId);
+            const clientIdHashBuf2 = await crypto.subtle.digest("SHA-256", clientIdHashBytes2);
+            const clientIdHash2 = "0x" + [...new Uint8Array(clientIdHashBuf2)].map(b => b.toString(16).padStart(2, "0")).join("");
+            const { error: creditError2 } = await supabase.rpc("record_x402_credits", {
+              p_client_id: settlementClientId,
+              p_client_id_hash: clientIdHash2,
+              p_tx_hash: txHash,
+              p_payer: verification.payer ?? "",
+              p_amount_usdc: amountUsdc2,
+              p_credits_minted: creditsMinted2,
+            });
+            if (creditError2) {
+              await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+              TELEMETRY.error_count++;
+              recordLatency(Date.now() - x402Start);
+              return m2mError(
+                "CREDIT_RECORD_FAILED",
+                `Nonce settled on-chain but crediting failed: ${creditError2.message}`,
+                "x402_settlement",
+                500,
+                0,
+                x402Start,
+              );
+            }
+            await supabase
+              .from("virtual_credit_ledger")
+              .update({ reason_code: payloadNonce })
+              .eq("pull_tx_hash", txHash)
+              .eq("entry_type", "credit_x402");
+            await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
+            const settledResponse2 = await handler(req);
+            const paymentResponseHeader2 = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+            const headers2 = new Headers(settledResponse2.headers);
+            headers2.set("payment-response", paymentResponseHeader2);
+            headers2.set("Access-Control-Expose-Headers", "payment-response");
+            recordLatency(Date.now() - x402Start);
+            if (settledResponse2.status >= 400) TELEMETRY.error_count++;
+            return new Response(settledResponse2.body, {
+              status: settledResponse2.status,
+              statusText: settledResponse2.statusText,
+              headers: headers2,
+            });
+          }
+        } else {
+        await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+        TELEMETRY.error_count++;
+        recordLatency(Date.now() - x402Start);
+        return m2mError(
+          settlement.error_code ?? "PAYMENT_FAILED",
+          settlement.message ?? "Settlement failed.",
+          "x402_settlement",
+          402,
+          0,
+          x402Start,
+        );
+        }
+      }
+      txHash = settlement.tx_hash!;
+
+      // Instant credit: 1 USDC = 100 CRED. Atomic + replay-safe in DB.
+      const amountAtomic = Number(verification.amount_atomic ?? "0");
+      const amountUsdc = amountAtomic / 10 ** X402_CONFIG.usdc_decimals;
+      const creditsMinted = Math.floor(amountUsdc * X402_CONFIG.cred_per_usdc);
+      const clientIdHashBytes = new TextEncoder().encode(settlementClientId);
+      const clientIdHashBuf = await crypto.subtle.digest("SHA-256", clientIdHashBytes);
+      const clientIdHash = "0x" + [...new Uint8Array(clientIdHashBuf)].map(b => b.toString(16).padStart(2, "0")).join("");
+      const { error: creditError } = await supabase.rpc("record_x402_credits", {
+        p_client_id: settlementClientId,
+        p_client_id_hash: clientIdHash,
+        p_tx_hash: txHash,
+        p_payer: verification.payer ?? "",
+        p_amount_usdc: amountUsdc,
+        p_credits_minted: creditsMinted,
+      });
+      if (creditError) {
+        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        TELEMETRY.error_count++;
+        recordLatency(Date.now() - x402Start);
+        return m2mError(
+          "CREDIT_RECORD_FAILED",
+          `Settlement succeeded (${txHash}) but crediting failed: ${creditError.message}`,
+          "x402_settlement",
+          500,
+          0,
+          x402Start,
+        );
+      }
+
+      // Mark the nonce as settled (idempotency key for replayed requests)
+      await supabase
+        .from("virtual_credit_ledger")
+        .update({ reason_code: payloadNonce })
+        .eq("pull_tx_hash", txHash)
+        .eq("entry_type", "credit_x402");
+
+      await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
+    }
+
+    // Payment settled & credited — run the ORIGINAL request through the normal
+    // pipeline, then attach PAYMENT-RESPONSE so the x402 client sees success.
+    const settledResponse = await handler(req);
+    const paymentResponseHeader = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+    const headers = new Headers(settledResponse.headers);
+    headers.set("payment-response", paymentResponseHeader);
+    // Expose the header to browsers/spec-compliant clients
+    headers.set("Access-Control-Expose-Headers", "payment-response");
+    recordLatency(Date.now() - x402Start);
+    if (settledResponse.status >= 400) TELEMETRY.error_count++;
+    return new Response(settledResponse.body, {
+      status: settledResponse.status,
+      statusText: settledResponse.statusText,
+      headers,
+    });
+  }
 
   // Phase 2.1: Concurrency Guard — hard limit enforcement
   if (TELEMETRY.active_concurrent >= TELEMETRY.hard_limit_slots) {
