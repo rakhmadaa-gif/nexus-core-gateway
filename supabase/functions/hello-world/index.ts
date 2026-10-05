@@ -4583,7 +4583,8 @@ identifies your agent). Without credits the endpoint answers HTTP 402
 with a payment-required header carrying a base64 JSON x402 envelope
 (x402Version 2, accepts[]: scheme exact, network eip155:137, asset USDC
 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, payTo treasury). Pay with
-any x402 client, or use the built-in pull-payment rail: the gateway
+any x402 client (send the PAYMENT-SIGNATURE header; we verify, settle and
+credit automatically), or use the built-in pull-payment rail: the gateway
 > contract 0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683 on Polygon PoS
 > pulls USDC via EIP-712 permit.
 
