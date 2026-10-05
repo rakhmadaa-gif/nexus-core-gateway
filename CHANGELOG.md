@@ -1,5 +1,55 @@
 # Nexus Gateway Changelog
 
+## v5.7.2-frontier (2026-10-04) — Real CVSS Vector Parsing for Exploitability
+
+W3.1 roadmap item closed: the exploitability formula no longer uses the neutral cvss=50
+placeholder — it now derives the cvss component from real advisory data.
+
+### Changes
+- `osvQuery` exposes the raw CVSS vector string + GHSA `database_specific.severity` label
+  per advisory (both previously discarded at parse time).
+- New `cvssFromAdvisory()` precedence ladder (deterministic, published):
+  1. raw `CVSS:3.x` vector → base score ×10 via `cvss31BaseFromVector`
+  2. numeric score string → ×10
+  3. GHSA severity label → CRITICAL=95 / HIGH=80 / MODERATE=55 / LOW=25
+     (npm advisories carry the label, not the vector)
+  4. nothing → 50 neutral (stated, never fabricated)
+- Advisories surface `cvss_vector` + `severity_label` in the attestation for independent verification.
+- **Bug fix:** CVSS 3.1 Scope-Changed impact term used the v3.0 form `((ISC−0.02)^15)` —
+  corrected to the v3.1 spec `((ISC−0.973)^13, FIRST)`.
+
+### Validation
+- 19/19 v5.7.2 unit suite (ladder + FIRST-official vector values + E2E determinism).
+- Regression: 22/22 W3.1 + 35/35 W3.0 + 4/4 handler NC + explorer-down NC + 6/6 source-match.
+- Live E2E: paid call (lodash) 225 CRED → 10 advisories with real cvss components (53–91,
+  previously all 50), max exploitability 57→71; cvss_vector visible in attestation;
+  regressions green (dry-run 200, paywalls 402, forensic 501).
+
+## v5.7.1-frontier (2026-10-04) — W3.1: Packages Input + Auto Import Extraction
+
+- Optional `{packages:[{name, ecosystem?, version?}]}` (max 25) on `POST /x402/fitness/full`.
+- Dependencies auto-extracted from Solidity import directives (OZ/OZ-upgradeable/solady/
+  solmate/murky/erc4626 aliases, `@scope/name`, bare first-segment; relative imports and
+  dev-tooling excluded), merged with user input (dedup, cap 25, deterministic order,
+  `origin: "input"|"imports"`).
+- Per-advisory OSV queries drive exploitability; advisories surface in the attestation
+  with package attribution.
+- Graceful fallback: no dependency list → transparent `dependency_notice` (never fabricated).
+  OSV down → `degraded: true`, cvss component 50 neutral (non-fatal, spec §4).
+- Fix: duplicate `fitness_full` PRICING_MODEL key removed (stale PLANNED entry).
+- Tests: 22/22 W3.1 unit + 4/4 handler NC.
+
+## v5.7.0-frontier (2026-10-04) — W3 Fitness Full: Exploitability + Source Match
+
+- `POST /x402/fitness/full` $2.25 (225 CRED) live: gas rank (identical to Lite) +
+  base attestation + Exploitability Score 0-100 (fixed weights 0.35 cvss / 0.25 reachability /
+  0.15 exploit_maturity / 0.15 freshness_penalty / 0.10 asset_exposure) + bytecode_match
+  via Blockscout source-match (D1: source-match, NOT self-compile — deferred to v5.8+;
+  D2: cache hit charges full price — cache is speed, not discount).
+- Module `w3_fitness_full.ts`; handler `handleFitnessFullWithBilling` in index.ts.
+- Validation: offline 53/53 + live E2E (402 x402 2250000 atomic, paid 225 CRED,
+  422 ADDRESS_HAS_NO_CODE pre-billing, regressions intact). Manifest 17 endpoints.
+
 ## v5.6.0-frontier (2026-10-04) — W4 M4: Mainnet Calibration + Static Reference Cohort
 
 W4 (Gas Efficiency Rank) milestone 4 complete. `/x402/fitness/lite` now ranks against a
