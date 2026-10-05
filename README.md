@@ -16,6 +16,36 @@
 
 ---
 
+## ⚡ Proof It Works: The Engine Caught History's Most Expensive Bugs
+
+We ran six infamous smart contract disasters through the **production engine, live**
+(2026-10-05, v5.7.2-frontier) — all breach scenarios fired correctly, median latency
+**12.5 ms**:
+
+| Historic Contract | Loss | Verdict | Latency |
+|---|---|---|---|
+| The DAO (2016 — forked Ethereum) | $60M | 🔴 CRITICAL (BS-006 + BS-013) | 44 ms |
+| Unprotected (Parity-class) | $280M class | 🔴 CRITICAL (BS-013) | 8 ms |
+| The Run (bad randomness) | ~$800K | 🔴 CRITICAL (BS-012) | 13 ms |
+| SpankChain (2018 reentrancy) | $40K | 🟠 HIGH (BS-006) | 43 ms |
+| King of the Ether Throne | ~$150K | 🟠 HIGH (BS-006) | 12 ms |
+| Rubixi (pyramid scheme) | ~$13K | 🟡 MEDIUM (BS-009) | 12 ms |
+
+**Read the full writeup → [audits/HISTORIC_BUGS_TEASER.md](./audits/HISTORIC_BUGS_TEASER.md)**
+
+**Try the free 13 ms dry-run now:**
+
+```bash
+curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run \
+  -H "Content-Type: application/json" \
+  -d '{"source_code": "contract T { function transfer(address t, uint256 a) public { } }"}'
+```
+
+Full fitness attestation (gas rank + CVSS-parsed advisories + exploitability + source
+match): **`POST /x402/fitness/full` — $2.25 USDC via x402**, no signup, no account.
+
+---
+
 ## ERC-8004 On-Chain Identity
 
 Nexus Gateway is registered as **Agent ID 636** on the ERC-8004 IdentityRegistry (Polygon Mainnet).
