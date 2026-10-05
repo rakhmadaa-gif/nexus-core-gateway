@@ -181,6 +181,20 @@ curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/e
   </section>
 
   <section>
+    <h2>⚡ Historic Proof — The Engine Caught History's Most Expensive Bugs</h2>
+    <p style="color:#aaa;max-width:800px">Six infamous smart contract disasters, run through the <strong>production engine live</strong> (2026-10-05, v5.7.2-frontier). All breach scenarios fired correctly — median latency <strong style="color:#fbbf24">12.5 ms</strong>.</p>
+    <div class="breach-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+      <div class="breach"><h4>The DAO (2016) — $60M lost</h4><p>🔴 CRITICAL in 44 ms — reentrancy (BS-006) + privilege takeover (BS-013) on payOut, refund, executeProposal. The hack that forked Ethereum.</p></div>
+      <div class="breach"><h4>Unprotected — Parity class</h4><p>🔴 CRITICAL in 8 ms — unprotected owner function (BS-013), the bug class that froze $280M.</p></div>
+      <div class="breach"><h4>The Run — ~$800K</h4><p>🔴 CRITICAL in 13 ms — bad randomness (BS-012): block-entropy in payout logic, caught through the private-helper call chain.</p></div>
+      <div class="breach"><h4>SpankChain (2018) — $40K</h4><p>🟠 HIGH in 43 ms — reentrancy (BS-006) + replay/nonce defense (BS-007) on createChannel/deposit.</p></div>
+      <div class="breach"><h4>King of the Ether Throne</h4><p>🟠 HIGH in 12 ms — reentrancy (BS-006) + payout DoS (BS-009) on claimThrone.</p></div>
+      <div class="breach"><h4>Rubixi (2016)</h4><p>🟡 MEDIUM in 12 ms — unbounded iteration DoS (BS-009) on addPayout.</p></div>
+    </div>
+    <p style="color:#888;font-size:.85em;margin-top:10px">Full writeup: <a href="https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/audits/HISTORIC_BUGS_TEASER.md" style="color:#fbbf24">audits/HISTORIC_BUGS_TEASER.md</a> · Benchmarked vs Slither: 8/8 historic ToB cases recalled vs 4/8, 0 false positives on clean OpenZeppelin.</p>
+  </section>
+
+  <section>
     <h2>Quick Start — Try It Free</h2>
     <div class="code-block">
 <code><span class="comment"># 1. Discover — see what we offer (free, no auth)</span>
