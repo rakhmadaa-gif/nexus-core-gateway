@@ -73,7 +73,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.8.0-frontier",
+  engine_version: "v5.9.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -416,7 +416,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.8.0-frontier",
+  version: "5.9.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -565,7 +565,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.8.0-frontier (x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.9.0-frontier (x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2525,6 +2525,78 @@ function detectArbitrageManipulation(parsed: ParsedContract): {
   return { risk_level: risk, details, affected_functions: affected };
 }
 
+// v5.9.0 (Fase 1 Opsi B): Auto Localization Advice — concrete "how to refactor"
+// guidance for BS-008 gas-asymmetry patterns. This turns the detector from an
+// alarm into a remediation advisor. Free dry-run surfaces a detection notice +
+// ONE general hint + an upsell pointer; the FULL per-pattern advice is gated
+// behind paid tiers (scan-deep $0.50 / fitness-full $2.25).
+function buildLocalizationAdvice(g: {
+  has_modexp: boolean;
+  modexp_calls: number;
+  has_tstore_loop: boolean;
+  tstore_count: number;
+  cold_access_count: number;
+  compute_to_gas_ratio: number;
+  dos_validator_delay: boolean;
+}): {
+  risk_summary: string;
+  patterns: Array<{ pattern: string; isolate: string; bound: string; guard: string; verify: string }>;
+  priority: string;
+} | null {
+  const patterns: Array<{ pattern: string; isolate: string; bound: string; guard: string; verify: string }> = [];
+
+  // Pattern 1: MODEXP with unbounded / large inputs (extreme CPU/gas asymmetry)
+  if (g.has_modexp && g.compute_to_gas_ratio > 12.5) {
+    patterns.push({
+      pattern: "modexp_large_input",
+      isolate:
+        `Move the ${g.modexp_calls} MODEXP call site(s) into a dedicated verification function (e.g. verifyProof()) — do not inline modular exponentiation inside core business logic, so a stall is contained to one path.`,
+      bound:
+        "Cap the MODEXP input length at the call site: require(input.length <= 128) (or the smallest size your proof needs). Bounding 256-byte inputs to ≤128 bytes cuts worst-case validator CPU from ~18s to well under 1s per 30M-gas tx.",
+      guard:
+        "Restrict who can invoke the MODEXP path — add access control or a per-caller rate limit so an anonymous attacker cannot spam cheap transactions that each impose disproportionate CPU on validators.",
+      verify:
+        "Re-run the scan after refactoring: target compute_to_gas_ratio < 12.5 (below the DoS/validator-delay threshold).",
+    });
+  }
+
+  // Pattern 2: TSTORE inside a loop (transient-storage RAM amplification)
+  if (g.has_tstore_loop) {
+    patterns.push({
+      pattern: "tstore_loop",
+      isolate:
+        `Isolate the ${g.tstore_count} transient-storage write(s) into a dedicated helper — keep transient-storage manipulation out of general-purpose loops so memory pressure is contained.`,
+      bound:
+        "Bound the loop iteration count (require(i < MAX_ITERS)) or move persistent data to normal storage outside the loop. An unbounded TSTORE loop at 100 gas/key enables ~9.15MB of transient-storage RAM per 30M-gas tx.",
+      guard:
+        "If the loop is attacker-influenced (anyone can extend the iteration count), gate it behind access control or a cap so external callers cannot force large transient-storage allocations.",
+      verify:
+        "Re-run the scan after bounding: a bounded TSTORE loop should report ratio ~6.2 (medium), not the unbounded ~13.8 (high).",
+    });
+  }
+
+  // Pattern 3: Cold access flooding (cache-flooding I/O)
+  if (g.cold_access_count > 100) {
+    patterns.push({
+      pattern: "cold_access_flood",
+      isolate:
+        "Group cold account/storage reads (EXTCODE*/BALANCE) into a dedicated resolver or cache layer rather than scattering them across hot paths.",
+      bound:
+        `Cache repeated cold accesses in memory/storage within the tx — ${g.cold_access_count} cold-access opcodes imply repeated lookups; deduplicating them reduces ~5.8s of validator I/O per 30M-gas tx.`,
+      guard:
+        "Bound the number of unique accounts a single transaction may touch (e.g. a recipients-length cap) so a caller cannot force a cache-flush of the validator's account cache.",
+      verify:
+        "Re-run the scan after caching/bounding: cold_access_count should drop below the flood zone.",
+    });
+  }
+
+  if (patterns.length === 0) return null;
+  const risk_summary =
+    `This contract uses opcode pattern(s) that can make a cheap transaction impose disproportionate CPU/RAM burden on validators (EVM protocol-level gas asymmetry, compute_to_gas_ratio ${g.compute_to_gas_ratio.toFixed(1)}). The patterns below localize each vector so a refactor can contain it without changing the EVM itself.`;
+  const priority = g.dos_validator_delay || g.compute_to_gas_ratio > 12.5 ? "high" : "medium";
+  return { risk_summary, patterns, priority };
+}
+
 function scanRiskScore(
   scenarios: BreachScenario[],
   permitDrain: { risk_level: string },
@@ -2601,6 +2673,8 @@ async function runEvmSentinelScan(tier: "quick" | "deep", source: string): Promi
     bad_randomness: parsed.bad_randomness,
     unprotected_privileged_setters: parsed.unprotected_privileged_setters,
     gas_asymmetry: parsed.gas_asymmetry,
+    // v5.9.0 (Opsi B): full per-pattern localization advice — PAID tier only
+    localization_advice: buildLocalizationAdvice(parsed.gas_asymmetry),
     recommendations: breachSimulation.recommendations,
     engine_latency_ms: Date.now() - startTime,
   };
@@ -3534,6 +3608,32 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
     result = cachedResult;
     cacheHit = true;
   } else {
+    // v5.9.0 (Opsi B): aggregate BS-008 localization advice across all input
+    // files (fitness-full is a PAID tier — full advice allowed). We re-parse
+    // each file with the shared deep parser and merge patterns.
+    const mergedLocPatterns: Array<{ pattern: string; isolate: string; bound: string; guard: string; verify: string; file: string }> = [];
+    let maxLocRatio = 0;
+    let locDosDelay = false;
+    for (const f of inputFiles) {
+      try {
+        const p = parseSolidityContract(f.source);
+        const adv = buildLocalizationAdvice(p.gas_asymmetry);
+        if (adv) {
+          for (const pat of adv.patterns) mergedLocPatterns.push({ ...pat, file: f.path });
+          if (p.gas_asymmetry.compute_to_gas_ratio > maxLocRatio) maxLocRatio = p.gas_asymmetry.compute_to_gas_ratio;
+          if (p.gas_asymmetry.dos_validator_delay) locDosDelay = true;
+        }
+      } catch (_) { /* non-fatal per file */ }
+    }
+    const fitnessLocalization = mergedLocPatterns.length > 0
+      ? {
+          risk_summary:
+            `One or more files use opcode pattern(s) that let a cheap transaction impose disproportionate CPU/RAM burden on validators (EVM protocol-level gas asymmetry, max compute_to_gas_ratio ${maxLocRatio.toFixed(1)}). The patterns below localize each vector so a refactor can contain it without changing the EVM itself.`,
+          priority: locDosDelay || maxLocRatio > 12.5 ? "high" : "medium",
+          patterns: mergedLocPatterns,
+        }
+      : null;
+
     result = {
       schema_version: W3_MODEL.schema_version,
       service: W3_MODEL.service,
@@ -3542,6 +3642,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
       generated_at: new Date().toISOString(),
       input_digest: `sha256:${await sha256Hex(subjectKey)}`,
       gas_rank: rankResult,
+      localization_advice: fitnessLocalization,
       attestation: {
         repo: input.mode === "repo" ? input.repo : null,
         license: repoFacts.license ?? null,
@@ -6533,6 +6634,18 @@ async function dryRunHandler(req: Request): Promise<Response> {
       unprotected_privileged_setters: parsed.unprotected_privileged_setters,
       // Sprint 3 Task 2 (v4.6.0): quantitative gas asymmetry ratio
       gas_asymmetry: parsed.gas_asymmetry,
+      // v5.9.0 (Opsi B): free teaser — detection notice + ONE general hint +
+      // upsell pointer. Full per-pattern localization_advice is paid-only
+      // (scan-deep / fitness-full). Never leak detailed refactor steps here.
+      localization_teaser: parsed.gas_asymmetry.risk_level !== "low"
+        ? {
+            detected: true,
+            risk_level: parsed.gas_asymmetry.risk_level,
+            hint: "This contract uses opcode pattern(s) that let a cheap transaction impose disproportionate CPU/RAM burden on validators (EVM protocol-level gas asymmetry). Localize the pattern: isolate it into a dedicated function, bound its input/iterations, and gate access.",
+            detailed_advice:
+              "Full per-pattern localization advice (isolate / bound / guard / verify refactor steps) is available on EVM Sentinel Deep-Scan ($0.50) and Fitness Full ($2.25).",
+          }
+        : { detected: false },
     },
     digital_twin_v3_matrix: {
       version: "v3.1",
