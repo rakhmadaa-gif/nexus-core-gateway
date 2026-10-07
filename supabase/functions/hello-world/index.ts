@@ -5404,9 +5404,19 @@ function parseSolidityContract(source: string): ParsedContract {
   const unprotectedSetterDetails: string[] = [];
   const contractNameLc = (name ?? "").toLowerCase();
   const ENTROPY_RE = /block\.(difficulty|prevrandao)\b|blockhash\s*\(|block\.number\b|block\.timestamp\b/;
+  // v5.9.2: PRNG context must be evaluated on CODE, not comments. NatSpec
+  // words like "payout" in a liquidation comment (LendingHookV4: "bot payout",
+  // "can't shrink your payout silently") triggered game-context classification
+  // on pure deterministic math. Strip comments before context matching.
+  const stripCommentsForCtx = (b: string): string =>
+    b.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
   // v5.5.1: word boundaries — "withdrawal" contains "draw", "seeds" (farming)
   // contains "seed". Only whole-word PRNG terms count as game context.
-  const PRNG_CONTEXT_RE = /\b(random|winner|reward|prize|jackpot|lottery|roll|raffle|lucky|draw|seed|payout)\b/i;
+  // v5.9.2: comment words no longer count as context (NC17 liquidation-payout
+  // NatSpec FP), so the word list must catch real code identifiers:
+  // plural mappings (winners[]), camelCase compounds (raffleId, pickWinner)
+  // via a suffix allowance on the stem words.
+  const PRNG_CONTEXT_RE = /\b(random|winner|reward|prize|jackpot|lottery|roll|raffle|lucky|draw|seed|payout)\w*/i;
   const FUND_TRANSFER_RE = /\.send\s*\(|\.transfer\s*\(|\.call\{\s*value|\.call\s*\(\s*""|payable\s*\([^)]*\)\s*\.\s*(send|transfer)/;
   // v5.4.2: entropy often lives in PRIVATE helpers reached from public entry
   // points (theRun: fallback -> init -> Participate -> random). Build a
@@ -5417,10 +5427,21 @@ function parseSolidityContract(source: string): ParsedContract {
     const prngBody = f.body
       .replace(/require\s*\([^;]*;/g, "")                                  // deadline/guard checks
       .replace(/\w+(?:\[[^\]]*\])?\s*-\s*block\.timestamp|block\.timestamp\s*-\s*\w+/g, "") // time-delta accrual
+      // v5.9.2: deadline arguments — block.timestamp + N passed to external
+      // calls (POS modifyLiquidities deadline, swap deadlines) are expiry
+      // bookkeeping, never an entropy source.
+      .replace(/block\.timestamp\s*\+\s*\d+/g, "")
+      // v5.9.2: block.number snapshot bookkeeping — `lastX = block.number;`
+      // (same-block lockout, cooldown, snapshot) is not an entropy source.
+      // Real PRNG uses block.number in arithmetic/keccak, not a pure assignment.
+      .replace(/\w+(?:\[[^\]]*\])?\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\s*=\s*[a-z0-9_]*\s*\(?block\.number\)?\s*;/g, "")
+      // v5.9.2: lockout/cooldown comparisons (==/</>= vs block.number) are
+      // bookkeeping too — LendingHookV4 BlockedByLiquidation pattern.
+      .replace(/block\.number\s*(?:==|!=|<=|>=|<|>)\s*\w+|\w+\s*(?:==|!=|<=|>=|<|>)\s*block\.number/g, "")
       // v5.5.1: bookkeeping strip covers cast forms — user.start = uint32(block.timestamp);
       .replace(/\w+(?:\[[^\]]*\])?\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\s*=\s*[a-z0-9_]*\s*\(?block\.timestamp\)?\s*;/g, "");
     const hasEntropy = ENTROPY_RE.test(prngBody);
-    const prngContext = PRNG_CONTEXT_RE.test(f.name) || PRNG_CONTEXT_RE.test(f.body);
+    const prngContext = PRNG_CONTEXT_RE.test(f.name) || PRNG_CONTEXT_RE.test(stripCommentsForCtx(f.body));
     if (hasEntropy && prngContext) entropyHelpers.add(f.name);
   }
   const callGraph = new Map<string, Set<string>>();
@@ -5873,7 +5894,12 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   }
 
   // Scenario 2: Transfer violation
-  const transferFuncs = parsed.functions.filter(f => /\b(transfer|transferfrom)\b/i.test(f.name));
+  // v5.9.2: internal transfer helpers (Currency.transfer, SafeTransferLib) are
+  // library plumbing, not attacker-callable surfaces. Only public/external
+  // transfer/transferFrom count for BS-002 (ReflectionV4Hook FP class).
+  const transferFuncs = parsed.functions.filter(f =>
+    /\b(transfer|transferfrom)\b/i.test(f.name) &&
+    (f.visibility === "public" || f.visibility === "external"));
   const transferHasRequire = transferFuncs.some(f => f.has_require);
   // v5.9.1 FP fix (OrbitalHook soulbound class): a transfer/transferFrom whose
   // body unconditionally reverts (pure revert stub, e.g. soulbound ERC-6909
@@ -5930,10 +5956,28 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   const withdrawFuncs = parsed.functions.filter(f => /\b(withdraw|withdrawal|claim)\b/i.test(f.name));
   const withdrawHasRequire = withdrawFuncs.some(f => f.has_require);
   const withdrawHasAccessControl = withdrawFuncs.some(f => f.has_access_control);
+  // v5.9.2: payout-to-owner pattern — a claim/withdraw whose payout recipient
+  // is the ASSET OWNER (ownerOf/ownerOf(tokenId), not msg.sender) cannot drain
+  // anyone else's funds even when callable by anyone. QuasarHook FP class:
+  // claim(tokenId) pays _ownerOf(tokenId); a third party calling it merely
+  // triggers the owner's own payout (debt updated atomically).
+  // v5.9.2: resolve one-hop private helpers (QuasarHook claim -> _claimOne) —
+  // the payout-to-owner pattern often lives in the helper body.
+  const paysOwnerInBody = (body: string): boolean =>
+    /\bownerOf\s*\(|\b_ownerOf\s*\(/.test(body) &&
+    !/\bmsg\.sender\b\s*(?:,|\))/.test((body.match(/(?:call\{value[^\n]*|transfer\s*\()[^\n]*/gi) ?? []).join(" "));
+  const withdrawPaysAssetOwner = withdrawFuncs.some(f => {
+    if (paysOwnerInBody(f.body ?? "")) return true;
+    for (const m of (f.body ?? "").matchAll(/\b(_?\w+)\s*\(/g)) {
+      const helper = parsed.functions.find(x => x.name === m[1] && (x.visibility === "private" || x.visibility === "internal"));
+      if (helper && paysOwnerInBody(helper.body ?? "")) return true;
+    }
+    return false;
+  });
   // v4.7.0: on an ERC-4626 vault, users withdrawing their OWN shares is by design.
   // Async-redemption vaults route payouts through access-controlled operator paths
   // (fulfillRedeem). If any guarded operator path exists, the pattern is protected.
-  const withdrawProtected = withdrawHasRequire || withdrawHasAccessControl ||
+  const withdrawProtected = withdrawHasRequire || withdrawHasAccessControl || withdrawPaysAssetOwner ||
     (parsed.is_erc4626_vault && parsed.functions.some(f => f.has_access_control));
   scenarios.push({
     scenario_id: "BS-003",
