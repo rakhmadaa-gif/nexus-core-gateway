@@ -5565,7 +5565,37 @@ function parseSolidityContract(source: string): ParsedContract {
   const hasModexp = modexpCalls > 0;
   // TSTORE loop detection: tstore inside a for/while loop with large iteration count
   const tstoreCount = (source.match(/\btstore\b/gi) || []).length;
-  const hasTstoreLoop = tstoreCount > 0 && /\b(for|while)\s*\([^)]*(\d{3,}|i\s*<\s*\d{3,})/i.test(source);
+  // v5.9.1 FP fix (OrbitalHook class): tstore must be lexically INSIDE a
+  // brace-matched loop body. File-level co-occurrence was a false positive:
+  // tstore in a nonReentrant modifier + an unrelated bounded loop in the same
+  // file flagged as "tstore loop". Also, the old \d{3,} bound filter matched
+  // "256" inside `uint256`, so nearly every Solidity loop passed it.
+  const hasTstoreInLoopBody = (src: string): boolean => {
+    const loopRe = /\b(for|while)\s*\(/g;
+    let lm: RegExpExecArray | null;
+    while ((lm = loopRe.exec(src)) !== null) {
+      let j = lm.index, paren = 0;
+      for (; j < src.length; j++) {
+        if (src[j] === "(") paren++;
+        else if (src[j] === ")") { paren--; if (paren === 0) { j++; break; } }
+      }
+      for (; j < src.length; j++) {
+        const c = src[j];
+        if (c === "{") break;
+        if (c === ";") break;
+      }
+      if (j >= src.length || src[j] !== "{") continue;
+      let depth = 1, k = j + 1;
+      while (k < src.length && depth > 0) {
+        if (src[k] === "{") depth++;
+        else if (src[k] === "}") depth--;
+        k++;
+      }
+      if (/\btstore\b/i.test(src.slice(j + 1, k - 1))) return true;
+    }
+    return false;
+  };
+  const hasTstoreLoop = tstoreCount > 0 && hasTstoreInLoopBody(source);
   // Cold access patterns: extcodecopy, extcodesize, extcodehash, balance on dynamic addresses
   const coldAccessMatches = source.match(/\b(extcodecopy|extcodesize|extcodehash|\.balance\b|balanceOf\b)/gi) || [];
   const coldAccessCount = coldAccessMatches.length;
@@ -5845,6 +5875,14 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   // Scenario 2: Transfer violation
   const transferFuncs = parsed.functions.filter(f => /\b(transfer|transferfrom)\b/i.test(f.name));
   const transferHasRequire = transferFuncs.some(f => f.has_require);
+  // v5.9.1 FP fix (OrbitalHook soulbound class): a transfer/transferFrom whose
+  // body unconditionally reverts (pure revert stub, e.g. soulbound ERC-6909
+  // shares) cannot bypass balance checks — it can never move anything. This is
+  // the strongest possible transfer restriction, not a missing guard.
+  const transferIsRevertStub = transferFuncs.length > 0 && transferFuncs.every(f =>
+    /(?:^|\n)\s*(?:assembly[^\n]*\n)?\s*revert\b/i.test(f.body ?? "") &&
+    !(f.body ?? "").replace(/revert\s*(?:\w+\s*)?\([^)]*\)\s*;?|revert\s+\w+\s*;?|revert\s*;/gi, "").trim()
+  );
   // v5.2.0: Inheritance awareness — an override that delegates to super.transfer/super.transferFrom
   // inherits the parent's balance/allowance checks (OZ ERC20 always enforces them). Flagging such
   // overrides as "no require" produced the largest recurring FP class (Enzyme x131, Robinhood Stock).
@@ -5872,7 +5910,7 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     scenario_id: "BS-002",
     scenario_name: "Transfer Violation",
     description: "Can transfers bypass balance/allowance checks?",
-    risk_level: transferFuncs.length === 0 ? "low" : (transferHasRequire || transferHasSuperDelegation) ? "low" : "high",
+    risk_level: transferFuncs.length === 0 || transferIsRevertStub ? "low" : (transferHasRequire || transferHasSuperDelegation) ? "low" : "high",
     affected_functions: transferFuncs.map(f => f.name),
     mitigation: transferFuncs.length === 0
       ? "No transfer function detected — not applicable."
@@ -5881,7 +5919,7 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
           ? "Transfer override delegates to super (inherited ERC20 balance/allowance checks preserved)."
           : "Transfer function has require() guards — verify balance/allowance checks."
         : "HIGH: Transfer function lacks require() guards. Add balance and allowance validation.",
-    detected: transferFuncs.length > 0 && !transferHasRequire && !transferHasSuperDelegation,
+    detected: transferFuncs.length > 0 && !transferIsRevertStub && !transferHasRequire && !transferHasSuperDelegation,
   });
   if (transferFuncs.length > 0 && !transferHasRequire && !transferHasSuperDelegation) {
     recommendations.push("Add require() for balance and allowance checks in transfer functions.");
