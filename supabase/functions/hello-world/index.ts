@@ -78,7 +78,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.10.0-frontier",
+  engine_version: "v5.10.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -421,7 +421,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.10.0-frontier",
+  version: "5.10.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -570,7 +570,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.10.0-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.10.1-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4837,9 +4837,42 @@ function m2mSuccess(
       data,
       Deno.env.get("POLYGON_PRIVATE_KEY") || "",
     );
-    if (att) envelope.attestation = att;
+    if (att) {
+      envelope.attestation = att;
+      logAttestationForAnchor(att, serviceType);
+    }
   }
   return jsonResponse(envelope, status);
+}
+
+// v5.10.0 M2: persist signed attestations so a daily job can Merkle-anchor
+// them on-chain (NexusAttestationAnchor on Polygon). Fire-and-forget: the
+// insert must never add latency to or break a paid response.
+function logAttestationForAnchor(
+  att: Record<string, unknown>,
+  serviceType: string,
+): void {
+  try {
+    const p = (async () => {
+      const msg = att.message as Record<string, unknown>;
+      const supabase = getSupabaseClient();
+      await supabase.from("attestation_log").insert({
+        day: new Date(Number(msg.issuedAt) * 1000).toISOString().slice(0, 10),
+        service_type: serviceType,
+        struct_hash: att.struct_hash,
+        message: msg,
+        signature: att.signature,
+        signer: att.signer,
+      });
+    })();
+    p.catch(() => {});
+    const er = (globalThis as Record<string, unknown>).EdgeRuntime as
+      | { waitUntil?: (promise: Promise<unknown>) => void }
+      | undefined;
+    if (er && typeof er.waitUntil === "function") er.waitUntil(p);
+  } catch (_) {
+    // non-fatal: anchoring is an additive trust layer, never a blocker
+  }
 }
 
 function m2mError(

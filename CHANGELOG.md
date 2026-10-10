@@ -1,5 +1,30 @@
 # Nexus Gateway Changelog
 
+## v5.10.1-frontier — 2026-10-10
+
+### M2: On-Chain Merkle Anchoring for attestations
+- New contract `NexusAttestationAnchor` deployed on Polygon PoS:
+  `0x3AC325c3FA803192A3E20e726b78F71654E2A02d` (block 95263041, owner = ERC-8004
+  #636 treasury). One `anchor(bytes32 root, uint64 day, uint32 count)` per batch;
+  root => timestamp is immutable once set.
+- Every signed attestation now also returns `struct_hash` (the exact EIP-712
+  digest = Merkle leaf) and is persisted to `attestation_log` (PostgREST-readable,
+  RLS insert+select) via fire-and-forget `EdgeRuntime.waitUntil` — zero added
+  latency, non-fatal.
+- `scripts/anchor-daily.mjs`: builds a canonical (sorted, OZ-style) Merkle tree
+  per UTC day of unanchored rows, anchors on-chain, writes back
+  merkle_root/proof/anchor_tx/anchor_block, records PoA. Runs daily 03:30 UTC via
+  cron; ~0.015 POL per anchor.
+- `scripts/verify-attestation.mjs`: full public trust-chain verifier —
+  (1) EIP-712 recover == signer, (2) signer == ownerOf(636) on IdentityRegistry,
+  (3) recomputed struct_hash included in anchored Merkle root, (4) anchoredAt
+  timestamp. Verdicts: VERIFIED / PENDING_ANCHOR / FAILED.
+- First live anchor: root 0x60626bf2...d559, tx 0x2ea0b4ee...8965f, block 95263172
+  (2 attestations, day 2026-10-10). Full chain verified end-to-end.
+- Tests: 13/13 Merkle (incl. 3 negative controls), 5/5 signer struct_hash,
+  6/6 forge contract tests, live regression (manifest 5.10.1, attestation OK,
+  paywall 402, dry-run green).
+
 ## v5.10.0-frontier — 2026-10-10
 
 **ERC-8004 Signed Attestations (M1).** Every paid fitness-suite response (`/x402/fitness`, `/x402/fitness/lite`, `/x402/fitness/full`, `/x402/fitness/peer-check`) now carries an `attestation` block: an EIP-712 signature (domain `Nexus Fitness Attestation` v1, chainId 137) over `{serviceType, subjectHash, resultHash, score, issuedAt, agentId, registry}`, signed by the wallet owning ERC-8004 Agent #636. Anyone can verify origin+integrity on-chain: `verifyTypedData` must recover the signer, and signer must equal `ownerOf(636)` on IdentityRegistry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`. New module `attestation_signer.ts`; synchronous signing inside `m2mSuccess` (zero call-site refactors, non-fatal when key absent). Turns attestation track record into a publicly auditable asset — the "credit bureau" moat. legal_weight: 0. Validation: 11/11 unit tests (roundtrip + 3 negative controls + determinism + guard) + live E2E below.

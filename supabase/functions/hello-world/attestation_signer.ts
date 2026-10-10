@@ -137,6 +137,7 @@ export function signFitnessAttestation(
       domain: ATTESTATION_DOMAIN,
       types: ATTESTATION_TYPES,
       message,
+      struct_hash: digest,
       signature,
       signer,
       agent_id: ERC8004_AGENT_ID,

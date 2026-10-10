@@ -5,3 +5,4 @@ __pycache__/
 package-lock.json
 dist/
 *.egg-info/
+scripts/node_modules/
