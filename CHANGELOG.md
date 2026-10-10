@@ -1,5 +1,31 @@
 # Nexus Gateway Changelog
 
+## v5.11.0-frontier — 2026-10-10
+
+### M3: Public Attestation Audit endpoints (zero-trust)
+- `GET /attestations` (free, no auth) — public list of every ERC-8004 signed
+  fitness attestation ever issued, with anchor status
+  (`anchored` / `pending_anchor`). Filters: `day=YYYY-MM-DD`, `service_type`,
+  `subject=0x<subjectHash>`, `anchored=0|1`, `limit<=100`.
+  `attestation_log` stores no client identifiers — full transparency by design.
+- `GET /attestations/proof?hash=0x<struct_hash>` (free, no auth) — full
+  zero-trust proof package: EIP-712 domain/types/message/signature/signer
+  (verify `signer == ownerOf(636)` on IdentityRegistry
+  `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`) + Merkle proof + anchor
+  tx/block/`anchored_at` + 5-step verification instructions + standalone
+  verifier script link (`scripts/verify-attestation.mjs`). `verdict_hint` is a
+  DB convenience; true verification is client-side recomputation.
+- New `attestation_log.anchored_at` column (block timestamp of the anchor);
+  first batch backfilled (2026-10-10T02:40:08Z). `scripts/anchor-daily.mjs`
+  now writes `anchored_at` on every anchor.
+- Docs: OpenAPI 3.1 gains both paths (info.version 5.11.0, x-endpoints-free
+  updated); llms.txt gains "Signed attestations & public audit" section;
+  manifest 5.11.0-frontier lists both endpoints.
+- Live validation: public list 200 no-auth (4 rows); proof of anchored
+  attestation → status anchored + proof + anchored_at + signer
+  0x8096...E2d5; NC malformed hash → 400 INVALID_HASH; NC unknown hash →
+  404 ATTESTATION_NOT_FOUND; day/anchored filters verified.
+
 ## v5.10.1-frontier — 2026-10-10
 
 ### M2: On-Chain Merkle Anchoring for attestations

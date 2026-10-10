@@ -83,11 +83,13 @@ async function main() {
     }
     const tx = await anchor.anchor(root, dayNum, dayRows.length);
     const rc = await waitReceipt(provider, tx.hash);
+    const blk = await provider.getBlock(rc.blockNumber);
+    const anchoredAt = new Date(Number(blk.timestamp) * 1000).toISOString();
     // write back per-row proof + anchor metadata (single UPDATE per row)
     for (const r of dayRows) {
       const proof = proofs[r.struct_hash.toLowerCase()] || [];
       await runSql(
-        `UPDATE public.attestation_log SET merkle_root='${esc(root)}', merkle_proof='${JSON.stringify(proof)}'::jsonb, anchor_tx='${esc(tx.hash)}', anchor_block=${rc.blockNumber} WHERE id='${esc(r.id)}';`,
+        `UPDATE public.attestation_log SET merkle_root='${esc(root)}', merkle_proof='${JSON.stringify(proof)}'::jsonb, anchor_tx='${esc(tx.hash)}', anchor_block=${rc.blockNumber}, anchored_at='${esc(anchoredAt)}' WHERE id='${esc(r.id)}';`,
       );
     }
     summary.push({ day, count: dayRows.length, root, tx: tx.hash, block: rc.blockNumber });

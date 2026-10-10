@@ -38,6 +38,10 @@ import {
 } from "./x402_settlement.ts";
 import {
   ATTESTED_SERVICE_TYPES,
+  ATTESTATION_DOMAIN,
+  ATTESTATION_TYPES,
+  ERC8004_AGENT_ID,
+  ERC8004_REGISTRY,
   normalizePrivateKey,
   signFitnessAttestation,
 } from "./attestation_signer.ts";
@@ -78,7 +82,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.10.1-frontier",
+  engine_version: "v5.11.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -421,7 +425,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.10.1-frontier",
+  version: "5.11.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -534,6 +538,16 @@ const NODE_MANIFEST = {
       billing: "FREE",
       auth: "none",
     },
+    "GET /attestations": {
+      description: "Public Attestation Audit (v5.11.0) — list every ERC-8004 EIP-712 signed fitness attestation ever issued, with Merkle anchor status (anchored/pending). Filters: day=YYYY-MM-DD, service_type, subject=0x<subjectHash>, anchored=0|1, limit<=100. No client identifiers are stored — full transparency by design. legal_weight: 0.",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /attestations/proof": {
+      description: "Public Attestation Proof (v5.11.0) — ?hash=0x<struct_hash> returns the full zero-trust package: EIP-712 domain/types/message/signature/signer (verify against ownerOf(636) on IdentityRegistry 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) + Merkle proof + anchor tx/block/timestamp on NexusAttestationAnchor 0x3AC325c3FA803192A3E20e726b78F71654E2A02d (Polygon). Includes verification steps + standalone verifier script link. legal_weight: 0.",
+      billing: "FREE",
+      auth: "none",
+    },
   },
   pricing_model: {
     currency_unit: "USDC",
@@ -570,7 +584,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.10.1-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.11.0-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4091,7 +4105,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.1.0",
+    version: "5.11.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4099,6 +4113,8 @@ const OPENAPI_SPEC = {
       "GET /metrics",
       "POST /gateway/dry-run",
       "GET /pricing.manifest.json",
+      "GET /attestations",
+      "GET /attestations/proof",
     ],
   },
   servers: [{ url: BASE_URL_DOCS }],
@@ -4321,6 +4337,43 @@ const OPENAPI_SPEC = {
           "422": {
             description: "Fatal pre-billing failure (no code at address, explorer unavailable, no rankable functions) — not charged.",
           },
+        },
+      },
+    },
+    "/attestations": {
+      get: {
+        summary: "Public Attestation Audit — list every ERC-8004 signed fitness attestation",
+        description:
+          "Free, no-auth public audit surface. Every paid fitness response carries an ERC-8004 EIP-712 signed attestation whose struct hash is Merkle-anchored daily on Polygon (NexusAttestationAnchor 0x3AC325c3FA803192A3E20e726b78F71654E2A02d). This endpoint lists all attestations with anchor status. legal_weight: 0.",
+        "x-pricing": "FREE",
+        "x-keywords": ["attestation", "erc8004", "eip712", "merkle-anchor", "public-audit"],
+        parameters: [
+          { name: "day", in: "query", schema: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, description: "UTC day filter YYYY-MM-DD" },
+          { name: "service_type", in: "query", schema: { type: "string" }, description: "e.g. fitness_attestation" },
+          { name: "subject", in: "query", schema: { type: "string", pattern: "^0x[0-9a-fA-F]{64}$" }, description: "subjectHash filter" },
+          { name: "anchored", in: "query", schema: { type: "string", enum: ["0", "1"] }, description: "1 = anchored only, 0 = pending only" },
+          { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
+        ],
+        responses: {
+          "200": { description: "{ total, returned, attestations[], anchor_contract, verification, legal_weight }" },
+          "400": { description: "Invalid query parameter (INVALID_DAY / INVALID_SUBJECT)." },
+        },
+      },
+    },
+    "/attestations/proof": {
+      get: {
+        summary: "Public Attestation Proof — zero-trust proof package for one attestation",
+        description:
+          "Free, no-auth. ?hash=0x<struct_hash> returns the EIP-712 domain/types/message/signature/signer (verify signer == ownerOf(636) on IdentityRegistry 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432), Merkle proof, anchor tx/block/timestamp, verification steps, and a standalone verifier script link. Status pending_anchor means the signature is authentic but awaits the next daily anchor. legal_weight: 0.",
+        "x-pricing": "FREE",
+        "x-keywords": ["attestation-proof", "merkle-proof", "zero-trust-verification", "erc8004"],
+        parameters: [
+          { name: "hash", in: "query", required: true, schema: { type: "string", pattern: "^0x[0-9a-fA-F]{64}$" }, description: "attestation struct_hash" },
+        ],
+        responses: {
+          "200": { description: "{ attestation, inclusion, verification, legal_weight }" },
+          "400": { description: "Malformed hash (INVALID_HASH)." },
+          "404": { description: "No attestation with this struct_hash (ATTESTATION_NOT_FOUND)." },
         },
       },
     },
@@ -4656,6 +4709,23 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   opinion). Input: {"peer_url":"https://..."} or {"peer_urls":[...]}
   (max 3). Cached 10 minutes.
 
+## Signed attestations & public audit (free, zero-trust)
+
+Every paid fitness response carries an ERC-8004 EIP-712 signed
+attestation (domain "Nexus Fitness Attestation", chainId 137, agent
+tokenId 636 on IdentityRegistry
+0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 — signer verifiable as
+ownerOf(636) on-chain). Each attestation's struct hash is Merkle-anchored
+daily to NexusAttestationAnchor
+0x3AC325c3FA803192A3E20e726b78F71654E2A02d (Polygon) for an immutable
+"existed no later than" timestamp.
+- GET /attestations — public list of every attestation ever issued.
+  Filters: day=YYYY-MM-DD, service_type, subject=0x<subjectHash>,
+  anchored=0|1, limit<=100. Free, no auth.
+- GET /attestations/proof?hash=0x<struct_hash> — full zero-trust proof
+  package (EIP-712 block + Merkle proof + anchor tx/block/timestamp +
+  verification steps + standalone verifier script link). Free, no auth.
+
 ## Other endpoints (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
 - POST /v1/code-modules — EVM Sentinel Quick Scan. Generate an audited
@@ -4872,6 +4942,145 @@ function logAttestationForAnchor(
     if (er && typeof er.waitUntil === "function") er.waitUntil(p);
   } catch (_) {
     // non-fatal: anchoring is an additive trust layer, never a blocker
+  }
+}
+
+// v5.11.0 M3: public attestation audit handlers.
+const ANCHOR_CONTRACT_ADDRESS = "0x3AC325c3FA803192A3E20e726b78F71654E2A02d";
+const ATTESTATION_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+async function handleAttestationsList(url: URL): Promise<Response> {
+  try {
+    const limit = Math.min(
+      Math.max(parseInt(url.searchParams.get("limit") || "25", 10) || 25, 1),
+      100,
+    );
+    const day = url.searchParams.get("day");
+    const serviceType = url.searchParams.get("service_type");
+    const subject = url.searchParams.get("subject");
+    const anchored = url.searchParams.get("anchored");
+    if (day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return jsonResponse({
+        error_code: "INVALID_DAY",
+        message: "Query param 'day' must be YYYY-MM-DD (UTC).",
+      }, 400);
+    }
+    if (subject && !ATTESTATION_HASH_RE.test(subject)) {
+      return jsonResponse({
+        error_code: "INVALID_SUBJECT",
+        message: "Query param 'subject' must be 0x + 64 hex chars.",
+      }, 400);
+    }
+    const supabase = getSupabaseClient();
+    let q = supabase
+      .from("attestation_log")
+      .select(
+        "day,service_type,struct_hash,message,signature,signer,merkle_root,anchor_tx,anchor_block,anchored_at,created_at",
+        { count: "exact" },
+      )
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (day) q = q.eq("day", day);
+    if (serviceType) q = q.eq("service_type", serviceType);
+    if (subject) q = q.eq("message->>subjectHash", subject.toLowerCase());
+    if (anchored === "1") q = q.not("merkle_root", "is", null);
+    if (anchored === "0") q = q.is("merkle_root", null);
+    const { data, count, error } = await q;
+    if (error) throw error;
+    return jsonResponse({
+      total: count ?? 0,
+      returned: (data || []).length,
+      attestations: (data || []).map((r: Record<string, unknown>) => ({
+        ...r,
+        status: r.merkle_root ? "anchored" : "pending_anchor",
+      })),
+      proof_endpoint: `${BASE_URL_DOCS}/attestations/proof?hash=<struct_hash>`,
+      anchor_contract: ANCHOR_CONTRACT_ADDRESS,
+      chain: "eip155:137",
+      verification:
+        "Every attestation is an EIP-712 signature by ownerOf(636) on the ERC-8004 IdentityRegistry (Polygon). Fetch proof_endpoint for the full zero-trust package.",
+      legal_weight: 0,
+    });
+  } catch (e) {
+    return jsonResponse({
+      error_code: "ATTESTATIONS_QUERY_FAILED",
+      message: String(e),
+    }, 500);
+  }
+}
+
+async function handleAttestationProof(url: URL): Promise<Response> {
+  const hash = (url.searchParams.get("hash") || "").toLowerCase();
+  if (!ATTESTATION_HASH_RE.test(hash)) {
+    return jsonResponse({
+      error_code: "INVALID_HASH",
+      message:
+        "Query param 'hash' must be 0x + 64 hex chars (the attestation struct_hash).",
+    }, 400);
+  }
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("attestation_log")
+      .select("*")
+      .eq("struct_hash", hash)
+      .limit(1);
+    if (error) throw error;
+    const row = data?.[0];
+    if (!row) {
+      return jsonResponse({
+        error_code: "ATTESTATION_NOT_FOUND",
+        message:
+          "No attestation with this struct_hash. Browse /attestations for the public list.",
+      }, 404);
+    }
+    const anchored = !!row.merkle_root;
+    return jsonResponse({
+      attestation: {
+        scheme: "eip712",
+        domain: ATTESTATION_DOMAIN,
+        types: ATTESTATION_TYPES,
+        message: row.message,
+        struct_hash: row.struct_hash,
+        signature: row.signature,
+        signer: row.signer,
+        agent_id: ERC8004_AGENT_ID,
+        registry: ERC8004_REGISTRY,
+      },
+      inclusion: {
+        status: anchored ? "anchored" : "pending_anchor",
+        day: row.day,
+        merkle_root: row.merkle_root,
+        merkle_proof: row.merkle_proof,
+        anchor_tx: row.anchor_tx,
+        anchor_block: row.anchor_block,
+        anchored_at: row.anchored_at,
+        anchor_contract: ANCHOR_CONTRACT_ADDRESS,
+        chain: "eip155:137",
+      },
+      verification: {
+        verdict_hint: anchored
+          ? "VERIFIED_ELIGIBLE — recompute to confirm (zero-trust)"
+          : "PENDING_ANCHOR — signature authentic, awaiting next daily anchor",
+        steps: [
+          "1. recovered = verifyTypedData(domain, types, message, signature); require(recovered == signer)",
+          "2. require(signer == ownerOf(636) on IdentityRegistry 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) — on-chain read, Polygon",
+          "3. leaf = TypedDataEncoder.hash(domain, types, message); require(leaf == struct_hash)",
+          "4. root = fold hashPair(leaf, merkle_proof) with lexicographically sorted pairs; require(root == merkle_root)",
+          "5. require(anchoredAt(merkle_root) != 0) on anchor contract — on-chain read; that timestamp is the immutable 'existed no later than' bound",
+        ],
+        verifier_script:
+          "https://github.com/rakhmadaa-gif/nexus-core-gateway/blob/main/scripts/verify-attestation.mjs",
+        note:
+          "verdict_hint is a convenience computed from our database; true verification is zero-trust — recompute steps 1-5 yourself.",
+      },
+      legal_weight: 0,
+    });
+  } catch (e) {
+    return jsonResponse({
+      error_code: "ATTESTATION_PROOF_FAILED",
+      message: String(e),
+    }, 500);
   }
 }
 
@@ -6933,6 +7142,22 @@ async function handler(req: Request): Promise<Response> {
   const docsRoute = "/" + docsSegments.join("/");
   if (req.method === "GET" && AGENT_DOCS_ROUTES.has(docsRoute)) {
     return serveAgentDocs(docsRoute);
+  }
+
+  // 2g2. Public Attestation Audit Routes (v5.11.0 M3)
+  // Zero-trust public audit surface for ERC-8004 signed attestations:
+  //   GET /attestations            — public list (filters: day, service_type,
+  //                                  subject, anchored, limit<=100)
+  //   GET /attestations/proof?hash — full zero-trust proof package for one
+  //                                  attestation (EIP-712 block + Merkle
+  //                                  proof + anchor data + verification steps)
+  // Free, no billing, no x-client-id. The attestation_log table contains no
+  // client identifiers — publishing it in full is the design goal.
+  if (req.method === "GET" && docsRoute === "/attestations") {
+    return await handleAttestationsList(url);
+  }
+  if (req.method === "GET" && docsRoute === "/attestations/proof") {
+    return await handleAttestationProof(url);
   }
 
   // 2h. EVM Sentinel M2M Scan Routes (v5.0.0)
