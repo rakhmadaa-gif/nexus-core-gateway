@@ -36,6 +36,11 @@ import {
   X402_CONFIG, verifyIncomingPayment, settleTransferWithAuthorization,
   buildPaymentResponseHeader,
 } from "./x402_settlement.ts";
+import {
+  ATTESTED_SERVICE_TYPES,
+  normalizePrivateKey,
+  signFitnessAttestation,
+} from "./attestation_signer.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -73,7 +78,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.9.0-frontier",
+  engine_version: "v5.10.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -416,7 +421,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.9.0-frontier",
+  version: "5.10.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -565,7 +570,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.9.0-frontier (x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.10.0-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2286,7 +2291,7 @@ async function genPullPayment(
 
   // 7. Call Gateway.sol's pullPayment() on Polygon
   //    (IRON RULE #1: Gateway.sol IS the spender, not Treasury wallet)
-  const privateKey = Deno.env.get("POLYGON_PRIVATE_KEY") || "";
+  const privateKey = normalizePrivateKey(Deno.env.get("POLYGON_PRIVATE_KEY") || "");
   if (!privateKey) {
     trail.push(auditStep("wallet_check", "failed", "POLYGON_PRIVATE_KEY not set"));
     return envelope("pull_payment", "failed",
@@ -4694,6 +4699,16 @@ fitness lite $1.25 USDC,
 structured_data $0.20 USDC, code_modules $1.20 USDC,
 legal_code $300/$450/$800 USDC by tier.
 
+Signed attestations (v5.10.0): every paid fitness-suite response
+(fitness, fitness/lite, fitness/full, fitness/peer-check) carries an
+"attestation" block — an EIP-712 signature (domain "Nexus Fitness
+Attestation" v1, chainId 137) over {serviceType, subjectHash, resultHash,
+score, issuedAt, agentId, registry}. Verify without trusting us:
+verifyTypedData(domain, types, message, signature) must recover
+attestation.signer, and signer must equal ownerOf(636) on ERC-8004
+IdentityRegistry 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 (Polygon).
+legal_weight: 0 — origin/integrity proof, not legal meaning.
+
 ## Response envelope
 
 Scan responses carry the machine fields at the top level of data:
@@ -4807,14 +4822,24 @@ function m2mSuccess(
   startTime: number,
   status = 200,
 ): Response {
-  return jsonResponse({
+  const envelope: Record<string, unknown> = {
     status: "success",
     payload_id: payloadId,
     timestamp: new Date().toISOString(),
     service_type: serviceType,
     data,
     metadata: buildM2MMetadata(credits, startTime),
-  }, status);
+  };
+  // v5.10.0: ERC-8004 signed attestation on the fitness suite (non-fatal).
+  if (ATTESTED_SERVICE_TYPES.has(serviceType)) {
+    const att = signFitnessAttestation(
+      serviceType,
+      data,
+      Deno.env.get("POLYGON_PRIVATE_KEY") || "",
+    );
+    if (att) envelope.attestation = att;
+  }
+  return jsonResponse(envelope, status);
 }
 
 function m2mError(
@@ -7207,7 +7232,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       // Idempotent replay: nonce already settled & credited — do not charge twice.
       txHash = alreadySettled.pull_tx_hash;
     } else {
-      const privateKey = Deno.env.get("POLYGON_PRIVATE_KEY") || "";
+      const privateKey = normalizePrivateKey(Deno.env.get("POLYGON_PRIVATE_KEY") || "");
       if (!privateKey) {
         await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
         TELEMETRY.error_count++;

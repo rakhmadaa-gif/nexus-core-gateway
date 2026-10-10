@@ -1,5 +1,10 @@
 # Nexus Gateway Changelog
 
+## v5.10.0-frontier — 2026-10-10
+
+**ERC-8004 Signed Attestations (M1).** Every paid fitness-suite response (`/x402/fitness`, `/x402/fitness/lite`, `/x402/fitness/full`, `/x402/fitness/peer-check`) now carries an `attestation` block: an EIP-712 signature (domain `Nexus Fitness Attestation` v1, chainId 137) over `{serviceType, subjectHash, resultHash, score, issuedAt, agentId, registry}`, signed by the wallet owning ERC-8004 Agent #636. Anyone can verify origin+integrity on-chain: `verifyTypedData` must recover the signer, and signer must equal `ownerOf(636)` on IdentityRegistry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`. New module `attestation_signer.ts`; synchronous signing inside `m2mSuccess` (zero call-site refactors, non-fatal when key absent). Turns attestation track record into a publicly auditable asset — the "credit bureau" moat. legal_weight: 0. Validation: 11/11 unit tests (roundtrip + 3 negative controls + determinism + guard) + live E2E below.
+
+
 ## v5.7.2-frontier (2026-10-04) — Real CVSS Vector Parsing for Exploitability
 
 W3.1 roadmap item closed: the exploitability formula no longer uses the neutral cvss=50
