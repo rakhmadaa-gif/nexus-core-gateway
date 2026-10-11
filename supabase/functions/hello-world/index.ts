@@ -46,6 +46,11 @@ import {
   signFitnessAttestation,
 } from "./attestation_signer.ts";
 
+import {
+  MODEXP_EIP7883_REPRICE_FACTOR,
+  resolvePricingRegime,
+} from "./modexp_gas.ts";
+
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
 // ----------------------------------------------------------------------------
@@ -82,7 +87,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.11.0-frontier",
+  engine_version: "v5.12.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -425,7 +430,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.11.0-frontier",
+  version: "5.12.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -584,7 +589,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.11.0-frontier (ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.12.0-frontier (BS-008 v2 fork-aware MODEXP pricing (EIP-2565 vs EIP-7883, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2637,11 +2642,12 @@ function scanAction(riskScore: number, overallRisk: string, replayRisk: string):
   return "ALLOW";
 }
 
-async function runEvmSentinelScan(tier: "quick" | "deep", source: string): Promise<Record<string, unknown>> {
+// v5.12.0: optional chain hint — BS-008 MODEXP ratio is fork-aware (EIP-2565 vs EIP-7883).
+async function runEvmSentinelScan(tier: "quick" | "deep", source: string, chain?: string | null): Promise<Record<string, unknown>> {
   const startTime = Date.now();
   const validation = validateSoliditySyntax(source);
   const hasErrors = validation.issues.some(i => i.severity === "error");
-  const parsed = parseSolidityContract(source);
+  const parsed = parseSolidityContract(source, chain);
   const breachSimulation = simulateBreachScenarios(parsed);
   const permitDrain = detectPermit2Drain(parsed);
   const arbitrage = detectArbitrageManipulation(parsed);
@@ -2706,7 +2712,7 @@ async function handleEvmSentinelScan(
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
   }
-  let body: { solidity_code?: string; source_code?: string };
+  let body: { solidity_code?: string; source_code?: string; chain?: string };
   try {
     body = await req.json();
   } catch {
@@ -2722,7 +2728,9 @@ async function handleEvmSentinelScan(
 
   const startTime = Date.now();
   const codeHash = await sha256Hex(source);
-  const cacheKey = `${codeHash}:${tier}`;
+  // v5.12.0: chain hint changes BS-008 MODEXP pricing regime → cache key must include it.
+  const scanChain = typeof body.chain === "string" ? body.chain : null;
+  const cacheKey = `${codeHash}:${tier}:${resolvePricingRegime(scanChain).regime}`;
   let cached: Record<string, unknown> | null = null;
   let cacheHit = false;
 
@@ -2744,7 +2752,7 @@ async function handleEvmSentinelScan(
   } catch (_) { /* cache miss on error — fall through to engine */ }
 
   if (!cached) {
-    cached = await runEvmSentinelScan(tier, source);
+    cached = await runEvmSentinelScan(tier, source, scanChain);
     try {
       const supabase = getSupabaseClient();
       await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: tier, result: cached });
@@ -3635,7 +3643,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
     let locDosDelay = false;
     for (const f of inputFiles) {
       try {
-        const p = parseSolidityContract(f.source);
+        const p = parseSolidityContract(f.source, input.chain);
         const adv = buildLocalizationAdvice(p.gas_asymmetry);
         if (adv) {
           for (const pat of adv.patterns) mergedLocPatterns.push({ ...pat, file: f.path });
@@ -4105,7 +4113,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.11.0",
+    version: "5.12.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4545,6 +4553,12 @@ const OPENAPI_SPEC = {
             type: "string",
             description: "Full Solidity source code to scan (max 150000 chars).",
           },
+          chain: {
+            type: "string",
+            description:
+              "Optional chain hint (v5.12.0) — BS-008 MODEXP pricing regime: ethereum|eth|mainnet|1 and base|8453 = EIP-7883 (Osaka, repriced ~6x, protocol-mitigated); polygon|matic|137 and unknown/absent = EIP-2565 (conservative default).",
+            example: "ethereum",
+          },
         },
       },
       ScanOutput: {
@@ -4664,6 +4678,14 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   detail, mitigations, and recommendations. Same input; richer output.
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
   Read-only static scan, no wallet approval required.
+
+Optional "chain" hint on scan endpoints and the free dry-run (v5.12.0):
+BS-008 gas-asymmetry MODEXP pricing is fork-aware. chain=ethereum (or eth,
+mainnet, 1) and chain=base (or 8453) use EIP-7883 (Osaka) pricing, where the
+canonical MODEXP asymmetry class is repriced ~6x and protocol-mitigated; any
+other value, or none, keeps the conservative EIP-2565 default (flags more,
+never silently downgrades). Response field: contract_info.gas_asymmetry
+.pricing_regime / .osaka_active.
 
 ## Fitness attestation (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
@@ -5164,6 +5186,7 @@ interface DryRunRequest {
   }>;
   check_nonce_db?: boolean;  // Phase 3.3: query pull_payment_authorizations for nonce uniqueness
   client_address?: string;   // Phase 3.3: client address for nonce check
+  chain?: string;            // v5.12.0: optional chain hint — BS-008 MODEXP pricing regime (ethereum|base|polygon|...)
 }
 
 interface SyntaxIssue {
@@ -5272,6 +5295,9 @@ interface ParsedContract {
     risk_score: number;             // 0.05-0.95 quantitative score; 0.95 when ratio > threshold
     dos_validator_delay: boolean;   // true when ratio > threshold — DoS/validator-delay warning flag
     ratio_basis: string;            // human-readable derivation of the ratio
+    // v5.12.0 (BS-008 v2 fork-awareness): which MODEXP pricing regime the ratio was computed under
+    pricing_regime: "eip2565" | "eip7883"; // eip7883 = Osaka/Fusaka (Ethereum 2025-12-03+, Base 2026-05-28+)
+    osaka_active: boolean;          // true when EIP-7883 repricing applies (MODEXP asymmetry protocol-mitigated)
   };
   // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS + Signature Binding
   unbounded_iteration: {
@@ -5337,7 +5363,8 @@ interface BreachSimulationResult {
 //   - Pause/ownership/burn/mint capability detection
 // ----------------------------------------------------------------------------
 
-function parseSolidityContract(source: string): ParsedContract {
+// v5.12.0: optional chain hint → MODEXP pricing-regime resolution (BS-008 v2).
+function parseSolidityContract(source: string, chain?: string | null): ParsedContract {
   const lines = source.split("\n");
   const lineCount = lines.length;
 
@@ -5900,6 +5927,9 @@ function parseSolidityContract(source: string): ParsedContract {
   const GAS_ASYMMETRY_RATIO_THRESHOLD = 12.5;
   let gasAsymmetryRatio = 0; // max ratio across detected patterns
   let ratioBasis = "";
+  // v5.12.0: resolve MODEXP pricing regime from the chain hint (default eip2565 = conservative).
+  const modexpPricing = resolvePricingRegime(chain);
+  let modexpUnbounded = false; // true when MODEXP inputs are NOT small-bounded (asymmetry-class pattern)
   if (hasModexp) {
     // Static analysis: MODEXP input sizes bounded to small constants (< 32 bytes) are safe;
     // unbounded / dynamic / large-constant sizes sit in the asymmetry zone.
@@ -5913,8 +5943,19 @@ function parseSolidityContract(source: string): ParsedContract {
       gasAsymmetryRatio = 0.4;
       ratioBasis = "MODEXP with small bounded inputs (<32B): ratio ~0.4 (below threshold).";
     } else {
-      gasAsymmetryRatio = 12.5 + modexpCalls * 0.5; // ≥ threshold, scales with call sites
-      ratioBasis = `MODEXP with unbounded/dynamic input sizes: ratio ~${gasAsymmetryRatio.toFixed(1)} (threshold ${GAS_ASYMMETRY_RATIO_THRESHOLD}). 256-byte inputs cost ~34,890 gas but ~436K compute instructions — 30M gas of MODEXP stalls validators ~18s.`;
+      modexpUnbounded = true;
+      // v5.12.0 (BS-008 v2 fork-awareness): under EIP-7883 (Osaka) the canonical
+      // large-input class is repriced exactly 6x (2*words^2 vs words^2/3), pushing
+      // the same unbounded pattern to ~(12.5 + 0.5*calls)/6 ≈ 2.1 — protocol-mitigated,
+      // below the validator-delay threshold. EIP-7823 additionally caps inputs at
+      // 1024B on those chains. TSTORE/cold-access patterns are unaffected.
+      if (modexpPricing.osakaActive) {
+        gasAsymmetryRatio = (12.5 + modexpCalls * 0.5) / MODEXP_EIP7883_REPRICE_FACTOR;
+        ratioBasis = `MODEXP with unbounded/dynamic input sizes, but EIP-7883 repricing is ACTIVE on ${modexpPricing.chainKey} (since ${modexpPricing.since}): the canonical 256-byte input class is charged ~${MODEXP_EIP7883_REPRICE_FACTOR}x more gas, normalizing the ratio to ~${gasAsymmetryRatio.toFixed(1)} (threshold ${GAS_ASYMMETRY_RATIO_THRESHOLD}) — protocol-mitigated, not a validator-delay vector on this chain. EIP-7823 also caps each input field at 1024 bytes.`;
+      } else {
+        gasAsymmetryRatio = 12.5 + modexpCalls * 0.5; // ≥ threshold, scales with call sites
+        ratioBasis = `MODEXP with unbounded/dynamic input sizes: ratio ~${gasAsymmetryRatio.toFixed(1)} (threshold ${GAS_ASYMMETRY_RATIO_THRESHOLD}). 256-byte inputs cost ~34,890 gas but ~436K compute instructions — 30M gas of MODEXP stalls validators ~18s.`;
+      }
     }
   }
   if (hasTstoreLoop) {
@@ -5944,7 +5985,12 @@ function parseSolidityContract(source: string): ParsedContract {
       gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s). MODEXP with 256-byte inputs can stall validators ~18s per 30M gas tx.`);
       gasAsymmetryRisk = "high";
     } else {
-      gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected with small bounded inputs: ${modexpCalls} call site(s), ratio ${gasAsymmetryRatio.toFixed(1)} — below threshold, not a validator-delay vector.`);
+      // v5.12.0: distinguish "bounded inputs" from "EIP-7883 protocol-mitigated".
+      if (modexpUnbounded && modexpPricing.osakaActive) {
+        gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s), but EIP-7883 repricing is active on ${modexpPricing.chainKey} — ratio normalized to ${gasAsymmetryRatio.toFixed(1)} (below threshold), protocol-mitigated validator-delay vector.`);
+      } else {
+        gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected with small bounded inputs: ${modexpCalls} call site(s), ratio ${gasAsymmetryRatio.toFixed(1)} — below threshold, not a validator-delay vector.`);
+      }
     }
   }
   if (hasTstoreLoop) {
@@ -6084,6 +6130,8 @@ function parseSolidityContract(source: string): ParsedContract {
       risk_score: gasAsymmetryRiskScore,
       dos_validator_delay: dosValidatorDelay,
       ratio_basis: ratioBasis,
+      pricing_regime: modexpPricing.regime,
+      osaka_active: modexpPricing.osakaActive,
     },
     unbounded_iteration: {
       public_append_functions: publicAppendFuncs.map(f => f.name),
@@ -6834,7 +6882,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
     }, 400);
   }
 
-  const { source_code, contract_type, clauses, check_nonce_db, client_address } = body;
+  const { source_code, contract_type, clauses, check_nonce_db, client_address, chain } = body;
 
   if (!source_code || typeof source_code !== "string") {
     return jsonResponse({
@@ -6861,7 +6909,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
   const validation = validateSoliditySyntax(source_code);
 
   // Phase 3.1: Upgraded parser — deep contract parsing
-  const parsed = parseSolidityContract(source_code);
+  const parsed = parseSolidityContract(source_code, chain);
 
   // Phase 3.1: Generate upgraded Digital Twin v3 matrix with bipolar mapping
   const defaultClauses = clauses && clauses.length > 0 ? clauses : [

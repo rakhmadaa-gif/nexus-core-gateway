@@ -1,5 +1,50 @@
 # Nexus Gateway Changelog
 
+## v5.12.0-frontier — 2026-10-11
+
+### BS-008 v2: fork-aware MODEXP pricing (gas asymmetry)
+- Protocol-review correction (see `reference/eip-7883-modexp-review.md`): two
+  MODEXP pricing regimes are live side by side. EIP-7883 (Osaka) is active on
+  Ethereum mainnet (Fusaka, 2025-12-03) and Base (Azul, 2026-05-28); Polygon
+  PoS and unverified chains remain on EIP-2565. EIP-7883 reprices the
+  canonical large-input MODEXP class exactly ~6x (multiplication_complexity
+  `2*words^2` vs `words^2/3`, identical iteration-count scaling), pushing the
+  classic unbounded-MODEXP bomb below the 12.5 validator-delay threshold —
+  protocol-mitigated, additionally bounded by EIP-7823's 1024-byte input cap.
+- New module `supabase/functions/hello-world/modexp_gas.ts`: deterministic
+  dual-regime MODEXP gas calculators (`modexpGasEip2565` / `modexpGasEip7883`),
+  `resolvePricingRegime(chain)` with verified-only regime map
+  (ethereum/eth/mainnet/1 + base/8453 → eip7883; polygon/matic/137 → eip2565;
+  **unknown/absent → eip2565 conservative default — flags more, never silently
+  downgrades**), `MODEXP_EIP7883_REPRICE_FACTOR = 6`.
+- `parseSolidityContract(source, chain?)` — optional chain hint threaded
+  through: free dry-run (`{"chain": "..."}` body field),
+  `/evm-sentinel/v1/scan-quick|scan-deep` (`chain` in request body), and
+  fitness-full multi-file analysis (`input.chain`, already present).
+- Under `eip7883`: unbounded MODEXP ratio becomes `(12.5 + 0.5*calls)/6 ≈ 2.1`
+  with `risk_level` below high, `dos_validator_delay=false`, and a dedicated
+  "protocol-mitigated" details message; `ratio_basis` cites EIP-7883/7823.
+  Bounded-small MODEXP stays 0.4 in both regimes. TSTORE / cold-access
+  patterns are **unchanged** (EIP-7883 does not touch TSTORE).
+- Response: `contract_info.gas_asymmetry` gains `pricing_regime`
+  (`"eip2565"|"eip7883"`) and `osaka_active` (bool). Scan cache key now
+  includes the resolved regime (a cached eip2565 verdict is never served for
+  an eip7883 query). Downstream gating (localization advice, scan risk score,
+  deployable=false) follows automatically.
+- **Zero-diff guarantee**: absent/unknown chain ⇒ identical verdicts to
+  v5.11.0 (only the two new output fields are added).
+- Docs: OpenAPI 3.1 `ScanRequest.chain`; llms.txt chain-hint note.
+- Validation: 36/36 calculator unit tests anchored to official EIP price
+  vectors (nagydani_3_pow0x10001 5461/32768; marcin_1_base_heavy 200/1152;
+  discontinuity + floor cases; formula-tampering NCs) + 21/21 engine-level
+  regime tests (default/polygon/unverified flag high; ethereum/base do not;
+  TSTORE bomb still flagged under eip7883; aliases) + offline regression
+  corpus 12 fixtures + 13 negative controls 0 FAIL + w3/w4 handler suites
+  179/179 PASS.
+- Known pre-existing quirk (unchanged, documented for v5.13 candidates):
+  TSTORE-only bombs grade `risk_level=medium` with `dos_validator_delay=true`
+  (the TSTORE grading ladder predates this change by design).
+
 ## v5.11.0-frontier — 2026-10-10
 
 ### M3: Public Attestation Audit endpoints (zero-trust)
