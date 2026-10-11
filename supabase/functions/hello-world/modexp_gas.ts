@@ -1,9 +1,16 @@
-// modexp_gas.ts — v5.12.0: dual-regime MODEXP precompile pricing (BS-008 v2 fork-awareness).
+// modexp_gas.ts — v5.12.2: dual-regime MODEXP precompile pricing (BS-008 v2 fork-awareness).
 //
 // Two live pricing regimes for the MODEXP precompile (0x05) exist side by side:
-//   - EIP-2565 (Berlin-era, still active on chains without Osaka, e.g. Polygon PoS)
-//   - EIP-7883 (Osaka/Fusaka, LIVE on Ethereum mainnet since 2025-12-03 and on
-//     Base since the Azul hardfork 2026-05-28)
+//   - EIP-2565 (Berlin-era, now only a conservative default for unknown chains)
+//   - EIP-7883 (Osaka/Fusaka, LIVE on Ethereum mainnet since 2025-12-03 and
+//     adopted by every major chain we probed: Base, Polygon, Arbitrum, Optimism,
+//     BSC, Monad — see CHAIN_PRICING_REGIMES notes)
+// v5.12.2 METHODOLOGY UPGRADE: regime entries are PROBE-VERIFIED, not docs-only.
+// A live eth_estimateGas MODEXP price probe (scripts/probe-modexp-regimes.mjs)
+// distinguishes 2565 vs 7883 mechanically (big-case ~113.6K vs ~549.1K gas).
+// The probe caught that v5.12.0's docs-based "polygon = eip2565" entry had been
+// WRONG since the Madhugiri hardfork (2025-12-09) — docs search is insufficient
+// as negative evidence; live price behavior is ground truth.
 // EIP-7883 reprices the canonical large-input class ~6x (e.g. the EVM Protocol
 // Audit V1 calibration point "256-byte inputs: 34,890 gas" becomes ~209,000 gas),
 // pushing the compute-to-gas ratio of the classic MODEXP-bomb below the 12.5
@@ -66,13 +73,18 @@ export interface ChainPricingInfo {
 interface RegimeEntry { regime: ModexpPricingRegime; since: string | null; note: string }
 
 const CHAIN_PRICING_REGIMES: Record<string, RegimeEntry> = {
-  // Verified Osaka deployments (facts as of 2026-10-11 — extend only with sourced data):
-  ethereum: { regime: "eip7883", since: "2025-12-03", note: "Fusaka/Osaka mainnet activation (EIP-7607, epoch 411392)." },
-  base: { regime: "eip7883", since: "2026-05-28", note: "Base Azul hardfork = Osaka EVM support." },
-  monad: { regime: "eip7883", since: "2026-03-19", note: "MONAD_NINE mainnet activates Osaka EIPs (EIP-7823/7883/7939). Source-verified: traits.hpp eip_7883_active() w/ evm_rev>=MONAD_ETH_OSAKA; monad_mainnet.cpp revision gate 2026-03-19T14:30Z." },
-  "monad-testnet": { regime: "eip7883", since: "2026-03-10", note: "MONAD_NINE testnet activates Osaka EIPs. Source-verified: monad_testnet.cpp revision gate 2026-03-10T14:30Z." },
-  // Verified NOT Osaka (still EIP-2565 pricing):
-  polygon: { regime: "eip2565", since: null, note: "No Bor Osaka adoption found as of 2026-10-11 — EIP-2565 pricing still applies." },
+  // Verified Osaka deployments (extend only with sourced data AND/OR live probe):
+  ethereum: { regime: "eip7883", since: "2025-12-03", note: "Fusaka/Osaka mainnet activation (EIP-7607, epoch 411392). Probe-verified 2026-10-11." },
+  base: { regime: "eip7883", since: "2026-05-28", note: "Base Azul hardfork = Osaka EVM support. Probe-verified 2026-10-11." },
+  monad: { regime: "eip7883", since: "2026-03-19", note: "MONAD_NINE mainnet activates Osaka EIPs (EIP-7823/7883/7939). Source-verified: traits.hpp eip_7883_active() w/ evm_rev>=MONAD_ETH_OSAKA; monad_mainnet.cpp revision gate 2026-03-19T14:30Z. Probe-verified 2026-10-11." },
+  "monad-testnet": { regime: "eip7883", since: "2026-03-10", note: "MONAD_NINE testnet activates Osaka EIPs. Source-verified: monad_testnet.cpp revision gate 2026-03-10T14:30Z. Probe-verified 2026-10-11." },
+  // v5.12.2 probe-driven corrections/additions (2026-10-11, Arbitrum Stylus review):
+  polygon: { regime: "eip7883", since: "2025-12-09", note: "Madhugiri hardfork (PIP-76, block 80,084,800) activates EIP-7823/7825/7883 — v5.12.0 docs-based eip2565 entry was WRONG; corrected via live MODEXP price probe 2026-10-11." },
+  arbitrum: { regime: "eip7883", since: "2026-01-08", note: "Arbitrum One ArbOS 51 Dia activates Osaka EIPs. Source-verified: nitro gethhook addPrecompiles(StartingFromArbOS50, PrecompiledContractsOsaka) w/ bigModExp eip7883=true; on-chain ArbSys.arbOSVersion()=116 (=61+55 legacy offset); probe-verified 2026-10-11." },
+  "arbitrum-nova": { regime: "eip7883", since: "2026-01-08", note: "ArbOS 51 Dia on Nova; on-chain arbOSVersion()=116 same as One. NOTE: Nova eth_estimateGas returns inflated MODEXP estimates (~2M gas floor, overpriced/safe direction — estimator quirk, not protocol divergence); execution rules identical per source gate. Version-verified 2026-10-11." },
+  "arbitrum-sepolia": { regime: "eip7883", since: "2025-11-20", note: "ArbOS 50 Dia (Sepolia-only precursor release) activates Osaka EIPs. Probe-verified 2026-10-11." },
+  optimism: { regime: "eip7883", since: null, note: "Live MODEXP price probe 2026-10-11 shows 7883-class pricing (554,303 gas big-case). Activation fork/date not separately sourced." },
+  bsc: { regime: "eip7883", since: null, note: "Live MODEXP price probe 2026-10-11 shows 7883-class pricing (554,303 gas big-case). Activation fork/date not separately sourced." },
 };
 
 const CHAIN_ALIASES: Record<string, string> = {
@@ -81,6 +93,11 @@ const CHAIN_ALIASES: Record<string, string> = {
   matic: "polygon", "polygon-pos": "polygon", "137": "polygon",
   "monad-mainnet": "monad", "143": "monad",
   "10143": "monad-testnet",
+  arb: "arbitrum", "arbitrum-one": "arbitrum", arb1: "arbitrum", "42161": "arbitrum",
+  nova: "arbitrum-nova", "42170": "arbitrum-nova",
+  "arb-sepolia": "arbitrum-sepolia", "421614": "arbitrum-sepolia",
+  op: "optimism", "op-mainnet": "optimism", "10": "optimism",
+  bnb: "bsc", "bnb-chain": "bsc", binance: "bsc", "56": "bsc",
 };
 
 /** Resolve the MODEXP pricing regime for a chain. Unknown chains default to eip2565

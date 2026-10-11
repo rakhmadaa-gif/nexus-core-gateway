@@ -66,9 +66,17 @@ async function gasAsym(src, chain) {
   const pBase = engine.parseSolidityContract(MODEXP_UNBOUNDED, "base");
   check("base: eip7883 (Azul)", pBase.gas_asymmetry.osaka_active === true && pBase.gas_asymmetry.risk_level !== "high", pBase.gas_asymmetry.risk_level);
   const pPoly = engine.parseSolidityContract(MODEXP_UNBOUNDED, "polygon");
-  check("polygon: eip2565 still flagged high", pPoly.gas_asymmetry.osaka_active === false && pPoly.gas_asymmetry.risk_level === "high", pPoly.gas_asymmetry.risk_level);
+  check("polygon: eip7883 (Madhugiri 2025-12-09, probe-corrected v5.12.2) not high", pPoly.gas_asymmetry.osaka_active === true && pPoly.gas_asymmetry.pricing_regime === "eip7883" && pPoly.gas_asymmetry.risk_level !== "high", `${pPoly.gas_asymmetry.pricing_regime}/${pPoly.gas_asymmetry.risk_level}`);
   const pArb = engine.parseSolidityContract(MODEXP_UNBOUNDED, "arbitrum");
-  check("arbitrum (unverified): conservative eip2565 high", pArb.gas_asymmetry.osaka_active === false && pArb.gas_asymmetry.risk_level === "high", pArb.gas_asymmetry.risk_level);
+  check("arbitrum: eip7883 (ArbOS 51, source+probe verified v5.12.2) not high", pArb.gas_asymmetry.osaka_active === true && pArb.gas_asymmetry.pricing_regime === "eip7883" && pArb.gas_asymmetry.risk_level !== "high", `${pArb.gas_asymmetry.pricing_regime}/${pArb.gas_asymmetry.risk_level}`);
+  const pArbNova = engine.parseSolidityContract(MODEXP_UNBOUNDED, "arbitrum-nova");
+  check("arbitrum-nova: eip7883 (on-chain ArbOS 61)", pArbNova.gas_asymmetry.osaka_active === true && pArbNova.gas_asymmetry.risk_level !== "high", pArbNova.gas_asymmetry.pricing_regime);
+  const pArbSep = engine.parseSolidityContract(MODEXP_UNBOUNDED, "421614");
+  check("arbitrum-sepolia 421614: eip7883", pArbSep.gas_asymmetry.osaka_active === true && pArbSep.gas_asymmetry.pricing_regime === "eip7883", pArbSep.gas_asymmetry.pricing_regime);
+  const pOp = engine.parseSolidityContract(MODEXP_UNBOUNDED, "optimism");
+  check("optimism: eip7883 (probe-verified)", pOp.gas_asymmetry.osaka_active === true && pOp.gas_asymmetry.risk_level !== "high", pOp.gas_asymmetry.pricing_regime);
+  const pBsc = engine.parseSolidityContract(MODEXP_UNBOUNDED, "56");
+  check("bsc 56: eip7883 (probe-verified)", pBsc.gas_asymmetry.osaka_active === true && pBsc.gas_asymmetry.risk_level !== "high", pBsc.gas_asymmetry.pricing_regime);
   const pMonad = engine.parseSolidityContract(MODEXP_UNBOUNDED, "monad");
   check("monad: eip7883 (MONAD_NINE Osaka) not high", pMonad.gas_asymmetry.osaka_active === true && pMonad.gas_asymmetry.pricing_regime === "eip7883" && pMonad.gas_asymmetry.risk_level !== "high", `${pMonad.gas_asymmetry.pricing_regime}/${pMonad.gas_asymmetry.risk_level}`);
   const pMonad143 = engine.parseSolidityContract(MODEXP_UNBOUNDED, "143");
@@ -96,16 +104,20 @@ async function gasAsym(src, chain) {
 }
 {
   const { ga } = await gasAsym(MODEXP_UNBOUNDED, "matic");
-  check("dry-run matic alias: eip2565 high", ga.pricing_regime === "eip2565" && ga.risk_level === "high", ga.risk_level);
+  check("dry-run matic alias: eip7883 not high (v5.12.2 probe-corrected)", ga.pricing_regime === "eip7883" && ga.risk_level !== "high", `${ga.pricing_regime}/${ga.risk_level}`);
 }
 {
   const { ga } = await gasAsym(MODEXP_UNBOUNDED, "8453");
   check("dry-run 8453 alias: eip7883", ga.pricing_regime === "eip7883" && ga.osaka_active === true);
 }
+{
+  const { ga } = await gasAsym(MODEXP_UNBOUNDED, "42161");
+  check("dry-run 42161 alias: eip7883", ga.pricing_regime === "eip7883" && ga.osaka_active === true && ga.risk_level !== "high", `${ga.pricing_regime}/${ga.risk_level}`);
+}
 
 // --- NC: tampered regime map must fail ---------------------------------------
 {
-  // If someone downgraded the DEFAULT to osaka, polygon/unknown would stop flagging.
+  // If someone upgraded the DEFAULT to osaka, unknown chains would stop flagging.
   const pDef = engine.parseSolidityContract(MODEXP_UNBOUNDED);
   const pUnk = engine.parseSolidityContract(MODEXP_UNBOUNDED, "unknown-chain-xyz");
   check("NC: default+unknown both still flag high", pDef.gas_asymmetry.risk_level === "high" && pUnk.gas_asymmetry.risk_level === "high");

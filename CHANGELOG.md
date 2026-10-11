@@ -1,5 +1,41 @@
 # Nexus Gateway Changelog
 
+## v5.12.2-frontier — 2026-10-11
+
+### BS-008 v2 regime map: probe-verified corrections + 5 chains added
+- **Methodology upgrade: docs-verified → probe-verified.** New permanent tool
+  `scripts/probe-modexp-regimes.mjs` distinguishes EIP-2565 vs EIP-7883 by
+  live `eth_estimateGas` MODEXP price probes (big-case ~113.6K vs ~549.1K gas,
+  ≥3x discriminant). It immediately caught that v5.12.0's docs-based
+  `polygon = eip2565` entry had been **wrong since 2025-12-09** (Madhugiri
+  hardfork, PIP-76, block 80,084,800, activates EIP-7823/7825/7883 — docs
+  search is insufficient as negative evidence; live price behavior is ground
+  truth). Lesson recorded: regime claims require probe or on-chain/source
+  verification, never docs-only absence claims.
+- **Corrected:** `polygon`/`matic`/`137` → `eip7883` (was eip2565). Effect:
+  MODEXP-heavy contracts on Polygon now grade protocol-mitigated (ratio ~2.3,
+  below high) instead of over-flagged high.
+- **Added (all EIP-7883):**
+  - `arbitrum`/`arb`/`arbitrum-one`/`42161` — ArbOS 51 Dia, 2026-01-08.
+    Source-verified in OffchainLabs/nitro: `gethhook/geth-hook.go`
+    `addPrecompiles(StartingFromArbOS50, PrecompiledContractsOsaka)` with
+    `bigModExp{eip7883: true}`; on-chain `ArbSys.arbOSVersion()` = 116
+    (= 61 + 55 legacy offset); probe-verified.
+  - `arbitrum-nova`/`nova`/`42170` — same on-chain ArbOS 61. NOTE: Nova's
+    `eth_estimateGas` returns inflated MODEXP estimates (~2M gas floor on two
+    independent RPCs — estimator quirk, overpriced/safe direction, not a
+    protocol divergence); execution rules identical per source gate.
+  - `arbitrum-sepolia`/`421614` — ArbOS 50 Dia, 2025-11-20. Probe-verified.
+  - `optimism`/`op`/`10` — probe-verified (554,303 gas big-case).
+  - `bsc`/`bnb`/`56` — probe-verified (554,303 gas big-case).
+- Origin: protocol review #4 (Arbitrum Stylus, see
+  `reference/arbitrum-stylus-review.md`) — Stylus gas model adjudicated CLEAN
+  (6/6 hypotheses), regime corrections executed as the "koreksi proyek".
+- Validation: 52/52 modexp-calc + 29/29 engine-regime + offline regression
+  corpus 0 FAIL (17 fixtures + 13 negatives) + live E2E + live regression.
+- Zero behavior change for absent/unknown chain hints (conservative eip2565
+  default preserved; NC guards in both suites).
+
 ## v5.12.1-frontier — 2026-10-11
 
 ### BS-008 v2 regime map: Monad (Osaka) added
