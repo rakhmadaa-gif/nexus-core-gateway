@@ -183,6 +183,9 @@ const CHAIN_PRICING_REGIMES: Record<string, RegimeEntry> = {
   linea: { regime: "eip7883", since: null, note: "Live MODEXP price probe 2026-10-11 shows 7883-class pricing (554,303 gas big-case). Full standard precompile set incl. 0x0a (valid KZG vector returns 0x1000) — review-table '0x0a reverts' was a zeros-input artifact, corrected 2026-10-11." },
   zksync: { regime: "eip7883", since: null, note: "MODEXP EXISTS on ZKsync Era (3^5 mod 11 verified correct, 2026-10-11) — review-table 'no MODEXP' was an artifact of probing with 256B operands: EraVM bounds MODEXP operands to ≤32 bytes (larger REVERT, even in eth_call) and small-case pricing ≈7883-class (150,787 total incl. ~147K AA/pubdata floor). Asymmetry bomb dead on arrival (input bound stricter than EIP-7823). Missing: 0x03/0x09/0x0a (see CHAIN_UNSUPPORTED_PRECOMPILES)." },
   "polygon-zkevm": { regime: "unsupported", since: null, note: "Polygon zkEVM has NO MODEXP precompile — live eth_call to 0x05 REVERTS (2026-10-11); unsupported precompiles revert per Alchemy/zkEVM docs. Pricing question does not exist here. 0x0a returns empty-success (inconclusive, not claimed either way)." },
+  // v5.13.2 HyperEVM (Protocol Review #6, probe-verified 2026-10-11 — reference/hyperevm-review.md):
+  hyperevm: { regime: "eip2565", since: null, note: "Hyperliquid HyperEVM mainnet (chain 999): Cancun-class EVM without blob txs. Live MODEXP price probe 2026-10-11: BIG 114,614 / SMALL 24,655 gas = EIP-2565 class. Full standard precompile set incl. 0x0a (valid KZG vector, 64B out). 20 HyperCore read precompiles 0x0800-0x0813 measured ~1334+33*(in+out) — BELOW documented 2000+65*(in+out) (safe direction, docs divergence noted)." },
+  "hyperevm-testnet": { regime: "eip2565", since: null, note: "Hyperliquid HyperEVM testnet (chain 998): MODEXP BIG estimate 114,614 identical to mainnet (probe 2026-10-11); 0x0a present (valid KZG vector)." },
 };
 
 const CHAIN_ALIASES: Record<string, string> = {
@@ -200,6 +203,9 @@ const CHAIN_ALIASES: Record<string, string> = {
   zkevm: "polygon-zkevm", "polygon-zkevm-mainnet": "polygon-zkevm", "1101": "polygon-zkevm",
   "scroll-mainnet": "scroll", "534352": "scroll",
   "linea-mainnet": "linea", "59144": "linea",
+  // v5.13.2 HyperEVM:
+  hyperliquid: "hyperevm", "hyperevm-mainnet": "hyperevm", "hyperliquid-mainnet": "hyperevm", "999": "hyperevm",
+  "hyperliquid-testnet": "hyperevm-testnet", "998": "hyperevm-testnet",
 };
 
 // ---------------------------------------------------------------------------

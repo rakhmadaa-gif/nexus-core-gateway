@@ -1,5 +1,29 @@
 # Nexus Gateway Changelog
 
+## v5.13.2-frontier — 2026-10-11
+
+### HyperEVM regime entries (Protocol Review #6 correction)
+- **hyperevm (hyperliquid, 999) + hyperevm-testnet (998) → eip2565, probe-verified.**
+  Live MODEXP price probes: BIG 114,614 / SMALL 24,655 gas (identical on
+  mainnet and testnet) = pre-Osaka EIP-2565 class. Full standard precompile
+  set including 0x0a KZG pointEval (valid-vector verified) — no availability
+  entries. Aliases: hyperliquid, hyperevm-mainnet, hyperliquid-mainnet, 999,
+  hyperliquid-testnet, 998.
+- **Zero grading change**: unknown/absent chain hints already default to
+  conservative eip2565 — this makes HyperEVM explicit (regime_source
+  db/snapshot instead of conservative fallback) and adds the chain to the
+  weekly probe refresh set (16 chains probed, `scripts/probe-modexp-regimes.mjs`).
+- Review findings (reference/hyperevm-review.md, verdict NEGATIF — 6/6 protocol
+  reviews negative): HyperCore read precompiles 0x0800-0x0813 measure
+  ~1334+33*(in+out) gas — BELOW the documented 2000+65*(in+out) (safe
+  direction, docs divergence); no flat-price unbounded-iteration surface
+  (variable-output precompiles charge linearly); CoreWriter async semantics +
+  invalid-input full-frame burn = documented footguns, informational only.
+- Validation: 87/87 modexp-calc + 34/34 engine-regime (5 new hyperevm checks) +
+  41/41 availability + W4 19/19+10/10+peer-check + W3 35/35+22/22+19/19 +
+  offline regression 17F/13NC 0 FAIL + live E2E 10/10 + live regression
+  17F/13NC 0 FAIL + DB upsert 16/16.
+
 ## v5.13.1-frontier — 2026-10-11
 
 ### BS-008 v3: chain-aware precompile AVAILABILITY (ZK chains review #5 correction)

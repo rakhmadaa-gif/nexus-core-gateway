@@ -64,6 +64,8 @@ const CHAINS = [
   ["polygon-zkevm", "https://polygon-zkevm.drpc.org"],
   ["scroll", "https://rpc.scroll.io"],
   ["linea", "https://rpc.linea.build"],
+  ["hyperevm", "https://rpc.hyperliquid.xyz/evm"],
+  ["hyperevm-testnet", "https://rpc.hyperliquid-testnet.xyz/evm"],
 ];
 
 function modexpCalldata(baseLen, expLen, modLen) {

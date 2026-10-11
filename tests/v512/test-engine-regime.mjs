@@ -83,6 +83,17 @@ async function gasAsym(src, chain) {
   check("monad chain-id 143: eip7883", pMonad143.gas_asymmetry.osaka_active === true, pMonad143.gas_asymmetry.pricing_regime);
   const pMonadTest = engine.parseSolidityContract(MODEXP_UNBOUNDED, "monad-testnet");
   check("monad-testnet: eip7883", pMonadTest.gas_asymmetry.osaka_active === true, pMonadTest.gas_asymmetry.pricing_regime);
+  // v5.13.2 HyperEVM (Protocol Review #6, probe-verified 2026-10-11):
+  const pHyper = engine.parseSolidityContract(MODEXP_UNBOUNDED, "hyperevm");
+  check("hyperevm: eip2565 (Cancun pre-Osaka) unbounded MODEXP stays high", pHyper.gas_asymmetry.pricing_regime === "eip2565" && pHyper.gas_asymmetry.osaka_active === false && pHyper.gas_asymmetry.risk_level === "high", `${pHyper.gas_asymmetry.pricing_regime}/${pHyper.gas_asymmetry.risk_level}`);
+  const pHyper999 = engine.parseSolidityContract(MODEXP_UNBOUNDED, "999");
+  check("hyperevm chain-id 999: eip2565", pHyper999.gas_asymmetry.pricing_regime === "eip2565" && pHyper999.gas_asymmetry.osaka_active === false, pHyper999.gas_asymmetry.pricing_regime);
+  const pHyperTest = engine.parseSolidityContract(MODEXP_UNBOUNDED, "998");
+  check("hyperevm-testnet 998: eip2565", pHyperTest.gas_asymmetry.pricing_regime === "eip2565" && pHyperTest.gas_asymmetry.risk_level === "high", pHyperTest.gas_asymmetry.pricing_regime);
+  const pHyperAlias = engine.parseSolidityContract(MODEXP_UNBOUNDED, "hyperliquid");
+  check("hyperliquid alias: eip2565", pHyperAlias.gas_asymmetry.pricing_regime === "eip2565", pHyperAlias.gas_asymmetry.pricing_regime);
+  // Full standard precompile set on HyperEVM → no availability_blocked verdict.
+  check("hyperevm: no availability_blocked", pHyper.gas_asymmetry.availability_blocked !== true, String(pHyper.gas_asymmetry.availability_blocked));
 }
 // TSTORE unaffected by 7883 (guard test).
 {

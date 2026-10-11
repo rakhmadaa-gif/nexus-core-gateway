@@ -90,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.13.1-frontier",
+  engine_version: "v5.13.2-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.13.1-frontier",
+  version: "5.13.2-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -592,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.13.1-frontier (BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.13.2-frontier (BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4564,7 +4564,7 @@ const OPENAPI_SPEC = {
           chain: {
             type: "string",
             description:
-              "Optional chain hint (v5.13.1) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144 = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
+              "Optional chain hint (v5.13.2) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144, hyperevm|hyperliquid|999 (eip2565-class) = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
             example: "ethereum",
           },
         },
@@ -4702,6 +4702,11 @@ entry older than its TTL is refused — conservative eip2565 is served with
 regime_stale: true instead of a silently expired map.
 Response fields: contract_info.gas_asymmetry .pricing_regime / .osaka_active /
 .regime_source / .regime_stale / .regime_probed_at.
+Probe-verified EIP-2565-class chains (v5.13.2, HyperEVM review #6): hyperevm
+(hyperliquid, 999) and hyperevm-testnet (998) price MODEXP at the pre-Osaka
+schedule (BIG 114,614 / SMALL 24,655 gas, identical mainnet/testnet) and serve
+the FULL standard precompile set including 0x0a. Explicit map entries — same
+grading as the conservative default, reported with regime_source db/snapshot.
 
 Chain-aware precompile AVAILABILITY (v5.13.1, ZK chains review #5): the engine
 also checks whether the precompiles your code actually CALLS exist on the
