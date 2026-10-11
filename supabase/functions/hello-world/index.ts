@@ -49,6 +49,7 @@ import {
 import {
   MODEXP_EIP7883_REPRICE_FACTOR,
   resolvePricingRegime,
+  ensureRegimeMapFresh,
 } from "./modexp_gas.ts";
 
 // ----------------------------------------------------------------------------
@@ -87,7 +88,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.12.2-frontier",
+  engine_version: "v5.13.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -430,7 +431,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.12.2-frontier",
+  version: "5.13.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -589,7 +590,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.12.2-frontier (BS-008 v2 fork-aware MODEXP pricing — probe-verified regime map: EIP-7883 on ethereum/base/polygon(Madhugiri)/arbitrum(ArbOS 51+)/nova/optimism/bsc/monad, conservative EIP-2565 default elsewhere, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.13.0-frontier (BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2730,6 +2731,9 @@ async function handleEvmSentinelScan(
   const codeHash = await sha256Hex(source);
   // v5.12.0: chain hint changes BS-008 MODEXP pricing regime → cache key must include it.
   const scanChain = typeof body.chain === "string" ? body.chain : null;
+  // v5.13.0: refresh the dynamic regime map (chain_regimes table) before resolving —
+  // non-fatal, falls back to the embedded snapshot when the db is unreachable.
+  await ensureRegimeMapFresh(getSupabaseClient());
   const cacheKey = `${codeHash}:${tier}:${resolvePricingRegime(scanChain).regime}`;
   let cached: Record<string, unknown> | null = null;
   let cacheHit = false;
@@ -3439,6 +3443,8 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
     return m2mError("INVALID_INPUT", validated.error, serviceType, 400, 0, reqStartTime);
   }
   const input = validated.input;
+  // v5.13.0: refresh dynamic regime map before gas analysis (non-fatal, snapshot fallback).
+  await ensureRegimeMapFresh(getSupabaseClient());
 
   // 2. Resolve .sol files (pre-billing — fetch failures are not chargeable).
   let inputFiles: Array<{ path: string; source: string }> = [];
@@ -4113,7 +4119,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.12.2",
+    version: "5.13.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4679,7 +4685,7 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
   Read-only static scan, no wallet approval required.
 
-Optional "chain" hint on scan endpoints and the free dry-run (v5.12.2):
+Optional "chain" hint on scan endpoints and the free dry-run (v5.13.0):
 BS-008 gas-asymmetry MODEXP pricing is fork-aware and PROBE-VERIFIED. EIP-7883
 (Osaka) pricing applies to: ethereum (eth, mainnet, 1), base (8453), polygon
 (matic, 137 — Madhugiri 2025-12-09), arbitrum (arb, arbitrum-one, 42161),
@@ -4687,9 +4693,13 @@ arbitrum-nova (nova, 42170), arbitrum-sepolia (421614), optimism (op, 10),
 bsc (bnb, 56), monad (143, monad-testnet, 10143). On those chains the
 canonical MODEXP asymmetry class is repriced ~6x and protocol-mitigated; any
 other value, or none, keeps the conservative EIP-2565 default (flags more,
-never silently downgrades). Regime map is verified by live MODEXP price probe
-(scripts/probe-modexp-regimes.mjs), not docs alone.
-Response field: contract_info.gas_asymmetry .pricing_regime / .osaka_active.
+never silently downgrades). The regime map is DYNAMIC: it lives in a
+chain_regimes table refreshed by weekly live MODEXP price probes
+(scripts/probe-modexp-regimes.mjs) with an embedded snapshot fallback. A live
+entry older than its TTL is refused — conservative eip2565 is served with
+regime_stale: true instead of a silently expired map.
+Response fields: contract_info.gas_asymmetry .pricing_regime / .osaka_active /
+.regime_source / .regime_stale / .regime_probed_at.
 
 ## Fitness attestation (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
@@ -5302,6 +5312,10 @@ interface ParsedContract {
     // v5.12.0 (BS-008 v2 fork-awareness): which MODEXP pricing regime the ratio was computed under
     pricing_regime: "eip2565" | "eip7883"; // eip7883 = Osaka/Fusaka (Ethereum 2025-12-03+, Base 2026-05-28+)
     osaka_active: boolean;          // true when EIP-7883 repricing applies (MODEXP asymmetry protocol-mitigated)
+    // v5.13.0 (dynamic regime map): provenance + staleness disclosure of the regime verdict
+    regime_source: "db" | "snapshot" | "conservative"; // db = live chain_regimes row; snapshot = embedded fallback (db unreachable); conservative = unknown chain or stale row
+    regime_stale: boolean;          // true when a live-map row exceeded its TTL and was refused (conservative eip2565 served instead — never a silently expired map)
+    regime_probed_at: string | null; // last live-probe timestamp for the db row used
   };
   // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS + Signature Binding
   unbounded_iteration: {
@@ -6136,6 +6150,9 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       ratio_basis: ratioBasis,
       pricing_regime: modexpPricing.regime,
       osaka_active: modexpPricing.osakaActive,
+      regime_source: modexpPricing.source,
+      regime_stale: modexpPricing.regimeStale,
+      regime_probed_at: modexpPricing.probedAt,
     },
     unbounded_iteration: {
       public_append_functions: publicAppendFuncs.map(f => f.name),
@@ -6908,6 +6925,10 @@ async function dryRunHandler(req: Request): Promise<Response> {
       message: "Source code exceeds 150KB limit.",
     }, 413);
   }
+
+  // v5.13.0: refresh the dynamic regime map (chain_regimes table) before parsing —
+  // non-fatal, falls back to the embedded snapshot when the db is unreachable.
+  await ensureRegimeMapFresh(getSupabaseClient());
 
   // Run static syntax validation
   const validation = validateSoliditySyntax(source_code);

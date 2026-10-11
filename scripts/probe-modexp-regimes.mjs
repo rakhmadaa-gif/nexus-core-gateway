@@ -21,9 +21,24 @@
 // Usage:
 //   node scripts/probe-modexp-regimes.mjs                # probe canonical set
 //   node scripts/probe-modexp-regimes.mjs name=rpcUrl …  # probe extra chains
+//   node scripts/probe-modexp-regimes.mjs --upsert       # probe + upsert public.chain_regimes
+//                                                        #   (needs $SUPABASE_ACCESS_TOKEN; weekly cron)
 //
 // Re-run cadence: after any protocol review, before any regime-map edit, and
-// periodically (monthly) — regimes change only at hardforks, but docs lag.
+// periodically (weekly cron → chain_regimes) — regimes change only at hardforks,
+// but docs lag and a stale map must never be served silently (v5.13.0 TTL rule).
+
+const SUPABASE_PROJECT_REF = "xibzsthfrbomefnvbicb";
+
+// Explained anomalies: probe-verified-by-other-means chains whose eth_estimateGas
+// classification is known-quirky. Upsert refreshes probed_at with the documented
+// regime; the note carries the evidence so the row is auditable.
+const EXPLAINED_OVERRIDES = {
+  "arbitrum-nova": {
+    regime: "eip7883",
+    note: "ArbOS 61 on-chain + nitro source (Osaka precompiles); eth_estimateGas inflates ~2M gas (estimator quirk, overpriced direction — safe). Probe-verified v5.12.2.",
+  },
+};
 
 const CHAINS = [
   ["ethereum", "https://ethereum-rpc.publicnode.com"],
@@ -83,24 +98,75 @@ function classify(big, small) {
   return "AMBIGUOUS (between bands — investigate)";
 }
 
-const extra = process.argv.slice(2).map((s) => {
+const upsertMode = process.argv.includes("--upsert");
+const extra = process.argv.slice(2).filter((s) => s !== "--upsert").map((s) => {
   const idx = s.indexOf("=");
   return idx > 0 ? [s.slice(0, idx), s.slice(idx + 1)] : [s, ""];
 }).filter(([n, u]) => n && u.startsWith("http"));
 
 const targets = [...CHAINS, ...extra];
 let anomalous = 0;
+let unexplained = 0;
+const results = [];
 console.log("chain             big-case      small-case    verdict");
 for (const [name, url] of targets) {
   const b = await estimate(url, BIG);
   const s = await estimate(url, SMALL);
   if (b.err || s.err) {
     anomalous++;
+    if (!EXPLAINED_OVERRIDES[name]) unexplained++;
+    results.push({ name, err: String(b.err ?? s.err) });
     console.log(`${name.padEnd(18)}ERR           ERR           ${b.err ?? s.err}`);
     continue;
   }
   const verdict = classify(b.gas, s.gas);
-  if (!verdict.startsWith("eip") && !verdict.startsWith("LIKELY")) anomalous++;
+  if (!verdict.startsWith("eip") && !verdict.startsWith("LIKELY")) {
+    anomalous++;
+    if (!EXPLAINED_OVERRIDES[name]) unexplained++;
+  }
+  results.push({ name, big: b.gas, small: s.gas, verdict });
   console.log(`${name.padEnd(18)}${String(b.gas).padEnd(14)}${String(s.gas).padEnd(14)}${verdict}`);
 }
-console.log(`\n${targets.length} chains probed, ${anomalous} anomalous. Map edits require a green (or explained) probe.`);
+console.log(`\n${targets.length} chains probed, ${anomalous} anomalous (${unexplained} unexplained). Map edits require a green (or explained) probe.`);
+
+if (upsertMode) {
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!token) {
+    console.error("--upsert requires $SUPABASE_ACCESS_TOKEN");
+    process.exit(2);
+  }
+  async function sql(query) {
+    const r = await fetch(`https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query`, {
+      method: "POST",
+      headers: { "authorization": `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!r.ok) throw new Error(`management API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return r.json();
+  }
+  const now = new Date().toISOString();
+  let upserted = 0, skipped = 0;
+  for (const r of results) {
+    const override = EXPLAINED_OVERRIDES[r.name];
+    let regime = null, note = null;
+    if (override) {
+      regime = override.regime;
+      note = override.note;
+    } else if (r.verdict === "eip2565" || r.verdict === "eip7883") {
+      regime = r.verdict;
+      note = "live MODEXP price probe";
+    } else {
+      skipped++;
+      console.log(`SKIP upsert ${r.name}: verdict "${r.verdict ?? r.err}" is not a clean regime — human review required (existing row untouched).`);
+      continue;
+    }
+    const big = r.big ?? "NULL", small = r.small ?? "NULL";
+    await sql(
+      `INSERT INTO public.chain_regimes (chain_key, regime, probed_at, probe_big_gas, probe_small_gas, source, note) VALUES ('${r.name}', '${regime}', '${now}', ${big}, ${small}, 'probe', '${note.replace(/'/g, "''")}') ON CONFLICT (chain_key) DO UPDATE SET regime = EXCLUDED.regime, probed_at = EXCLUDED.probed_at, probe_big_gas = EXCLUDED.probe_big_gas, probe_small_gas = EXCLUDED.probe_small_gas, source = EXCLUDED.source, note = EXCLUDED.note;`,
+    );
+    upserted++;
+    console.log(`UPSERTED ${r.name}: ${regime} @ ${now}`);
+  }
+  console.log(`\nupsert complete: ${upserted} upserted, ${skipped} skipped (skipped rows keep their previous probed_at — they will go stale per TTL if unresolved).`);
+  if (unexplained > 0) process.exit(1); // cron must see UNEXPLAINED anomalies; explained overrides (e.g. Nova) are permanent
+}

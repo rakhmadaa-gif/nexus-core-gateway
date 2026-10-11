@@ -1,5 +1,38 @@
 # Nexus Gateway Changelog
 
+## v5.13.0-frontier — 2026-10-11
+
+### BS-008 v2: DYNAMIC regime map (chain_regimes table + staleness refusal)
+- **The chain → MODEXP-pricing regime map no longer lives only in the engine
+  bundle.** New `public.chain_regimes` Supabase table is the live source of
+  truth, refreshed weekly by `scripts/probe-modexp-regimes.mjs --upsert`
+  (live MODEXP price probes; explained anomalies like Arbitrum Nova's
+  estimator quirk carry documented overrides, unexplained anomalies fail the
+  refresh loudly). `modexp_gas.ts` keeps a 10-minute in-memory cache with a
+  4-second non-fatal fetch — hot path stays sub-millisecond and the embedded
+  map becomes the disclosed fallback (`regime_source: "snapshot"`).
+- **Staleness refusal (user-mandated "no expired maps served silently").** A
+  db row older than its `stale_after_days` TTL (30d default) is refused: the
+  chain falls back to conservative `eip2565` with `regime_stale: true` and the
+  stale `regime_probed_at` disclosed in the response. Failure direction is
+  always "flag more, never silently downgrade".
+- **New gas_asymmetry response fields** on dry-run / scan-quick / scan-deep /
+  fitness-full: `regime_source` (`db` | `snapshot` | `conservative`),
+  `regime_stale`, `regime_probed_at`. `ensureRegimeMapFresh()` is called in
+  dryRunHandler, handleEvmSentinelScan and handleFitnessFullWithBilling before
+  parsing; handlers stay sync beyond that one await.
+- **Pre-flight probe is now a standing operational rule** (alongside the
+  tool): any protocol review / sweep touching chain pricing must run the
+  probe and cite its output.
+- Validation: 63/63 modexp-calc (11 new dynamic-map cases: db-fresh beats
+  snapshot, stale refused, TTL honored, non-fatal fetch) + 29/29
+  engine-regime + W4 19/19+10/10+20/20 + W3 35/35+22/22+19/19 + offline
+  regression 17F/13NC 0 FAIL + live E2E (db verdict on polygon, conservative
+  on unknown, live stale-flip → refused → restored) + live regression
+  17F/13NC 0 FAIL + manifest 5.13.0-frontier 19 endpoints + paywall intact.
+- Zero behavior change for chains without a db row and for unknown chains
+  (verified zero-diff against v5.12.2 fixtures).
+
 ## v5.12.2-frontier — 2026-10-11
 
 ### BS-008 v2 regime map: probe-verified corrections + 5 chains added

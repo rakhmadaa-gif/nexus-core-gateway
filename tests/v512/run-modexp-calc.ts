@@ -4,6 +4,7 @@
 // parameters from the EIP test tables; both formulas must hit both price points).
 import {
   modexpGasEip2565, modexpGasEip7883, resolvePricingRegime, MODEXP_EIP7883_REPRICE_FACTOR,
+  ensureRegimeMapFresh, __setDynamicRegimesForTest,
 } from "../../supabase/functions/hello-world/modexp_gas.ts";
 
 let pass = 0, fail = 0;
@@ -77,5 +78,57 @@ for (const [input, regime, osaka] of cases) {
 check("unknown chain is conservative (not osaka)", resolvePricingRegime("megaeth-2099").osakaActive === false);
 check("MODEXP_EIP7883_REPRICE_FACTOR = 6", MODEXP_EIP7883_REPRICE_FACTOR === 6);
 
-console.log(`\nmodexp-calc: ${pass} PASS, ${fail} FAIL`);
-process.exit(fail ? 1 : 0);
+// --- v5.13.0 dynamic regime map (db rows + staleness + snapshot fallback) -----
+const NOW_ISO = new Date().toISOString();
+const OLD_ISO = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(); // 45d > 30d TTL
+
+// Baseline: no dynamic rows -> snapshot path, disclosed as such.
+__setDynamicRegimesForTest(null);
+check("no-db: polygon resolves via snapshot", (() => { const r = resolvePricingRegime("polygon"); return r.regime === "eip7883" && r.source === "snapshot" && r.regimeStale === false; })(), JSON.stringify(resolvePricingRegime("polygon")));
+check("no-db: unknown chain conservative", (() => { const r = resolvePricingRegime("megaeth-2099"); return r.regime === "eip2565" && r.source === "conservative" && r.regimeStale === false; })());
+
+// Fresh db row WINS over snapshot (polygon snapshot says 7883; fresh db row says 2565 -> db wins).
+__setDynamicRegimesForTest([
+  { chain_key: "polygon", regime: "eip2565", probed_at: NOW_ISO, source: "probe", note: "test row", stale_after_days: 30 },
+]);
+check("db-fresh beats snapshot (polygon eip2565 from db)", (() => { const r = resolvePricingRegime("polygon"); return r.regime === "eip2565" && r.source === "db" && r.probedAt === NOW_ISO && r.regimeStale === false; })(), JSON.stringify(resolvePricingRegime("polygon")));
+check("db-fresh: alias matic hits db row too", resolvePricingRegime("matic").source === "db");
+check("db-fresh: ethereum (no db row) still snapshot", resolvePricingRegime("ethereum").source === "snapshot");
+
+// Fresh db row for a chain ABSENT from the snapshot map.
+__setDynamicRegimesForTest([
+  { chain_key: "zksync", regime: "eip7883", probed_at: NOW_ISO, source: "probe", note: null, stale_after_days: 30 },
+]);
+check("db-fresh new chain (zksync eip7883) served from db", (() => { const r = resolvePricingRegime("zksync"); return r.regime === "eip7883" && r.source === "db" && r.osakaActive === true; })(), JSON.stringify(resolvePricingRegime("zksync")));
+
+// STALE db row -> refused; conservative eip2565 + regime_stale (never silently serve expired map).
+__setDynamicRegimesForTest([
+  { chain_key: "polygon", regime: "eip7883", probed_at: OLD_ISO, source: "probe", note: "old row", stale_after_days: 30 },
+]);
+check("db-stale refused: conservative + regime_stale", (() => { const r = resolvePricingRegime("polygon"); return r.regime === "eip2565" && r.osakaActive === false && r.source === "conservative" && r.regimeStale === true && r.probedAt === OLD_ISO; })(), JSON.stringify(resolvePricingRegime("polygon")));
+check("db-stale: other chains unaffected (ethereum snapshot)", resolvePricingRegime("ethereum").source === "snapshot");
+
+// Stale with unparseable probed_at -> also refused (fail-safe).
+__setDynamicRegimesForTest([
+  { chain_key: "base", regime: "eip7883", probed_at: "not-a-date", source: "probe", note: null, stale_after_days: 30 },
+]);
+check("db row with bad probed_at refused (conservative+stale)", (() => { const r = resolvePricingRegime("base"); return r.regime === "eip2565" && r.source === "conservative" && r.regimeStale === true; })(), JSON.stringify(resolvePricingRegime("base")));
+
+// Custom TTL honored (1 day TTL, 2-day-old probe -> stale).
+__setDynamicRegimesForTest([
+  { chain_key: "optimism", regime: "eip7883", probed_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), source: "probe", note: null, stale_after_days: 1 },
+]);
+check("custom TTL=1d: 2-day-old row stale", (() => { const r = resolvePricingRegime("optimism"); return r.regimeStale === true && r.regime === "eip2565"; })(), JSON.stringify(resolvePricingRegime("optimism")));
+
+// ensureRegimeMapFresh contract: non-fatal without a usable client (snapshot mode kept).
+__setDynamicRegimesForTest(null);
+// (wrapped: this file runs as CJS under tsx — no top-level await)
+(async () => {
+  await ensureRegimeMapFresh(null);
+  await ensureRegimeMapFresh({});
+  check("ensureRegimeMapFresh non-fatal on bad client (snapshot kept)", resolvePricingRegime("polygon").source === "snapshot");
+  __setDynamicRegimesForTest(null);
+
+  console.log(`\nmodexp-calc: ${pass} PASS, ${fail} FAIL`);
+  process.exit(fail ? 1 : 0);
+})();

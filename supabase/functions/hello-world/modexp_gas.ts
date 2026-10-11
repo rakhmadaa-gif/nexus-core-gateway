@@ -1,4 +1,5 @@
-// modexp_gas.ts — v5.12.2: dual-regime MODEXP precompile pricing (BS-008 v2 fork-awareness).
+// modexp_gas.ts — v5.13.0: dual-regime MODEXP precompile pricing (BS-008 v2 fork-awareness)
+// with DYNAMIC regime map (chain_regimes DB table + embedded snapshot fallback).
 //
 // Two live pricing regimes for the MODEXP precompile (0x05) exist side by side:
 //   - EIP-2565 (Berlin-era, now only a conservative default for unknown chains)
@@ -68,9 +69,85 @@ export interface ChainPricingInfo {
   chainKey: string;      // normalized chain key actually used (or the raw unknown input)
   since: string | null;  // activation date for eip7883 chains
   note: string;
+  source: "db" | "snapshot" | "conservative"; // where the verdict came from (v5.13.0)
+  regimeStale: boolean;  // true when a live-map entry exceeded its TTL and we fell back to conservative
+  probedAt: string | null; // last live-probe timestamp for the entry used (db rows only)
 }
 
 interface RegimeEntry { regime: ModexpPricingRegime; since: string | null; note: string }
+
+// ---------------------------------------------------------------------------
+// v5.13.0 DYNAMIC REGIME MAP — chain_regimes table + snapshot fallback.
+//
+// The embedded CHAIN_PRICING_REGIMES map below is now ONLY a snapshot fallback
+// (frozen at probe date 2026-10-11). The live source of truth is the
+// public.chain_regimes Supabase table, refreshed weekly by
+// scripts/probe-modexp-regimes.mjs (upsert mode). Handlers call
+// ensureRegimeMapFresh(supabase) before parsing; this module keeps a 10-minute
+// in-memory cache so the hot path stays sub-millisecond and deterministic.
+//
+// STALENESS RULE (user-mandated "no expired maps served silently"):
+// a db row whose probed_at is older than stale_after_days is NOT served — the
+// chain falls back to conservative eip2565 and the output carries
+// regime_stale: true. Failure direction is always "flag more, never silently
+// downgrade". Snapshot entries are served with source: "snapshot" (disclosed,
+// not silent) when the db is unreachable; they never mask a stale db row.
+// ---------------------------------------------------------------------------
+
+export interface DynamicRegimeRow {
+  chain_key: string;
+  regime: ModexpPricingRegime;
+  probed_at: string;
+  source: string | null;
+  note: string | null;
+  stale_after_days: number | null;
+}
+
+const DYNAMIC_TTL_MS = 10 * 60 * 1000; // 10-minute module cache (regimes change only at hardforks)
+const DEFAULT_STALE_AFTER_DAYS = 30;
+let dynamicRegimes: Record<string, DynamicRegimeRow> | null = null;
+let dynamicFetchedAt = 0;
+
+/** Refresh the in-module regime cache from public.chain_regimes. Non-fatal by
+ *  contract: any failure leaves the previous cache (or null = snapshot mode). */
+export async function ensureRegimeMapFresh(supabase: unknown): Promise<void> {
+  if (dynamicRegimes !== null && Date.now() - dynamicFetchedAt < DYNAMIC_TTL_MS) return;
+  try {
+    if (!supabase || typeof (supabase as { from?: unknown }).from !== "function") return;
+    const fetchPromise = (supabase as {
+      from: (t: string) => {
+        select: (c: string) => { limit: (n: number) => Promise<{ data?: DynamicRegimeRow[] | null; error?: unknown }> };
+      };
+    }).from("chain_regimes")
+      .select("chain_key, regime, probed_at, source, note, stale_after_days")
+      .limit(500);
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("regime-map fetch timeout")), 4000));
+    const { data, error } = await Promise.race([fetchPromise, timeout]);
+    if (error || !Array.isArray(data)) return; // keep old cache / snapshot mode
+    const map: Record<string, DynamicRegimeRow> = {};
+    for (const row of data) {
+      if (row && typeof row.chain_key === "string" && (row.regime === "eip2565" || row.regime === "eip7883")) {
+        map[row.chain_key] = row;
+      }
+    }
+    dynamicRegimes = map;
+    dynamicFetchedAt = Date.now();
+  } catch {
+    // non-fatal: snapshot fallback
+  }
+}
+
+/** Test hook: inject (or clear) the dynamic map without a database. */
+export function __setDynamicRegimesForTest(rows: DynamicRegimeRow[] | null): void {
+  if (rows === null) {
+    dynamicRegimes = null;
+    dynamicFetchedAt = 0;
+    return;
+  }
+  dynamicRegimes = {};
+  for (const row of rows) dynamicRegimes[row.chain_key] = row;
+  dynamicFetchedAt = Date.now();
+}
 
 const CHAIN_PRICING_REGIMES: Record<string, RegimeEntry> = {
   // Verified Osaka deployments (extend only with sourced data AND/OR live probe):
@@ -104,13 +181,37 @@ const CHAIN_ALIASES: Record<string, string> = {
  *  (conservative for a security detector: flags more, never silently downgrades). */
 export function resolvePricingRegime(chain?: string | null): ChainPricingInfo {
   if (!chain || typeof chain !== "string" || chain.trim() === "") {
-    return { regime: "eip2565", osakaActive: false, chainKey: "default", since: null, note: "No chain supplied — conservative default eip2565." };
+    return { regime: "eip2565", osakaActive: false, chainKey: "default", since: null, note: "No chain supplied — conservative default eip2565.", source: "conservative", regimeStale: false, probedAt: null };
   }
   const raw = chain.trim().toLowerCase();
   const key = CHAIN_ALIASES[raw] ?? raw;
+
+  // 1) Live map (db). A stale db row is never served: conservative + regime_stale.
+  const row = dynamicRegimes?.[key];
+  if (row) {
+    const ttlDays = typeof row.stale_after_days === "number" && row.stale_after_days > 0 ? row.stale_after_days : DEFAULT_STALE_AFTER_DAYS;
+    const probedMs = Date.parse(row.probed_at);
+    const ageMs = Number.isFinite(probedMs) ? Date.now() - probedMs : Number.POSITIVE_INFINITY;
+    if (ageMs <= ttlDays * 24 * 60 * 60 * 1000) {
+      return {
+        regime: row.regime, osakaActive: row.regime === "eip7883", chainKey: key,
+        since: null, note: row.note ?? `Live chain_regimes entry (${row.source ?? "probe"}).`,
+        source: "db", regimeStale: false, probedAt: row.probed_at,
+      };
+    }
+    return {
+      regime: "eip2565", osakaActive: false, chainKey: key, since: null,
+      note: `Live chain_regimes entry for "${key}" is stale (probed_at ${row.probed_at}, TTL ${ttlDays}d) — refusing to serve an expired map; conservative eip2565.`,
+      source: "conservative", regimeStale: true, probedAt: row.probed_at,
+    };
+  }
+
+  // 2) Embedded snapshot fallback (disclosed via source: "snapshot").
   const entry = CHAIN_PRICING_REGIMES[key];
   if (entry) {
-    return { regime: entry.regime, osakaActive: entry.regime === "eip7883", chainKey: key, since: entry.since, note: entry.note };
+    return { regime: entry.regime, osakaActive: entry.regime === "eip7883", chainKey: key, since: entry.since, note: entry.note, source: "snapshot", regimeStale: false, probedAt: null };
   }
-  return { regime: "eip2565", osakaActive: false, chainKey: key, since: null, note: `Unknown chain "${raw}" — conservative default eip2565.` };
+
+  // 3) Unknown chain: conservative default.
+  return { regime: "eip2565", osakaActive: false, chainKey: key, since: null, note: `Unknown chain "${raw}" — conservative default eip2565.`, source: "conservative", regimeStale: false, probedAt: null };
 }
