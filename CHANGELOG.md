@@ -1,5 +1,55 @@
 # Nexus Gateway Changelog
 
+## v5.13.1-frontier — 2026-10-11
+
+### BS-008 v3: chain-aware precompile AVAILABILITY (ZK chains review #5 correction)
+- **New verdict class: `availability_blocked`.** The engine now checks whether
+  the precompiles a contract actually CALLS (RIPEMD-160 0x03, MODEXP 0x05,
+  BLAKE2f 0x09, pointEvaluation 0x0a) exist on the hinted chain. Calling a
+  missing precompile is a **deployment-blocking porting trap** (every such
+  call reverts at runtime): risk_level `high`, risk_score **0.9** (a new rung
+  below the 0.95 validator-delay class — availability, not compute
+  asymmetry), `deployable: false`, and a per-precompile detail naming the
+  chain and the consequence.
+- **Probe-verified missing sets** (live valid-vector probes 2026-10-11,
+  `scripts/probe-modexp-regimes.mjs` availability scan): zksync (324, era)
+  missing [0x03, 0x09, 0x0a]; polygon-zkevm (1101, zkevm) missing
+  [0x03, 0x05, 0x09] — no MODEXP at all, pricing_regime `"unsupported"`;
+  scroll (534352) missing [0x03, 0x09]; monad (143) + monad-testnet (10143)
+  missing [0x0a]; **linea (59144) has the FULL standard set** including
+  0x0a (KZG valid-vector verified).
+- **Build-probe corrected the review table twice** (methodology working as
+  designed — live probe > on-chain/source > docs): (1) zksync DOES have
+  MODEXP (3^5 mod 11 = 1 verified on-chain) with a ≤32-byte operand bound —
+  big-input probes revert even under eth_call, so the review's "0x05 REVERT"
+  row was a probing artifact; stored as `eip7883` with a BOUNDED-INPUT note.
+  (2) linea's 0x0a "REVERT" row was a zeros-input artifact; the valid KZG
+  vector returns 0x1000. Inconclusive empty-success responses (polygon-zkevm
+  and scroll 0x0a) are deliberately NOT claimed either way.
+- **MODEXP gas-ratio analysis is skipped when regime = "unsupported"** — the
+  availability verdict owns the outcome (ratio 0, `compute_to_gas_ratio` not
+  meaningful on a chain where the precompile does not exist).
+- **Dynamic by design (v5.13.0 architecture):** `chain_regimes` gains
+  `unsupported_precompiles text[]` (14 rows probed + upserted live);
+  resolution hierarchy db-fresh-with-column > snapshot > none; a stale or
+  column-less db row falls back to the embedded snapshot; an explicit empty
+  db list means "probed, nothing missing" and beats the snapshot.
+  `pricing_regime` enum extended with `"unsupported"` (db CHECK constraint
+  migrated live).
+- **New gas_asymmetry response fields** on dry-run / scan-quick / scan-deep /
+  fitness-full: `unsupported_precompiles` (detected ∩ chain-missing),
+  `unsupported_precompiles_source` (`db` | `snapshot` | `none`),
+  `availability_blocked`. Zero-diff guaranteed for chains without missing
+  precompiles and for absent/unknown chain hints (guarded by tests).
+- Validation: 87/87 modexp-calc (24 new availability + corrected-regime
+  cases) + 29/29 engine-regime + **41/41 new availability engine tests**
+  (tests/v513/) + W4 19/19+10/10+20/20 + W3 35/35+22/22+19/19 + offline
+  regression 17F/13NC 0 FAIL + live E2E 8/8 (polygon-zkevm+MODEXP blocked,
+  zksync+RIPEMD blocked, zksync+MODEXP NOT blocked ratio 2.2, linea+pointEval
+  NOT blocked, scroll+RIPEMD blocked, monad+pointEval blocked, no-chain
+  zero-diff, manifest 5.13.1-frontier 19 endpoints) + live regression
+  17F/13NC 0 FAIL (793ms avg) + paywall 402 intact.
+
 ## v5.13.0-frontier — 2026-10-11
 
 ### BS-008 v2: DYNAMIC regime map (chain_regimes table + staleness refusal)

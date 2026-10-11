@@ -50,6 +50,8 @@ import {
   MODEXP_EIP7883_REPRICE_FACTOR,
   resolvePricingRegime,
   ensureRegimeMapFresh,
+  resolveUnsupportedPrecompiles,
+  PRECOMPILE_LABELS,
 } from "./modexp_gas.ts";
 
 // ----------------------------------------------------------------------------
@@ -88,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.13.0-frontier",
+  engine_version: "v5.13.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -431,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.13.0-frontier",
+  version: "5.13.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -590,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.13.0-frontier (BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.13.1-frontier (BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4119,7 +4121,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.13.0",
+    version: "5.13.1",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4562,7 +4564,7 @@ const OPENAPI_SPEC = {
           chain: {
             type: "string",
             description:
-              "Optional chain hint (v5.12.0) — BS-008 MODEXP pricing regime: ethereum|eth|mainnet|1, base|8453, monad|143 and monad-testnet|10143 = EIP-7883 (Osaka, repriced ~6x, protocol-mitigated); polygon|matic|137 and unknown/absent = EIP-2565 (conservative default).",
+              "Optional chain hint (v5.13.1) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144 = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
             example: "ethereum",
           },
         },
@@ -4700,6 +4702,20 @@ entry older than its TTL is refused — conservative eip2565 is served with
 regime_stale: true instead of a silently expired map.
 Response fields: contract_info.gas_asymmetry .pricing_regime / .osaka_active /
 .regime_source / .regime_stale / .regime_probed_at.
+
+Chain-aware precompile AVAILABILITY (v5.13.1, ZK chains review #5): the engine
+also checks whether the precompiles your code actually CALLS exist on the
+target chain — a deployment-blocking porting trap. Probe-verified missing
+sets (live valid-vector probes, 2026-10-11): zksync (324, era) missing
+RIPEMD-160(0x03)/BLAKE2f(0x09)/pointEval(0x0a) — note MODEXP(0x05) DOES exist
+on zksync with a 32-byte operand bound; polygon-zkevm (1101, zkevm) missing
+0x03/0x05/0x09 (no MODEXP at all — pricing_regime "unsupported"); scroll
+(534352) missing 0x03/0x09; monad (143) and monad-testnet (10143) missing
+0x0a; linea (59144) has the FULL standard set. Calling a missing precompile
+yields availability_blocked: true, risk_level "high" (risk_score 0.9, class:
+availability — distinct from compute-asymmetry 0.95) and deployable: false.
+Response fields: contract_info.gas_asymmetry .unsupported_precompiles /
+.unsupported_precompiles_source / .availability_blocked.
 
 ## Fitness attestation (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
@@ -5310,12 +5326,16 @@ interface ParsedContract {
     dos_validator_delay: boolean;   // true when ratio > threshold — DoS/validator-delay warning flag
     ratio_basis: string;            // human-readable derivation of the ratio
     // v5.12.0 (BS-008 v2 fork-awareness): which MODEXP pricing regime the ratio was computed under
-    pricing_regime: "eip2565" | "eip7883"; // eip7883 = Osaka/Fusaka (Ethereum 2025-12-03+, Base 2026-05-28+)
+    pricing_regime: "eip2565" | "eip7883" | "unsupported"; // eip7883 = Osaka/Fusaka; unsupported = chain has NO MODEXP at all (v5.13.1, ZK chains)
     osaka_active: boolean;          // true when EIP-7883 repricing applies (MODEXP asymmetry protocol-mitigated)
     // v5.13.0 (dynamic regime map): provenance + staleness disclosure of the regime verdict
     regime_source: "db" | "snapshot" | "conservative"; // db = live chain_regimes row; snapshot = embedded fallback (db unreachable); conservative = unknown chain or stale row
     regime_stale: boolean;          // true when a live-map row exceeded its TTL and was refused (conservative eip2565 served instead — never a silently expired map)
     regime_probed_at: string | null; // last live-probe timestamp for the db row used
+    // v5.13.1 (BS-008 v3 precompile availability, ZK chains review #5):
+    unsupported_precompiles: number[];              // detected precompiles that DO NOT EXIST on the target chain (revert at runtime)
+    unsupported_precompiles_source: "db" | "snapshot" | "none"; // provenance of the availability list
+    availability_blocked: boolean;                  // true when any used precompile is missing on the target chain — deployment-blocking porting trap
   };
   // Phase 3.6 (v4.3.0): BS-009 Unbounded Iteration DoS + Signature Binding
   unbounded_iteration: {
@@ -5896,6 +5916,13 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   // relative to their gas cost. Based on EVM Protocol-Level Audit findings.
   const modexpCalls = (source.match(/\b0x05\b\s*\.staticcall|address\s*\(\s*0x05\s*\)|modexp\b/gi) || []).length;
   const hasModexp = modexpCalls > 0;
+  // v5.13.1 (BS-008 v3 precompile availability): detect usage of the other
+  // standard precompiles that ZK chains omit — RIPEMD-160 (0x03), BLAKE2f
+  // (0x09), KZG point evaluation (0x0a). Call-context patterns only (staticcall
+  // site / address(0xNN) wrapper / idiomatic name), mirroring MODEXP detection.
+  const ripemdCalls = (source.match(/\b0x03\b\s*\.staticcall|address\s*\(\s*0x03\s*\)|ripemd/gi) || []).length;
+  const blake2fCalls = (source.match(/\b0x09\b\s*\.staticcall|address\s*\(\s*0x09\s*\)|blake2/gi) || []).length;
+  const pointEvalCalls = (source.match(/\b0x0a\b\s*\.staticcall|address\s*\(\s*0x0a\s*\)|pointEvaluation|point_eval|\bkzg\b/gi) || []).length;
   // TSTORE loop detection: tstore inside a for/while loop with large iteration count
   const tstoreCount = (source.match(/\btstore\b/gi) || []).length;
   // v5.9.1 FP fix (OrbitalHook class): tstore must be lexically INSIDE a
@@ -5947,8 +5974,24 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   let ratioBasis = "";
   // v5.12.0: resolve MODEXP pricing regime from the chain hint (default eip2565 = conservative).
   const modexpPricing = resolvePricingRegime(chain);
+  // v5.13.1 (BS-008 v3): precompile AVAILABILITY — the pricing question only
+  // exists where the precompile exists. Intersect detected usage with the
+  // chain's missing-precompile list (probe-verified; ZK chains review #5).
+  const chainUnsupported = resolveUnsupportedPrecompiles(chain);
+  const precompileUse: Array<[number, number]> = [
+    [0x03, ripemdCalls], [0x05, modexpCalls], [0x09, blake2fCalls], [0x0a, pointEvalCalls],
+  ];
+  const unsupportedUsed = precompileUse
+    .filter(([addr, count]) => count > 0 && chainUnsupported.list.includes(addr))
+    .map(([addr]) => addr);
+  const availabilityBlocked = unsupportedUsed.length > 0;
   let modexpUnbounded = false; // true when MODEXP inputs are NOT small-bounded (asymmetry-class pattern)
-  if (hasModexp) {
+  if (hasModexp && modexpPricing.regime === "unsupported") {
+    // v5.13.1: MODEXP does not exist on this chain — no pricing regime applies.
+    // The availability path below carries the verdict; computing a gas ratio for
+    // a precompile that reverts at runtime would be meaningless.
+    ratioBasis = `MODEXP precompile (0x05) does not exist on ${modexpPricing.chainKey} — no pricing regime applies; availability path governs the verdict.`;
+  } else if (hasModexp) {
     // Static analysis: MODEXP input sizes bounded to small constants (< 32 bytes) are safe;
     // unbounded / dynamic / large-constant sizes sit in the asymmetry zone.
     // Bounded patterns (idiomatic): `input.length < 32`, `require(x.length <= 32)`,
@@ -5988,7 +6031,7 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
     ratioBasis = `Cold access flood: ${coldAccessCount} cold access opcodes, ratio ~2.5 (cache-flooding, below DoS threshold but I/O heavy).`;
   }
   // Quantitative risk score: > 12.5 → 0.95 (near-certain validator-delay DoS vector)
-  const gasAsymmetryRiskScore = gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD ? 0.95
+  let gasAsymmetryRiskScore = gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD ? 0.95
     : gasAsymmetryRatio > 5 ? 0.6
     : gasAsymmetryRatio > 0 ? 0.25
     : 0.05;
@@ -5997,9 +6040,12 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   const gasAsymmetryDetails: string[] = [];
   let gasAsymmetryRisk: "low" | "medium" | "high" = "low";
   if (hasModexp) {
-    // v5.5.3: bounded MODEXP (small fixed inputs, e.g. abi.encode(32,32,32,...)) is cheap
-    // (~35K gas, ratio 0.4) — not an asymmetry vector. Only unbounded/dynamic MODEXP is high.
-    if (gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD) {
+    if (modexpPricing.regime === "unsupported") {
+      // v5.13.1: availability path owns the MODEXP verdict on this chain —
+      // detail pushed by the availability block below.
+    } else if (gasAsymmetryRatio > GAS_ASYMMETRY_RATIO_THRESHOLD) {
+      // v5.5.3: bounded MODEXP (small fixed inputs, e.g. abi.encode(32,32,32,...)) is cheap
+      // (~35K gas, ratio 0.4) — not an asymmetry vector. Only unbounded/dynamic MODEXP is high.
       gasAsymmetryDetails.push(`MODEXP precompile (0x05) detected: ${modexpCalls} call site(s). MODEXP with 256-byte inputs can stall validators ~18s per 30M gas tx.`);
       gasAsymmetryRisk = "high";
     } else {
@@ -6021,6 +6067,21 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   }
   if (dosValidatorDelay) {
     gasAsymmetryDetails.push(`COMPUTE-TO-GAS RATIO ${gasAsymmetryRatio.toFixed(1)} > ${GAS_ASYMMETRY_RATIO_THRESHOLD} — riskScore ${gasAsymmetryRiskScore}. DoS/validator-delay WARNING: this opcode profile lets a cheap tx impose disproportionate CPU/RAM burden on validators. ${ratioBasis}`);
+  }
+  // v5.13.1 (BS-008 v3 precompile availability): a used precompile that is
+  // missing on the target chain is a deployment-blocking porting trap — the
+  // call reverts at runtime, so the contract cannot execute as written.
+  // Graded high with a dedicated 0.9 risk-score rung (documented: below the
+  // 0.95 validator-delay rung — this is an availability failure class, not a
+  // compute-asymmetry class).
+  if (availabilityBlocked) {
+    gasAsymmetryRisk = "high";
+    if (gasAsymmetryRiskScore < 0.9) gasAsymmetryRiskScore = 0.9;
+    for (const addr of unsupportedUsed) {
+      gasAsymmetryDetails.push(
+        `${PRECOMPILE_LABELS[addr] ?? `precompile 0x${addr.toString(16).padStart(2, "0")}`} is used by this contract but DOES NOT EXIST on ${chainUnsupported.chainKey} — the call reverts at runtime (probe-verified availability map, source: ${chainUnsupported.source}). Deployment-blocking porting trap: the contract cannot execute as written on this chain.`
+      );
+    }
   }
   if (gasAsymmetryDetails.length === 0) {
     gasAsymmetryDetails.push("No gas asymmetry patterns detected.");
@@ -6153,6 +6214,9 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       regime_source: modexpPricing.source,
       regime_stale: modexpPricing.regimeStale,
       regime_probed_at: modexpPricing.probedAt,
+      unsupported_precompiles: unsupportedUsed,
+      unsupported_precompiles_source: chainUnsupported.source,
+      availability_blocked: availabilityBlocked,
     },
     unbounded_iteration: {
       public_append_functions: publicAppendFuncs.map(f => f.name),

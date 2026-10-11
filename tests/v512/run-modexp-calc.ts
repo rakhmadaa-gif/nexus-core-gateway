@@ -5,6 +5,7 @@
 import {
   modexpGasEip2565, modexpGasEip7883, resolvePricingRegime, MODEXP_EIP7883_REPRICE_FACTOR,
   ensureRegimeMapFresh, __setDynamicRegimesForTest,
+  resolveUnsupportedPrecompiles,
 } from "../../supabase/functions/hello-world/modexp_gas.ts";
 
 let pass = 0, fail = 0;
@@ -122,6 +123,59 @@ check("custom TTL=1d: 2-day-old row stale", (() => { const r = resolvePricingReg
 
 // ensureRegimeMapFresh contract: non-fatal without a usable client (snapshot mode kept).
 __setDynamicRegimesForTest(null);
+
+// --- v5.13.1: precompile AVAILABILITY resolver (BS-008 v3, ZK review #5) -----
+// Snapshot verdicts (valid-vector live probes 2026-10-11).
+__setDynamicRegimesForTest(null);
+check("avail: no chain → [] / none", (() => { const r = resolveUnsupportedPrecompiles(undefined); return r.list.length === 0 && r.source === "none"; })());
+check("avail: zksync snapshot [3,9,10] (MODEXP exists — ≤32B bound)", (() => { const r = resolveUnsupportedPrecompiles("zksync"); return JSON.stringify(r.list) === "[3,9,10]" && r.source === "snapshot"; })(), JSON.stringify(resolveUnsupportedPrecompiles("zksync")));
+check("avail: polygon-zkevm snapshot [3,5,9]", (() => { const r = resolveUnsupportedPrecompiles("polygon-zkevm"); return JSON.stringify(r.list) === "[3,5,9]" && r.source === "snapshot"; })(), JSON.stringify(resolveUnsupportedPrecompiles("polygon-zkevm")));
+check("avail: scroll snapshot [3,9]", JSON.stringify(resolveUnsupportedPrecompiles("scroll").list) === "[3,9]");
+check("avail: linea FULL set []", (() => { const r = resolveUnsupportedPrecompiles("linea"); return r.list.length === 0 && r.source === "none"; })(), JSON.stringify(resolveUnsupportedPrecompiles("linea")));
+check("avail: monad snapshot [10]", JSON.stringify(resolveUnsupportedPrecompiles("monad").list) === "[10]");
+check("avail: monad-testnet snapshot [10]", JSON.stringify(resolveUnsupportedPrecompiles("monad-testnet").list) === "[10]");
+check("avail: ethereum [] (standard set)", resolveUnsupportedPrecompiles("ethereum").list.length === 0);
+check("avail: unknown chain [] / none", (() => { const r = resolveUnsupportedPrecompiles("megaeth-2099"); return r.list.length === 0 && r.source === "none"; })());
+check("avail: aliases 324/era → zksync", JSON.stringify(resolveUnsupportedPrecompiles("324").list) === "[3,9,10]" && JSON.stringify(resolveUnsupportedPrecompiles("era").list) === "[3,9,10]");
+check("avail: aliases 1101/zkevm → polygon-zkevm", JSON.stringify(resolveUnsupportedPrecompiles("1101").list) === "[3,5,9]" && JSON.stringify(resolveUnsupportedPrecompiles("zkevm").list) === "[3,5,9]");
+check("avail: alias 534352 → scroll", JSON.stringify(resolveUnsupportedPrecompiles("534352").list) === "[3,9]");
+check("avail: alias 59144 → linea []", resolveUnsupportedPrecompiles("59144").list.length === 0);
+check("avail: alias 143 → monad [10]", JSON.stringify(resolveUnsupportedPrecompiles("143").list) === "[10]");
+check("avail: case-insensitive ZKSYNC", JSON.stringify(resolveUnsupportedPrecompiles("ZKSYNC").list) === "[3,9,10]");
+
+// Dynamic (db) hierarchy for availability: fresh-with-column > snapshot > stale→snapshot.
+__setDynamicRegimesForTest([
+  { chain_key: "zksync", regime: "eip7883", probed_at: NOW_ISO, source: "probe", note: "t", stale_after_days: 30, unsupported_precompiles: ["0x03", "0x09"] },
+]);
+check("avail: db-fresh list beats snapshot", (() => { const r = resolveUnsupportedPrecompiles("zksync"); return JSON.stringify(r.list) === "[3,9]" && r.source === "db"; })(), JSON.stringify(resolveUnsupportedPrecompiles("zksync")));
+__setDynamicRegimesForTest([
+  { chain_key: "scroll", regime: "eip7883", probed_at: NOW_ISO, source: "probe", note: "t", stale_after_days: 30, unsupported_precompiles: [] },
+]);
+check("avail: db-fresh EMPTY list means probed-nothing-missing (beats snapshot)", (() => { const r = resolveUnsupportedPrecompiles("scroll"); return r.list.length === 0 && r.source === "db"; })(), JSON.stringify(resolveUnsupportedPrecompiles("scroll")));
+__setDynamicRegimesForTest([
+  { chain_key: "zksync", regime: "eip7883", probed_at: OLD_ISO, source: "probe", note: "t", stale_after_days: 30, unsupported_precompiles: ["0x05"] },
+]);
+check("avail: db-STALE falls back to snapshot (expired live data never served)", (() => { const r = resolveUnsupportedPrecompiles("zksync"); return JSON.stringify(r.list) === "[3,9,10]" && r.source === "snapshot"; })(), JSON.stringify(resolveUnsupportedPrecompiles("zksync")));
+__setDynamicRegimesForTest([
+  { chain_key: "zksync", regime: "eip7883", probed_at: NOW_ISO, source: "probe", note: "legacy row without column", stale_after_days: 30 },
+]);
+check("avail: db row WITHOUT column falls back to snapshot", (() => { const r = resolveUnsupportedPrecompiles("zksync"); return JSON.stringify(r.list) === "[3,9,10]" && r.source === "snapshot"; })(), JSON.stringify(resolveUnsupportedPrecompiles("zksync")));
+__setDynamicRegimesForTest([
+  { chain_key: "polygon-zkevm", regime: "unsupported", probed_at: NOW_ISO, source: "probe", note: "t", stale_after_days: 30, unsupported_precompiles: ["0x3", "0x5", "0x9"] },
+]);
+check("avail: db hex without leading zero parses", (() => { const r = resolveUnsupportedPrecompiles("polygon-zkevm"); return JSON.stringify(r.list) === "[3,5,9]" && r.source === "db"; })(), JSON.stringify(resolveUnsupportedPrecompiles("polygon-zkevm")));
+
+// Pricing regime for the corrected ZK map (build-probe corrections 2026-10-11).
+__setDynamicRegimesForTest(null);
+check("regime: zksync = eip7883 (MODEXP exists, bounded)", (() => { const r = resolvePricingRegime("zksync"); return r.regime === "eip7883" && r.osakaActive === true; })(), JSON.stringify(resolvePricingRegime("zksync")));
+check("regime: polygon-zkevm = unsupported, osakaActive false", (() => { const r = resolvePricingRegime("polygon-zkevm"); return r.regime === "unsupported" && r.osakaActive === false; })(), JSON.stringify(resolvePricingRegime("polygon-zkevm")));
+check("regime: scroll/linea eip7883", resolvePricingRegime("scroll").regime === "eip7883" && resolvePricingRegime("linea").regime === "eip7883");
+__setDynamicRegimesForTest([
+  { chain_key: "polygon-zkevm", regime: "unsupported", probed_at: NOW_ISO, source: "probe", note: "t", stale_after_days: 30 },
+]);
+check("regime: db row with regime=unsupported accepted (fresh)", (() => { const r = resolvePricingRegime("polygon-zkevm"); return r.regime === "unsupported" && r.source === "db"; })(), JSON.stringify(resolvePricingRegime("polygon-zkevm")));
+__setDynamicRegimesForTest(null);
+
 // (wrapped: this file runs as CJS under tsx — no top-level await)
 (async () => {
   await ensureRegimeMapFresh(null);
