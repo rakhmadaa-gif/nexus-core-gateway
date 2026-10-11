@@ -69,6 +69,12 @@ async function gasAsym(src, chain) {
   check("polygon: eip2565 still flagged high", pPoly.gas_asymmetry.osaka_active === false && pPoly.gas_asymmetry.risk_level === "high", pPoly.gas_asymmetry.risk_level);
   const pArb = engine.parseSolidityContract(MODEXP_UNBOUNDED, "arbitrum");
   check("arbitrum (unverified): conservative eip2565 high", pArb.gas_asymmetry.osaka_active === false && pArb.gas_asymmetry.risk_level === "high", pArb.gas_asymmetry.risk_level);
+  const pMonad = engine.parseSolidityContract(MODEXP_UNBOUNDED, "monad");
+  check("monad: eip7883 (MONAD_NINE Osaka) not high", pMonad.gas_asymmetry.osaka_active === true && pMonad.gas_asymmetry.pricing_regime === "eip7883" && pMonad.gas_asymmetry.risk_level !== "high", `${pMonad.gas_asymmetry.pricing_regime}/${pMonad.gas_asymmetry.risk_level}`);
+  const pMonad143 = engine.parseSolidityContract(MODEXP_UNBOUNDED, "143");
+  check("monad chain-id 143: eip7883", pMonad143.gas_asymmetry.osaka_active === true, pMonad143.gas_asymmetry.pricing_regime);
+  const pMonadTest = engine.parseSolidityContract(MODEXP_UNBOUNDED, "monad-testnet");
+  check("monad-testnet: eip7883", pMonadTest.gas_asymmetry.osaka_active === true, pMonadTest.gas_asymmetry.pricing_regime);
 }
 // TSTORE unaffected by 7883 (guard test).
 {

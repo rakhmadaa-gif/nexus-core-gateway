@@ -1,5 +1,26 @@
 # Nexus Gateway Changelog
 
+## v5.12.1-frontier — 2026-10-11
+
+### BS-008 v2 regime map: Monad (Osaka) added
+- Protocol-review correction #3 (see `reference/monad-protocol-review.md`):
+  Monad mainnet (chain id 143) activated Osaka EIPs (EIP-7823/7883/7939) at
+  MONAD_NINE, 2026-03-19; Monad testnet (10143) at 2026-03-10. Mechanically
+  source-verified in category-labs/monad: `traits.hpp` `eip_7883_active()`
+  gated on `evm_rev() >= MONAD_ETH_OSAKA`, `monad_mainnet.cpp` /
+  `monad_testnet.cpp` revision gates, and `precompiles_gas_cost_impl.cpp`
+  EIP-7883 MODEXP constants (exp_mult 16, min 500, words multiplier) live on
+  mainnet (RPC-probed: chainId 0x8f, block gas limit 150M, base fee 100 gwei).
+- Regime map: `monad` / `monad-mainnet` / `143` and `monad-testnet` / `10143`
+  → `eip7883`. Previously a `chain=monad` hint fell through to the
+  conservative eip2565 default and over-flagged unbounded-MODEXP contracts
+  that are protocol-mitigated on Monad.
+- Zero behavior change for all other chains (verified-only map discipline;
+  unknown/absent → eip2565 conservative default unchanged).
+- Tests: 41/41 modexp-calc (regime map + Monad aliases), 24/24 engine-regime
+  (monad/143/monad-testnet → eip7883, not-high), offline regression mirror
+  0 FAIL.
+
 ## v5.12.0-frontier — 2026-10-11
 
 ### BS-008 v2: fork-aware MODEXP pricing (gas asymmetry)

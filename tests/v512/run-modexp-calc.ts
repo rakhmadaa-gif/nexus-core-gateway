@@ -61,6 +61,8 @@ const cases: Array<[string | null | undefined, string, boolean]> = [
   ["base", "eip7883", true], ["8453", "eip7883", true],
   ["polygon", "eip2565", false], ["matic", "eip2565", false], ["137", "eip2565", false],
   ["arbitrum", "eip2565", false], ["optimism", "eip2565", false], ["solana", "eip2565", false],
+  ["monad", "eip7883", true], ["143", "eip7883", true], ["monad-mainnet", "eip7883", true],
+  ["monad-testnet", "eip7883", true], ["10143", "eip7883", true],
   [undefined, "eip2565", false], [null, "eip2565", false], ["", "eip2565", false],
 ];
 for (const [input, regime, osaka] of cases) {

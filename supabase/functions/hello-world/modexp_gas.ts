@@ -69,6 +69,8 @@ const CHAIN_PRICING_REGIMES: Record<string, RegimeEntry> = {
   // Verified Osaka deployments (facts as of 2026-10-11 — extend only with sourced data):
   ethereum: { regime: "eip7883", since: "2025-12-03", note: "Fusaka/Osaka mainnet activation (EIP-7607, epoch 411392)." },
   base: { regime: "eip7883", since: "2026-05-28", note: "Base Azul hardfork = Osaka EVM support." },
+  monad: { regime: "eip7883", since: "2026-03-19", note: "MONAD_NINE mainnet activates Osaka EIPs (EIP-7823/7883/7939). Source-verified: traits.hpp eip_7883_active() w/ evm_rev>=MONAD_ETH_OSAKA; monad_mainnet.cpp revision gate 2026-03-19T14:30Z." },
+  "monad-testnet": { regime: "eip7883", since: "2026-03-10", note: "MONAD_NINE testnet activates Osaka EIPs. Source-verified: monad_testnet.cpp revision gate 2026-03-10T14:30Z." },
   // Verified NOT Osaka (still EIP-2565 pricing):
   polygon: { regime: "eip2565", since: null, note: "No Bor Osaka adoption found as of 2026-10-11 — EIP-2565 pricing still applies." },
 };
@@ -77,6 +79,8 @@ const CHAIN_ALIASES: Record<string, string> = {
   eth: "ethereum", mainnet: "ethereum", "ethereum-mainnet": "ethereum", "1": "ethereum",
   "base-mainnet": "base", "8453": "base",
   matic: "polygon", "polygon-pos": "polygon", "137": "polygon",
+  "monad-mainnet": "monad", "143": "monad",
+  "10143": "monad-testnet",
 };
 
 /** Resolve the MODEXP pricing regime for a chain. Unknown chains default to eip2565

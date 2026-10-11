@@ -87,7 +87,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.12.0-frontier",
+  engine_version: "v5.12.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -430,7 +430,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.12.0-frontier",
+  version: "5.12.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -589,7 +589,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.12.0-frontier (BS-008 v2 fork-aware MODEXP pricing (EIP-2565 vs EIP-7883, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.12.1-frontier (BS-008 v2 fork-aware MODEXP pricing (EIP-2565 vs EIP-7883, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4113,7 +4113,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.12.0",
+    version: "5.12.1",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4556,7 +4556,7 @@ const OPENAPI_SPEC = {
           chain: {
             type: "string",
             description:
-              "Optional chain hint (v5.12.0) — BS-008 MODEXP pricing regime: ethereum|eth|mainnet|1 and base|8453 = EIP-7883 (Osaka, repriced ~6x, protocol-mitigated); polygon|matic|137 and unknown/absent = EIP-2565 (conservative default).",
+              "Optional chain hint (v5.12.0) — BS-008 MODEXP pricing regime: ethereum|eth|mainnet|1, base|8453, monad|143 and monad-testnet|10143 = EIP-7883 (Osaka, repriced ~6x, protocol-mitigated); polygon|matic|137 and unknown/absent = EIP-2565 (conservative default).",
             example: "ethereum",
           },
         },
@@ -4679,13 +4679,13 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
   Read-only static scan, no wallet approval required.
 
-Optional "chain" hint on scan endpoints and the free dry-run (v5.12.0):
+Optional "chain" hint on scan endpoints and the free dry-run (v5.12.1):
 BS-008 gas-asymmetry MODEXP pricing is fork-aware. chain=ethereum (or eth,
-mainnet, 1) and chain=base (or 8453) use EIP-7883 (Osaka) pricing, where the
-canonical MODEXP asymmetry class is repriced ~6x and protocol-mitigated; any
-other value, or none, keeps the conservative EIP-2565 default (flags more,
-never silently downgrades). Response field: contract_info.gas_asymmetry
-.pricing_regime / .osaka_active.
+mainnet, 1), chain=base (or 8453), and chain=monad (or 143, monad-testnet,
+10143) use EIP-7883 (Osaka) pricing, where the canonical MODEXP asymmetry
+class is repriced ~6x and protocol-mitigated; any other value, or none, keeps
+the conservative EIP-2565 default (flags more, never silently downgrades).
+Response field: contract_info.gas_asymmetry .pricing_regime / .osaka_active.
 
 ## Fitness attestation (paid, x402 exact, USDC on Polygon PoS eip155:137)
 
