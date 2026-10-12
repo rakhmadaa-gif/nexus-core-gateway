@@ -1,5 +1,32 @@
 # Nexus Gateway Changelog
 
+## v5.14.2-frontier — 2026-10-12
+
+### BS-015 HyperCore Porting Trap (HyperEVM protocol review #6 class)
+- **New scenario 15/15: HyperCore Porting Trap.** Contracts calling HyperCore
+  read precompiles (`0x0800`-`0x0813`) or the CoreWriter
+  (`0x3333...3333`) — addresses that exist ONLY on HyperEVM (chains 999/998) —
+  are graded chain-aware:
+  - `chain=hyperevm|hyperevm-testnet` (or 999/998 aliases): valid usage, no flag.
+  - Known non-HyperEVM chain hint: **HIGH** — the call reverts on ABI decode
+    (empty returndata) or silently returns zeros on low-level calls; the
+    contract cannot execute as written. `deployable=false`.
+  - Absent/unknown chain hint: **MEDIUM** — undeclared target chain,
+    unverifiable availability.
+- Named-constant resolution: functions referencing a constant whose value is a
+  HyperCore address (e.g. `address constant CORE_WRITER = 0x3333...`) are
+  attributed, not only literal call sites. Comments/strings stripped before
+  matching.
+- Closes the "koreksi proyek" loop of Protocol Review #6 (HyperEVM) — the
+  porting-trap direction complementing BS-008 v3 availability_blocked (which
+  covers standard precompiles missing on ZK chains; BS-015 covers
+  chain-specific precompiles used on foreign chains).
+- Wiring: dry-run `contract_info.hypercore_porting`, scan-deep
+  `hypercore_porting`, breach scenario list, `deployable` gate (high only).
+- Tests: `tests/v5142/` — 11 unit cases (grading ladder, aliases, constant
+  indirection, comment-strip, deployable gate) + offline regression 25F/17NC
+  0 FAIL (NC17 HyperCore-trap permanent negative control).
+
 ## v5.14.0-frontier — 2026-10-12
 
 ### BS-014 Phantom Vote detection (Confetti GHSA-3g9w-x8qp-2qpq class)

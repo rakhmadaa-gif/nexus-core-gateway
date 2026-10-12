@@ -210,7 +210,7 @@ paths:
         - Syntax validation (errors, warnings, info)
         - Contract info with capability detection (pause, ownership, mint, burn)
         - Digital Twin v3.1 matrix with bipolar mapping (clause → code)
-        - Breach simulation (14 scenarios: BS-001 through BS-014)
+        - Breach simulation (15 scenarios: BS-001 through BS-015)
         - Nonce & replay defense check (optional DB query)
         - Algorithmic nudging urgency signal
         - Deployable flag (false when critical or replay detected)
