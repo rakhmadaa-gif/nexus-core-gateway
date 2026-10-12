@@ -1,5 +1,29 @@
 # Nexus Gateway Changelog
 
+## v5.14.3-frontier — 2026-10-12
+
+### BS-008 regime map + Berachain/Bepolia (Protocol Review #7 correction)
+- **Berachain mainnet (80094) and Bepolia testnet (80069) added to the
+  EIP-7883 regime.** Live MODEXP price probe (2026-10-12): BIG 554,303 /
+  SMALL 27,380 gas on both chains — identical to the Osaka schedule.
+  Source-verified: bera-reth uses stock revm precompiles
+  (`Precompiles::new(PrecompileSpecId::from_spec_id(spec_id))`, zero custom
+  precompiles); Fusaka-class EIPs active via BRIP-0010 (mainnet 2026-06-24,
+  Bepolia 2026-05-27). Previously both chains fell through to the conservative
+  EIP-2565 default and over-flagged protocol-mitigated MODEXP contracts.
+- Aliases: `berachain`, `bera`, `berachain-mainnet`, `80094`; `bepolia`,
+  `berachain-testnet`, `80069`.
+- Full standard precompile set on both chains (incl. BLS 0x0b–0x11 and
+  P-256 0x100 at the standard EIP-7951 price) — no availability_blocked
+  entries.
+- Probe script now covers 18 chains; chain_regimes DB upserted 18/18.
+- **Zero behavior change for all other chains** (unknown/absent chain hint
+  still serves conservative EIP-2565).
+- Validation: 97/97 modexp-calc + 40/40 engine-regime + 42/42 offline
+  regression (22F/3G/17NC) + W4 19/19+10/10+20/20 + W3 35/35+22/22+19/19 +
+  v513 41/41 + v514 9/9+11/11 + v5142 12/12 + live E2E 12/12 + live
+  regression 22F/3G/17NC 0 FAIL (844ms).
+
 ## v5.14.2-frontier — 2026-10-12
 
 ### BS-015 HyperCore Porting Trap (HyperEVM protocol review #6 class)

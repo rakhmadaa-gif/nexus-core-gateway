@@ -70,6 +70,9 @@ const cases: Array<[string | null | undefined, string, boolean]> = [
   ["solana", "eip2565", false],
   ["monad", "eip7883", true], ["143", "eip7883", true], ["monad-mainnet", "eip7883", true],
   ["monad-testnet", "eip7883", true], ["10143", "eip7883", true],
+  // v5.14.3 Berachain (Protocol Review #7, probe-verified 2026-10-12):
+  ["berachain", "eip7883", true], ["bera", "eip7883", true], ["berachain-mainnet", "eip7883", true], ["80094", "eip7883", true],
+  ["bepolia", "eip7883", true], ["berachain-testnet", "eip7883", true], ["80069", "eip7883", true],
   [undefined, "eip2565", false], [null, "eip2565", false], ["", "eip2565", false],
 ];
 for (const [input, regime, osaka] of cases) {
@@ -141,6 +144,10 @@ check("avail: aliases 1101/zkevm → polygon-zkevm", JSON.stringify(resolveUnsup
 check("avail: alias 534352 → scroll", JSON.stringify(resolveUnsupportedPrecompiles("534352").list) === "[3,9]");
 check("avail: alias 59144 → linea []", resolveUnsupportedPrecompiles("59144").list.length === 0);
 check("avail: alias 143 → monad [10]", JSON.stringify(resolveUnsupportedPrecompiles("143").list) === "[10]");
+// v5.14.3 Berachain: full standard set → no unsupported entries.
+check("avail: berachain [] (full standard set)", resolveUnsupportedPrecompiles("berachain").list.length === 0);
+check("avail: bepolia [] (full standard set)", resolveUnsupportedPrecompiles("bepolia").list.length === 0);
+check("avail: alias 80094 → berachain []", resolveUnsupportedPrecompiles("80094").list.length === 0);
 check("avail: case-insensitive ZKSYNC", JSON.stringify(resolveUnsupportedPrecompiles("ZKSYNC").list) === "[3,9,10]");
 
 // Dynamic (db) hierarchy for availability: fresh-with-column > snapshot > stale→snapshot.

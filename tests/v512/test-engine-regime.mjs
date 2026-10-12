@@ -94,6 +94,19 @@ async function gasAsym(src, chain) {
   check("hyperliquid alias: eip2565", pHyperAlias.gas_asymmetry.pricing_regime === "eip2565", pHyperAlias.gas_asymmetry.pricing_regime);
   // Full standard precompile set on HyperEVM → no availability_blocked verdict.
   check("hyperevm: no availability_blocked", pHyper.gas_asymmetry.availability_blocked !== true, String(pHyper.gas_asymmetry.availability_blocked));
+  // v5.14.3 Berachain (Protocol Review #7, probe-verified 2026-10-12):
+  const pBera = engine.parseSolidityContract(MODEXP_UNBOUNDED, "berachain");
+  check("berachain: eip7883 (Fusaka BRIP-0010) not high", pBera.gas_asymmetry.pricing_regime === "eip7883" && pBera.gas_asymmetry.osaka_active === true && pBera.gas_asymmetry.risk_level !== "high", `${pBera.gas_asymmetry.pricing_regime}/${pBera.gas_asymmetry.risk_level}`);
+  const pBera80094 = engine.parseSolidityContract(MODEXP_UNBOUNDED, "80094");
+  check("berachain chain-id 80094: eip7883", pBera80094.gas_asymmetry.pricing_regime === "eip7883" && pBera80094.gas_asymmetry.osaka_active === true, pBera80094.gas_asymmetry.pricing_regime);
+  const pBepolia = engine.parseSolidityContract(MODEXP_UNBOUNDED, "bepolia");
+  check("bepolia: eip7883", pBepolia.gas_asymmetry.pricing_regime === "eip7883" && pBepolia.gas_asymmetry.osaka_active === true, pBepolia.gas_asymmetry.pricing_regime);
+  const pBepolia80069 = engine.parseSolidityContract(MODEXP_UNBOUNDED, "80069");
+  check("bepolia chain-id 80069: eip7883", pBepolia80069.gas_asymmetry.pricing_regime === "eip7883", pBepolia80069.gas_asymmetry.pricing_regime);
+  const pBeraAlias = engine.parseSolidityContract(MODEXP_UNBOUNDED, "bera");
+  check("bera alias: eip7883", pBeraAlias.gas_asymmetry.pricing_regime === "eip7883", pBeraAlias.gas_asymmetry.pricing_regime);
+  // Full standard precompile set on Berachain → no availability_blocked verdict.
+  check("berachain: no availability_blocked", pBera.gas_asymmetry.availability_blocked !== true, String(pBera.gas_asymmetry.availability_blocked));
 }
 // TSTORE unaffected by 7883 (guard test).
 {

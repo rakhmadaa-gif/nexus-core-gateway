@@ -66,6 +66,8 @@ const CHAINS = [
   ["linea", "https://rpc.linea.build"],
   ["hyperevm", "https://rpc.hyperliquid.xyz/evm"],
   ["hyperevm-testnet", "https://rpc.hyperliquid-testnet.xyz/evm"],
+  ["berachain", "https://rpc.berachain.com"],
+  ["bepolia", "https://bepolia.rpc.berachain.com"],
 ];
 
 function modexpCalldata(baseLen, expLen, modLen) {

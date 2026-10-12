@@ -90,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.14.1-frontier",
+  engine_version: "v5.14.3-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.14.1-frontier",
+  version: "5.14.3-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -467,7 +467,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /evm-sentinel/v1/scan-deep": {
-      description: "EVM Sentinel Deep-Scan — full 12+2 scenario breach analysis (BS-001..BS-009 core + BS-010 Permit2-drain + BS-011 arbitrage-manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
+      description: "EVM Sentinel Deep-Scan — full 12+2 scenario breach analysis (BS-001..BS-009 core + BS-010 Permit2-drain + BS-011 arbitrage-manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote + BS-015 HyperCore porting trap (chain-aware)). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -592,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.14.1-frontier (validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.14.3-frontier (BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1207,7 +1207,7 @@ const PRICING_MODEL = {
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
     fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — W3: gas rank + base attestation + per-advisory Exploitability Score (fixed public formula) + source-match vs explorer-verified on-chain source ($2.25) [LIVE — reference/w3-fitness-full-spec.md]" },
-    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
+    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + top 3 detected exploit scenarios by severity + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -4171,7 +4171,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis",
         description:
-          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
+          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote + BS-015 HyperCore porting trap, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
         "x-pricing": "0.50 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["drainer-detector", "risk-gate", "permit2-drain", "arbitrage-manipulation"],
         requestBody: {
@@ -4682,7 +4682,7 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Output: { "risk_score": 0.0-1.0, "breach_scenarios": ["BS-001", ...],
   "gas_ratio": number, "action": "ALLOW" | "BLOCK" }.
 - POST /evm-sentinel/v1/scan-deep — Deep-Scan, $0.50 USDC. Full breach
-  analysis: 12 core scenarios (BS-001..BS-009 + BS-012 bad randomness + BS-013 unprotected owner + BS-014 phantom vote) + Permit2-drain detection
+  analysis: 13 core scenarios (BS-001..BS-009 + BS-012 bad randomness + BS-013 unprotected owner + BS-014 phantom vote + BS-015 HyperCore porting trap) + Permit2-drain detection
   (BS-010) + arbitrage-execution manipulation (BS-011), with per-scenario
   detail, mitigations, and recommendations. Same input; richer output.
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
@@ -4802,7 +4802,7 @@ daily to NexusAttestationAnchor
 ## Free endpoints (no payment, no x-client-id)
 
 - POST /gateway/dry-run — free Solidity security dry-run: 13 breach
-  scenarios (BS-001..BS-009 + BS-012/BS-013/BS-014), gas asymmetry ratio, ERC-4626 vault
+  scenarios (BS-001..BS-009 + BS-012/BS-013/BS-014/BS-015), gas asymmetry ratio, ERC-4626 vault
   awareness, nonce/replay defense. Use this to pre-check any contract
   before deploying or before buying a paid scan.
 - GET /manifest.json — A2A agent discovery manifest.
@@ -5377,6 +5377,13 @@ interface ParsedContract {
     risk_level: "low" | "medium" | "high" | "critical";
     details: string[];
   };
+  // v5.14.2: BS-015 HyperCore porting trap (HyperEVM review #6 class)
+  hypercore_porting: {
+    functions: string[];           // functions referencing HyperCore-only addresses
+    risk_level: "low" | "medium" | "high";
+    chain_key: string;             // normalized chain key behind the verdict ("default" = no hint)
+    details: string[];
+  };
   line_count: number;
 }
 
@@ -5940,6 +5947,63 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   }
   const phantomVoteRisk: "low" | "high" = phantomVoteFuncs.length > 0 ? "high" : "low";
 
+  // v5.14.2: BS-015 — HyperCore porting trap (HyperEVM protocol review #6 class).
+  // HyperCore read precompiles (0x0800-0x0813) and the CoreWriter
+  // (0x3333...3333) exist ONLY on HyperEVM (chains 999/998). On any other chain
+  // a high-level call reverts on ABI decode (empty returndata from an empty
+  // account) and a low-level call silently reads zeros — either way the
+  // contract cannot execute as written. Grading is chain-aware:
+  //   hyperevm|hyperevm-testnet   -> low (valid usage, no flag)
+  //   known non-HyperEVM chain    -> high (confirmed trap, deployment-grade)
+  //   absent / unknown chain      -> medium (undeclared target, unverifiable)
+  const hypercorePortingFuncs: string[] = [];
+  const hypercorePortingDetails: string[] = [];
+  let hypercorePortingRisk: "low" | "medium" | "high" = "low";
+  let hypercoreChainKey = "default";
+  {
+    const HYPERCORE_ADDR_RES = [
+      /0x0{36}08(?:0[0-9a-fA-F]|1[0-3])\b/,          // read precompiles 0x0800-0x0813 (full literal)
+      /0x3{40}\b/,                                    // CoreWriter 0x3333...3333
+      /\b(?:uint160|address)\(\s*0x8(?:0[0-9a-fA-F]|1[0-3])\s*\)/, // cast shorthand address(0x800)-style
+    ];
+    const srcClean = stripStringsAndComments(source);
+    const hcHit = HYPERCORE_ADDR_RES.some(re => re.test(srcClean));
+    // chain_key is recorded even on the clean path — the verdict's chain
+    // context must be visible regardless of detection state.
+    const rp = resolvePricingRegime(chain);
+    hypercoreChainKey = rp.chainKey;
+    if (hcHit) {
+      // Resolve named constants pointing at HyperCore addresses so functions
+      // using the constant (not the literal) are attributed correctly.
+      const constNames = new Set<string>();
+      const constRe = /(?:address|uint160)\s+(?:constant\s+|immutable\s+)?(\w+)\s*=\s*(0x0{36}08(?:0[0-9a-fA-F]|1[0-3])|0x3{40})\b/g;
+      let cm: RegExpExecArray | null;
+      while ((cm = constRe.exec(srcClean)) !== null) constNames.add(cm[1]);
+      for (const f of functions) {
+        const bodyClean = f.body.replace(/\/\/[^\n]*/g, "").replace(/\/\*[^]*?\*\//g, "");
+        const directHit = HYPERCORE_ADDR_RES.some(re => re.test(bodyClean));
+        const constHit = !directHit && constNames.size > 0 &&
+          Array.from(constNames).some(n => new RegExp(`\\b${n}\\b`).test(bodyClean));
+        if (directHit || constHit) hypercorePortingFuncs.push(f.name);
+      }
+      const isHyperEvm = rp.chainKey === "hyperevm" || rp.chainKey === "hyperevm-testnet";
+      const isKnownChain = rp.source === "db" || rp.source === "snapshot";
+      if (!isHyperEvm) {
+        if (isKnownChain) {
+          hypercorePortingRisk = "high";
+          hypercorePortingDetails.push(
+            `Contract calls HyperCore-only addresses (read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333) — these precompiles exist ONLY on HyperEVM (chains 999/998). On ${rp.chainKey} the call REVERTS on ABI decode (empty returndata) or silently returns zeros on low-level calls: the contract cannot execute as written (probe-verified HyperEVM review #6, 2026-10-11). Deployment-grade porting trap.`
+          );
+        } else {
+          hypercorePortingRisk = "medium";
+          hypercorePortingDetails.push(
+            `Contract calls HyperCore-only addresses (read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333) but no verifiable target chain was declared (${rp.chainKey === "default" ? "no chain hint supplied" : `unknown chain "${rp.chainKey}"`}). These precompiles exist ONLY on HyperEVM (chains 999/998); anywhere else the call reverts on ABI decode or silently reads zeros. Declare chain=hyperevm if HyperEVM is the intended target, otherwise this is a porting trap.`
+          );
+        }
+      }
+    }
+  }
+
   const badRandomnessRisk: "low" | "high" | "critical" =
     badRandomnessCritical.length > 0 ? "critical" : badRandomnessFuncs.length > 0 ? "high" : "low";
   const unprotectedSetterRisk: "low" | "critical" =
@@ -6363,6 +6427,12 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       functions: phantomVoteFuncs,
       risk_level: phantomVoteRisk,
       details: phantomVoteDetails,
+    },
+    hypercore_porting: {
+      functions: hypercorePortingFuncs,
+      risk_level: hypercorePortingRisk,
+      chain_key: hypercoreChainKey,
+      details: hypercorePortingDetails,
     },
     line_count: lineCount,
   };
@@ -6836,6 +6906,25 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   });
   if (phantom.risk_level !== "low") {
     recommendations.push("Phantom Vote (BS-014): " + phantom.details.join(" "));
+  }
+
+  // v5.14.2: Scenario 15 — HyperCore Porting Trap (HyperEVM review #6 class)
+  const hc = parsed.hypercore_porting;
+  scenarios.push({
+    scenario_id: "BS-015",
+    scenario_name: "HyperCore Porting Trap (HyperEVM-Only Addresses on Foreign Chain)",
+    description: "Does the contract call HyperCore read precompiles (0x0800-0x0813) or the CoreWriter (0x3333...3333)? These exist ONLY on HyperEVM (chains 999/998). On any other chain the call reverts on ABI decode or silently returns zeros — the contract cannot execute as written (class: HyperEVM protocol review #6 porting trap).",
+    risk_level: hc.risk_level,
+    affected_functions: hc.functions,
+    mitigation: hc.risk_level === "low"
+      ? (hc.chain_key === "hyperevm" || hc.chain_key === "hyperevm-testnet"
+          ? "HyperCore address usage matches the declared HyperEVM target chain."
+          : "No HyperCore-only address calls detected.")
+      : hc.details.join(" ") + " Mitigations: restrict HyperCore calls to HyperEVM deployments (guard with block.chainid == 999/998) or remove them from non-HyperEVM targets.",
+    detected: hc.risk_level !== "low",
+  });
+  if (hc.risk_level !== "low") {
+    recommendations.push("HyperCore Porting Trap (BS-015): " + hc.details.join(" "));
   }
 
   // Overall risk
@@ -7316,6 +7405,8 @@ async function dryRunHandler(req: Request): Promise<Response> {
       unprotected_privileged_setters: parsed.unprotected_privileged_setters,
       // v5.14.0: BS-014 phantom vote
       phantom_vote: parsed.phantom_vote,
+      // v5.14.2: BS-015 HyperCore porting trap
+      hypercore_porting: parsed.hypercore_porting,
       // Sprint 3 Task 2 (v4.6.0): quantitative gas asymmetry ratio
       gas_asymmetry: parsed.gas_asymmetry,
       // v5.9.0 (Opsi B): free teaser — detection notice + ONE general hint +
@@ -7349,7 +7440,7 @@ async function dryRunHandler(req: Request): Promise<Response> {
     nonce_defense: nonceDefense,
     urgency_signal: urgencySignal,
     preview: {
-      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected" && parsed.gas_asymmetry.risk_level !== "high" && parsed.unbounded_iteration.risk_level !== "high",
+      deployable: !hasErrors && breachSimulation.overall_risk !== "critical" && nonceDefense.replay_risk !== "replay_detected" && parsed.gas_asymmetry.risk_level !== "high" && parsed.unbounded_iteration.risk_level !== "high" && parsed.hypercore_porting.risk_level !== "high",
       warnings: validation.issues.filter(i => i.severity === "warning").length,
       risk_level: breachSimulation.overall_risk,
       nonce_risk: nonceDefense.replay_risk,
@@ -7526,7 +7617,7 @@ async function handler(req: Request): Promise<Response> {
   // descriptor so M2M clients can discover the roadmap without being billed.
   // H+7 Lite ($1.25): + Gas Efficiency Rank (W4). H+14 Full ($2.25): +
   // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
-  // H+21 Forensic ($3.50): + 3 exploit scenarios (reentrancy/oracle/flashloan)
+  // H+21 Forensic ($3.50): + top 3 detected exploit scenarios by severity (W6 spec v1.0)
   // + IPFS timestamp (W6).
   // v5.4.1: Transaction Peer-Check — factual probe of a peer endpoint ($0.05).
   if (req.method === "POST" && docsRoute === "/x402/fitness/peer-check") {
