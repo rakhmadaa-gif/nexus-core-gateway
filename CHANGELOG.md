@@ -1,5 +1,42 @@
 # Nexus Gateway Changelog
 
+## v5.13.3-frontier — 2026-10-12
+
+### FP-precision round (engine-progress-test 2026-10-11: zFi / Confetti / sqrtDAO classes)
+- **BS-002 — inline checked-arithmetic guard recognition.** Transfers whose
+  EVERY transfer function deducts the sender balance inline
+  (`balanceOf[msg.sender][id] -= amount`, nested-mapping aware) are recognized
+  as underflow-revert guarded (ERC-6909/solmate class); `transferFrom` also
+  requires allowance/operator deduction. Unchecked credit-only transfers
+  still flag high (permanent NC14).
+- **BS-012 — bare block.timestamp comparisons stripped as bookkeeping.**
+  Deadline/window/cooldown comparisons in ANY position (not just require
+  lines) — e.g. the if-return guard form
+  `if (... || block.timestamp >= m.close) return (0,0)` (zFi quote() class).
+  Timestamp in arithmetic/keccak still counts as entropy (NC5/NC10 unchanged).
+- **BS-009 — read-only iteration excluded + guarded-reach exclusion.**
+  view/pure iterators can no longer raise unbounded-iteration risk (eth_call
+  is not consensus-gas-bound; paginated views like zFi `_page(start,count)`
+  are the STANDARD anti-DoS pattern). Append-only medium now requires at
+  least one state-changing non-calldata iterator — the DoS targets the array
+  CONSUMER, so iterator access control alone does not neutralize it (NC3
+  class preserved). Private/internal iterators are excluded when EVERY public
+  entry that transitively reaches them is access-controlled (sqrtDAO Metadata
+  class: `_get`/`_setMetadata` only reachable via onlyOwner setMetadata*).
+- **Access control — compound if-revert conditions recognized.**
+  `if ((msg.sender != creator) && (msg.sender != proposals[id].author)) revert`
+  now counts as a guard (Confetti deleteProposals class); the condition
+  matcher widened from `[^)]*` to `[^;{]*` for nested parens/`&&`. Non-auth
+  compound conditions get no credit (permanent NC15).
+- Validation: offline regression 20 fixtures/15 negatives 0 FAIL; suites
+  v513 41/41, v512 34/34+87/87, W4 19+10+20, W3 35+22+19, v5.13.3 NCs 6/6;
+  live regression 20/15 0 FAIL (699ms avg); positive controls (real files
+  zFi PM.sol, Confetti Governor v6.21, sqrtDAO Metadata) OLD high/medium →
+  NEW clean; paywall 402 + x402 payment-required header intact.
+- Corpus: fixtures F15-F17 (real zFi/Confetti/sqrtDAO files), negatives
+  NC14/NC15 added; NC12 evolved (public sweep() added — same fake-guard
+  invariant under the new append-only semantics).
+
 ## v5.13.2-frontier — 2026-10-11
 
 ### HyperEVM regime entries (Protocol Review #6 correction)

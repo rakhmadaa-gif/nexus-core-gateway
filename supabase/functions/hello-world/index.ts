@@ -90,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.13.2-frontier",
+  engine_version: "v5.13.3-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.13.2-frontier",
+  version: "5.13.3-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -592,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.13.2-frontier (BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.13.3-frontier (FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -4564,7 +4564,7 @@ const OPENAPI_SPEC = {
           chain: {
             type: "string",
             description:
-              "Optional chain hint (v5.13.2) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144, hyperevm|hyperliquid|999 (eip2565-class) = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
+              "Optional chain hint (v5.13.2+) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144, hyperevm|hyperliquid|999 (eip2565-class) = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
             example: "ethereum",
           },
         },
@@ -4702,7 +4702,7 @@ entry older than its TTL is refused — conservative eip2565 is served with
 regime_stale: true instead of a silently expired map.
 Response fields: contract_info.gas_asymmetry .pricing_regime / .osaka_active /
 .regime_source / .regime_stale / .regime_probed_at.
-Probe-verified EIP-2565-class chains (v5.13.2, HyperEVM review #6): hyperevm
+Probe-verified EIP-2565-class chains (v5.13.2+, HyperEVM review #6): hyperevm
 (hyperliquid, 999) and hyperevm-testnet (998) price MODEXP at the pre-Osaka
 schedule (BIG 114,614 / SMALL 24,655 gas, identical mainnet/testnet) and serve
 the FULL standard precompile set including 0x0a. Explicit map entries — same
@@ -5643,7 +5643,10 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       // v5.2.1: if-revert guard idiom — "if (msg.sender != X) revert Y();" is equivalent
       // access control (ZkDesk DeskGuardian class: timelock-only execute() with .call).
       // v5.5.3: brace form "if (msg.sender != X) { revert Y(); }" (Compose OwnerTransferMod class)
-      /if\s*\([^)]*msg\.sender\s*!=\s*\S+\s*\)\s*\{?\s*revert/.test(funcBody);
+      /if\s*\([^;{]*msg\.sender\s*!=\s*[^;{]*\)\s*\{?\s*revert/.test(funcBody); // v5.13.3: [^;{]* (was [^)]*) — compound auth conditions like
+      // `if ((msg.sender != creator) && (msg.sender != proposals[id].author)) revert` 
+      // contain nested parens; [^)]* stopped at the first inner close and missed the
+      // guard entirely (Confetti deleteProposals FP, engine-progress-test 2026-10-11).
     // v5.5.3: guard via INTERNAL FUNCTION CALL in the body — Morpho VaultV2 pattern:
     // `function addAdapter(...) external { timelocked(); ... }` where timelocked() is an
     // internal function whose body enforces the gate (require executableAt/curator).
@@ -5776,7 +5779,15 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       // bookkeeping too — LendingHookV4 BlockedByLiquidation pattern.
       .replace(/block\.number\s*(?:==|!=|<=|>=|<|>)\s*\w+|\w+\s*(?:==|!=|<=|>=|<|>)\s*block\.number/g, "")
       // v5.5.1: bookkeeping strip covers cast forms — user.start = uint32(block.timestamp);
-      .replace(/\w+(?:\[[^\]]*\])?\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\s*=\s*[a-z0-9_]*\s*\(?block\.timestamp\)?\s*;/g, "");
+      .replace(/\w+(?:\[[^\]]*\])?\s*(?:\.\w+\s*(?:\[[^\]]*\]\s*){0,2})?\s*=\s*[a-z0-9_]*\s*\(?block\.timestamp\)?\s*;/g, "")
+      // v5.13.3: bare COMPARISONS against block.timestamp are deadline/window/
+      // cooldown bookkeeping wherever they appear - require(...) lines were
+      // already stripped, but the if-return guard form was not (zFi quote():
+      // "if (m.state != State.Open OR block.timestamp >= m.close) return (0,0)"
+      // FP, engine-progress-test 2026-10-11). Entropy only counts when the
+      // value feeds arithmetic/keccak, never a bare comparison. Mirrors the
+      // v5.9.2 block.number comparison strip.
+      .replace(/block\.timestamp\s*(?:==|!=|<=|>=|<|>)\s*[\w.]+|[\w.]+\s*(?:==|!=|<=|>=|<|>)\s*block\.timestamp/g, "");
     const hasEntropy = ENTROPY_RE.test(prngBody);
     const prngContext = PRNG_CONTEXT_RE.test(f.name) || PRNG_CONTEXT_RE.test(stripCommentsForCtx(f.body));
     if (hasEntropy && prngContext) entropyHelpers.add(f.name);
@@ -6108,10 +6119,18 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
   const revertBlockingFuncs = functions.filter(f =>
     f.has_external_call_in_loop && !f.has_try_catch
   );
+  // v5.13.3: read-only (view/pure) iteration cannot freeze funds — eth_call is
+  // not consensus-gas-bound. A paginated view like zFi _page(start,count) is the
+  // STANDARD anti-DoS pattern, not a vulnerability (engine-progress-test
+  // 2026-10-11). Views stay in affected_functions for reporting but are
+  // excluded from risk grading. "view"/"pure" are stripped from modifiers[],
+  // so detect via the signature string.
+  const isViewLikeFn = (f: ParsedFunction): boolean => /\b(view|pure)\b/.test(f.signature ?? "");
+  const stateChangingIterators = iterationFuncs.filter(f => !isViewLikeFn(f));
   const unboundedDetails: string[] = [];
   let unboundedRisk: "low" | "medium" | "high" = "low";
   // Combo: attacker-growable array + iteration in payout/withdraw path → dust spam freeze
-  const dustSpamTargets = iterationFuncs.filter(f => payoutish(f.name) || f.has_external_call_in_loop);
+  const dustSpamTargets = stateChangingIterators.filter(f => payoutish(f.name) || f.has_external_call_in_loop); // v5.13.3: views excluded
   if (publicAppendFuncs.length > 0 && dustSpamTargets.length > 0) {
     unboundedRisk = "high";
     unboundedDetails.push(
@@ -6119,7 +6138,13 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       `Combined with O(n) iteration over storage in payout/withdraw path: ${dustSpamTargets.map(f => f.name).join(", ")}. ` +
       `An attacker can spam dust entries against a victim (cost: pennies) until withdraw/claim exceeds the block gas limit — funds permanently frozen (class: Belong Staking #57717/#57790, Plume #51369).`
     );
-  } else if (publicAppendFuncs.length > 0) {
+  } else if (publicAppendFuncs.length > 0 && stateChangingIterators.some(f => !f.has_calldata_only_loop)) {
+    // v5.13.3: append-only medium stands when ANY state-changing function
+    // iterates storage — the DoS runs AGAINST the consumer of the array, so
+    // the iterator's own access control does not neutralize it (NC3 class:
+    // attacker grows the array for free, admin's sweep loop OOGs). What DOES
+    // neutralize it: all consumers being read-only/caller-bounded views
+    // (zFi createMarket/_page class) — growth then costs only the grower.
     unboundedRisk = "medium";
     unboundedDetails.push(
       `Public/external function(s) append to storage arrays without length cap or access control: ${publicAppendFuncs.map(f => f.name).join(", ")}. ` +
@@ -6130,9 +6155,21 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
     // a require(arr.length < N) elsewhere shows the developer bounded array growth.
     // v5.2.0: role-gated loops are not attacker-reachable — an admin-only batch operation
     // cannot be grown or triggered by an attacker (Robinhood AccessControlsRegistry class).
-    const uncappedLoops = iterationFuncs.filter(f =>
-      !f.has_access_control && !f.has_calldata_only_loop &&
-      !/\b(bound|limit|cap|max)\b/i.test(f.signature));
+    // v5.13.3: (a) view/pure iterators excluded (read-only, no consensus gas
+    // bound); (b) private/internal iterators excluded when EVERY public entry
+    // that transitively reaches them is access-controlled — sqrtDAO Metadata
+    // class: _entries grows and iterates only via onlyOwner setMetadata*.
+    const publicEntries9 = functions.filter(f => f.visibility === "public" || f.visibility === "external");
+    const uncappedLoops = iterationFuncs.filter(f => {
+      if (f.has_access_control || f.has_calldata_only_loop) return false;
+      if (/\b(bound|limit|cap|max)\b/i.test(f.signature)) return false;
+      if (isViewLikeFn(f)) return false;
+      if (f.visibility === "private" || f.visibility === "internal") {
+        const callers = publicEntries9.filter(pe => reachableHelpers(pe.name).has(f.name));
+        if (callers.length > 0 && callers.every(c => c.has_access_control)) return false;
+      }
+      return true;
+    });
     if (uncappedLoops.length > 0) {
       unboundedRisk = "medium";
       unboundedDetails.push(
@@ -6337,20 +6374,38 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     const helperName = deleg[0].replace(/\s*\($/, "").replace(/^_/, "_");
     return internalGuardedHelper(helperName);
   });
+  // v5.13.3 FP fix (zFi PM.sol class, engine-progress-test 2026-10-11): inline
+  // checked-arithmetic balance deduction IS the guard. ERC-6909/solmate-style
+  // transfers do `balanceOf[msg.sender][id] -= amount` — Solidity >=0.8 reverts
+  // on underflow, which is exactly the balance check an explicit require() would
+  // provide. transferFrom additionally needs allowance handling or an operator
+  // gate in the same body. Only credited when EVERY public transfer surface
+  // carries the deduction (a single unchecked surface keeps the flag).
+  const CHECKED_BALANCE_RE = /\bbalanceOf\s*\[[^\]]*(?:\]\s*\[[^\]]*)*\]\s*(?:-=|=\s*[^;]{0,120}-)/;
+  const ALLOWANCE_OR_OPERATOR_RE =
+    /\ballowance\s*\[[^\]]*(?:\]\s*\[[^\]]*)*\]\s*(?:-=|=\s*[^;]{0,120}-)|\bisOperator\s*\[|\boperator\s*\(/i;
+  const transferAllCheckedArithmetic = transferFuncs.length > 0 && transferFuncs.every(f => {
+    const b = f.body ?? "";
+    if (!CHECKED_BALANCE_RE.test(b)) return false;
+    if (/transferfrom/i.test(f.name)) return ALLOWANCE_OR_OPERATOR_RE.test(b);
+    return true;
+  });
   scenarios.push({
     scenario_id: "BS-002",
     scenario_name: "Transfer Violation",
     description: "Can transfers bypass balance/allowance checks?",
-    risk_level: transferFuncs.length === 0 || transferIsRevertStub ? "low" : (transferHasRequire || transferHasSuperDelegation) ? "low" : "high",
+    risk_level: transferFuncs.length === 0 || transferIsRevertStub ? "low" : (transferHasRequire || transferHasSuperDelegation || transferAllCheckedArithmetic) ? "low" : "high",
     affected_functions: transferFuncs.map(f => f.name),
     mitigation: transferFuncs.length === 0
       ? "No transfer function detected — not applicable."
-      : (transferHasRequire || transferHasSuperDelegation)
+      : (transferHasRequire || transferHasSuperDelegation || transferAllCheckedArithmetic)
         ? transferHasSuperDelegation
           ? "Transfer override delegates to super (inherited ERC20 balance/allowance checks preserved)."
-          : "Transfer function has require() guards — verify balance/allowance checks."
+          : transferAllCheckedArithmetic && !transferHasRequire
+            ? "Transfer uses inline checked-arithmetic balance/allowance deduction (ERC-6909/solmate style) — Solidity >=0.8 underflow-revert enforces the guard."
+            : "Transfer function has require() guards — verify balance/allowance checks."
         : "HIGH: Transfer function lacks require() guards. Add balance and allowance validation.",
-    detected: transferFuncs.length > 0 && !transferIsRevertStub && !transferHasRequire && !transferHasSuperDelegation,
+    detected: transferFuncs.length > 0 && !transferIsRevertStub && !transferHasRequire && !transferHasSuperDelegation && !transferAllCheckedArithmetic,
   });
   if (transferFuncs.length > 0 && !transferHasRequire && !transferHasSuperDelegation) {
     recommendations.push("Add require() for balance and allowance checks in transfer functions.");
