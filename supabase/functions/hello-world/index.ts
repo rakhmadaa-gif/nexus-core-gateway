@@ -1207,7 +1207,7 @@ const PRICING_MODEL = {
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
     fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — W3: gas rank + base attestation + per-advisory Exploitability Score (fixed public formula) + source-match vs explorer-verified on-chain source ($2.25) [LIVE — reference/w3-fitness-full-spec.md]" },
-    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + 3 exploit scenarios (reentrancy/oracle/flashloan) + IPFS timestamp ($3.50) [PLANNED H+21]" },
+    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + top 3 detected exploit scenarios by severity + IPFS timestamp ($3.50) [PLANNED H+21]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -7526,7 +7526,7 @@ async function handler(req: Request): Promise<Response> {
   // descriptor so M2M clients can discover the roadmap without being billed.
   // H+7 Lite ($1.25): + Gas Efficiency Rank (W4). H+14 Full ($2.25): +
   // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
-  // H+21 Forensic ($3.50): + 3 exploit scenarios (reentrancy/oracle/flashloan)
+  // H+21 Forensic ($3.50): + top 3 detected exploit scenarios by severity (W6 spec v1.0)
   // + IPFS timestamp (W6).
   // v5.4.1: Transaction Peer-Check — factual probe of a peer endpoint ($0.05).
   if (req.method === "POST" && docsRoute === "/x402/fitness/peer-check") {
