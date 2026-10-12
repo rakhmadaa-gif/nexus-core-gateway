@@ -90,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.13.3-frontier",
+  engine_version: "v5.14.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.13.3-frontier",
+  version: "5.14.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -467,7 +467,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /evm-sentinel/v1/scan-deep": {
-      description: "EVM Sentinel Deep-Scan — full 11+2 scenario breach analysis (BS-001..BS-009 core + BS-010 Permit2-drain + BS-011 arbitrage-manipulation + BS-012 bad randomness + BS-013 unprotected owner function). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
+      description: "EVM Sentinel Deep-Scan — full 12+2 scenario breach analysis (BS-001..BS-009 core + BS-010 Permit2-drain + BS-011 arbitrage-manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote). Input {solidity_code} -> {risk_score, breach_scenarios, gas_ratio, action, scenario_detail, recommendations}. 1-hour result cache. Read-only static scan, no wallet approval required.",
       billing: "0.50 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -592,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.13.3-frontier (FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +13 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.14.0-frontier (BS-014 Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2700,6 +2700,7 @@ async function runEvmSentinelScan(tier: "quick" | "deep", source: string, chain?
     unbounded_iteration: parsed.unbounded_iteration,
     bad_randomness: parsed.bad_randomness,
     unprotected_privileged_setters: parsed.unprotected_privileged_setters,
+    phantom_vote: parsed.phantom_vote,
     gas_asymmetry: parsed.gas_asymmetry,
     // v5.9.0 (Opsi B): full per-pattern localization advice — PAID tier only
     localization_advice: buildLocalizationAdvice(parsed.gas_asymmetry),
@@ -4170,7 +4171,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "EVM Sentinel Deep-Scan — full 9+2 scenario breach analysis",
         description:
-          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation + BS-012 bad randomness + BS-013 unprotected owner function, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
+          "Full static breach analysis: BS-001..BS-009 core scenarios + BS-010 Permit2-drain detection + BS-011 arbitrage-execution manipulation + BS-012 bad randomness + BS-013 unprotected owner function + BS-014 phantom vote, with per-scenario detail, mitigations, and recommendations. Results cached 1 hour (repeat scans ~50ms). Read-only static scan, no wallet approval required. Cost: $0.50 USDC.",
         "x-pricing": "0.50 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["drainer-detector", "risk-gate", "permit2-drain", "arbitrage-manipulation"],
         requestBody: {
@@ -4662,7 +4663,7 @@ const LLMS_TXT = `# Nexus Gateway
 
 > EVM Sentinel + M2M legal-code gateway for Web3. High-speed static
 > security scans for AI agents (honeypot check, drainer detection,
-> 9+2 breach scenarios), a bilingual (English/Indonesian) legal contract
+> 12+2 breach scenarios), a bilingual (English/Indonesian) legal contract
 > generator mapped to code functions, and structured data payloads.
 > Read-only static scan, no wallet approval required. Pay per call in
 > USDC on Polygon PoS via the x402 protocol (HTTP 402). No account, no
@@ -4681,7 +4682,7 @@ Pricing manifest (JSON): ${BASE_URL_DOCS}/pricing.manifest.json
   Output: { "risk_score": 0.0-1.0, "breach_scenarios": ["BS-001", ...],
   "gas_ratio": number, "action": "ALLOW" | "BLOCK" }.
 - POST /evm-sentinel/v1/scan-deep — Deep-Scan, $0.50 USDC. Full breach
-  analysis: 11 core scenarios (BS-001..BS-009 + BS-012 bad randomness + BS-013 unprotected owner) + Permit2-drain detection
+  analysis: 12 core scenarios (BS-001..BS-009 + BS-012 bad randomness + BS-013 unprotected owner + BS-014 phantom vote) + Permit2-drain detection
   (BS-010) + arbitrage-execution manipulation (BS-011), with per-scenario
   detail, mitigations, and recommendations. Same input; richer output.
   Results cached 1 hour — repeat scans of the same code return in ~50ms.
@@ -4801,7 +4802,7 @@ daily to NexusAttestationAnchor
 ## Free endpoints (no payment, no x-client-id)
 
 - POST /gateway/dry-run — free Solidity security dry-run: 13 breach
-  scenarios (BS-001..BS-009 + BS-012/BS-013), gas asymmetry ratio, ERC-4626 vault
+  scenarios (BS-001..BS-009 + BS-012/BS-013/BS-014), gas asymmetry ratio, ERC-4626 vault
   awareness, nonce/replay defense. Use this to pre-check any contract
   before deploying or before buying a paid scan.
 - GET /manifest.json — A2A agent discovery manifest.
@@ -5370,6 +5371,12 @@ interface ParsedContract {
     risk_level: "low" | "medium" | "high" | "critical";
     details: string[];
   };
+  // v5.14.0: BS-014 phantom vote (Confetti GHSA-3g9w-x8qp-2qpq class)
+  phantom_vote: {
+    functions: string[];           // vote entry points without proposal-existence check
+    risk_level: "low" | "medium" | "high" | "critical";
+    details: string[];
+  };
   line_count: number;
 }
 
@@ -5866,6 +5873,47 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       );
     }
   }
+  // --- BS-014: phantom vote (vote without proposal existence check) ---
+  // v5.14.0: Confetti GHSA-3g9w-x8qp-2qpq class. A public vote-casting entry
+  // point that takes a proposalId and applies vote effects WITHOUT verifying
+  // the proposal exists lets an attacker vote on a never-submitted proposalId -
+  // the phantom enters rankings/rewards and its voters get paid at completion.
+  // proposalIsDeleted / contest-state / timestamp checks do NOT establish
+  // existence. Guards that DO (searched across the transitive same-file call
+  // closure via reachableHelpers - OZ Governor class: castVote -> _castVote ->
+  // state() reverts GovernorNonexistentProposal):
+  //   1. proposals[id].exists require/if-revert (the canonical Confetti fix)
+  //   2. NonexistentProposal-class revert names
+  //   3. counter-bounds check (proposalId vs proposalCount/numProposals/...)
+  //   4. zero-deadline/snapshot == 0 check on proposal fields
+  const PHANTOM_VOTE_FN_RE = /^(castVote|castVoteWithReason|castVoteWithReasonAndParams|castVoteBySig|castVoteWithReasonAndParamsBySig|vote|voteFor|submitVote|voteSingle|votePartial)$/i;
+  const PHANTOM_VOTE_GUARD_RES: RegExp[] = [
+    /\.exists\b/,
+    /NonexistentProposal|ProposalDoesNotExist|DoesNotExist|UnknownProposal|InvalidProposal|ProposalNotFound|does not exist|unknown proposal|invalid proposal/i,
+    /_?proposalI[dD]\s*(?:\x3c|>=)\s*[\w.]*(?:proposalCount|numProposals|nextProposalId|proposalLength|length)\b/i,
+    /(?:proposalCount|numProposals|nextProposalId)\s*(?:>|>=|\x3c=)\s*_?proposalI[dD]\b/,
+    /(?:voteStart|snapshot|getDeadline|deadline|votingDeadline)\w*\s*\(?\s*\)?\s*==\s*0/,
+  ];
+  const phantomVoteFuncs: string[] = [];
+  const phantomVoteDetails: string[] = [];
+  for (const f of functions) {
+    const isPublic = f.visibility === "public" || f.visibility === "external";
+    if (!isPublic || !PHANTOM_VOTE_FN_RE.test(f.name)) continue;
+    if (!/_?proposalI[dD]/.test(f.body + " " + f.signature)) continue;
+    let searchText = f.body;
+    for (const callee of reachableHelpers(f.name)) {
+      const cf = functions.find(x => x.name === callee);
+      if (cf) searchText += "\n" + cf.body;
+    }
+    if (!PHANTOM_VOTE_GUARD_RES.some(re => re.test(searchText))) {
+      phantomVoteFuncs.push(f.name);
+      phantomVoteDetails.push(
+        `Function ${f.name}() accepts a proposalId and applies vote effects without verifying the proposal exists — an attacker can vote on a never-submitted proposalId; the phantom enters rankings/rewards and gets paid at completion (class: Confetti GHSA-3g9w-x8qp-2qpq). proposalIsDeleted/state/timestamp checks do not establish existence.`
+      );
+    }
+  }
+  const phantomVoteRisk: "low" | "high" = phantomVoteFuncs.length > 0 ? "high" : "low";
+
   const badRandomnessRisk: "low" | "high" | "critical" =
     badRandomnessCritical.length > 0 ? "critical" : badRandomnessFuncs.length > 0 ? "high" : "low";
   const unprotectedSetterRisk: "low" | "critical" =
@@ -6284,6 +6332,11 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
       functions: unprotectedSetterFuncs,
       risk_level: unprotectedSetterRisk,
       details: unprotectedSetterDetails,
+    },
+    phantom_vote: {
+      functions: phantomVoteFuncs,
+      risk_level: phantomVoteRisk,
+      details: phantomVoteDetails,
     },
     line_count: lineCount,
   };
@@ -6742,6 +6795,23 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
     recommendations.push("Unprotected Owner Function (BS-013): " + unprot.details.join(" "));
   }
 
+  // v5.14.0: Scenario 14 — Phantom Vote (BS-014, Confetti GHSA-3g9w-x8qp-2qpq class)
+  const phantom = parsed.phantom_vote;
+  scenarios.push({
+    scenario_id: "BS-014",
+    scenario_name: "Phantom Vote (Vote Without Proposal Existence Check)",
+    description: "Can votes be cast on a proposalId that was never submitted? Without an existence check, a phantom proposal enters rankings/rewards and its voters get paid at completion (class: Confetti GHSA-3g9w-x8qp-2qpq, validated High).",
+    risk_level: phantom.risk_level,
+    affected_functions: phantom.functions,
+    mitigation: phantom.risk_level === "low"
+      ? "Vote-casting paths verify proposal existence (exists flag, counter-bounds, or nonexistent-proposal/zero-deadline revert in the call closure)."
+      : phantom.details.join(" ") + " Mitigations: revert when !proposals[proposalId].exists (or bound proposalId against the proposal counter) inside the vote-casting path.",
+    detected: phantom.risk_level !== "low",
+  });
+  if (phantom.risk_level !== "low") {
+    recommendations.push("Phantom Vote (BS-014): " + phantom.details.join(" "));
+  }
+
   // Overall risk
   // v5.0.1: overall risk must reflect DETECTED findings only. Non-detected
   // scenarios carry a hypothetical risk_level (e.g. BS-007 defaults to
@@ -7178,6 +7248,8 @@ async function dryRunHandler(req: Request): Promise<Response> {
       // v5.4.2: BS-012 + BS-013 detection blocks
       bad_randomness: parsed.bad_randomness,
       unprotected_privileged_setters: parsed.unprotected_privileged_setters,
+      // v5.14.0: BS-014 phantom vote
+      phantom_vote: parsed.phantom_vote,
       // Sprint 3 Task 2 (v4.6.0): quantitative gas asymmetry ratio
       gas_asymmetry: parsed.gas_asymmetry,
       // v5.9.0 (Opsi B): free teaser — detection notice + ONE general hint +

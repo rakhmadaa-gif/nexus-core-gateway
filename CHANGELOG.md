@@ -1,5 +1,33 @@
 # Nexus Gateway Changelog
 
+## v5.14.0-frontier — 2026-10-12
+
+### BS-014 Phantom Vote detection (Confetti GHSA-3g9w-x8qp-2qpq class)
+- **New scenario 14/14: Phantom Vote (vote without proposal-existence check).**
+  Public/external vote-casting entry points (`castVote*` family, `vote`,
+  `voteFor`, `submitVote`, `voteSingle`, `votePartial`) that take a proposalId
+  and apply vote effects WITHOUT verifying the proposal exists are flagged
+  HIGH. Class source: Confetti Governor v6.21 phantom-vote bug
+  (GHSA-3g9w-x8qp-2qpq, validated High, our first confirmed advisory) — an
+  attacker votes on a never-submitted proposalId; the phantom enters
+  rankings/rewards and its voters get paid at completion.
+- **Guard recognition across the transitive same-file call closure**
+  (reachableHelpers): (1) `proposals[id].exists` require/if-revert (the
+  canonical Confetti v6.22 fix); (2) NonexistentProposal-class revert names
+  (incl. Compound Bravo "invalid proposal id" messages); (3) counter-bounds
+  checks both directions (`proposalId < proposalCount`,
+  `proposalCount >= proposalId`); (4) zero-deadline/snapshot `== 0` reverts
+  (OZ Governor `state()` class). `proposalIsDeleted` / contest-state /
+  timestamp checks do NOT establish existence.
+- **Corpus**: F16 (real Confetti v6.21 Governor) moved fixtures ->
+  negatives/NC16-confetti-phantom-vote.sol ({"BS-014": "high"}); new fixtures
+  F18 (compound if-revert auth, carries the v5.13.3 coverage F16 held),
+  F19 (real Confetti v6.22 fixed Governor — clean), F20 (OZ-Governor-style
+  closure guard — clean).
+- **Validation**: 9/9 new BS-014 tests + offline regression 22F/16NC 0 FAIL +
+  v512 34/34 & 87/87 + v513 41/41 + W4 19+10+20 + W3 35+22+19.
+  Zero-diff: BS-001..BS-013 behavior unchanged on the full corpus.
+
 ## v5.13.3-frontier — 2026-10-12
 
 ### FP-precision round (engine-progress-test 2026-10-11: zFi / Confetti / sqrtDAO classes)
