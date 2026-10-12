@@ -42,7 +42,7 @@ The strongest proof is not catching other people's history — it is codifying o
 | [GHSA-3g9w-x8qp-2qpq](https://github.com/jk-labs-inc/confetti/security/advisories/GHSA-3g9w-x8qp-2qpq) — Confetti phantom vote (CWE-284, **High**) | Vote without existence check | Maintainer fix in **5 hours** (v6.22), reporter credit | **BS-014** permanent detection rule since `v5.14.0-frontier`; the original vulnerable `Governor.sol` is frozen in our regression corpus as negative control NC16 — re-verified on every engine upgrade |
 
 Manual audit → responsible disclosure → permanent machine-checkable rule. Every breach
-scenario (BS-001…BS-014) follows this loop. [Verification trace →](https://rakhmadaa-gif.github.io/nexus-core-gateway/r/GHSA-3g9w-x8qp-2qpq)
+scenario (BS-001…BS-014) follows this loop. [Verification trace →](https://rakhmadaa-gif.github.io/nexus-core-gateway/r/GHSA-3g9w-x8qp-2qpq.md)
 
 **Try the free 13 ms dry-run now:**
 
