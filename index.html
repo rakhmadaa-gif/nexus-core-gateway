@@ -192,6 +192,10 @@ curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/e
       <div class="breach"><h4>Rubixi (2016)</h4><p>🟡 MEDIUM in 12 ms — unbounded iteration DoS (BS-009) on addPayout.</p></div>
     </div>
     <p style="color:#888;font-size:.85em;margin-top:10px">Full writeup: <a href="https://raw.githubusercontent.com/rakhmadaa-gif/nexus-core-gateway/main/audits/HISTORIC_BUGS_TEASER.md" style="color:#fbbf24">audits/HISTORIC_BUGS_TEASER.md</a> · Benchmarked vs Slither: 8/8 historic ToB cases recalled vs 4/8, 0 false positives on clean OpenZeppelin.</p>
+    <div class="breach" style="margin-top:14px;border-color:#fbbf24">
+      <h4>🔄 Closed Loop — Our Own Advisory Became a Permanent Rule</h4>
+      <p><a href="https://github.com/jk-labs-inc/confetti/security/advisories/GHSA-3g9w-x8qp-2qpq" style="color:#fbbf24">GHSA-3g9w-x8qp-2qpq</a> (Confetti phantom vote, CWE-284, High) — reported by us, fixed by the maintainer in <strong>5 hours</strong>. Today it is <strong>BS-014</strong>, a permanent detection rule in the engine (v5.14.x), regression-tested forever against the original vulnerable <code>Governor.sol</code> (negative control NC16). Manual audit → responsible disclosure → machine-checkable rule. <a href="https://rakhmadaa-gif.github.io/nexus-core-gateway/r/GHSA-3g9w-x8qp-2qpq" style="color:#fbbf24">Verification trace →</a></p>
+    </div>
   </section>
 
   <section>
