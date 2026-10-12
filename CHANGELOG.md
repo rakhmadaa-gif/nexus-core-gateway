@@ -608,3 +608,10 @@ Validasi: regression 12 fixture + 13 negatives 0 fail; Compose 105/105 clean; To
 - 22/22 local harness PASS across 3 mount-path styles; live all 6
   signals green; regressions intact (manifest, metrics, samples,
   dry-run, 402/x402 paid flow). Commit af1e098. PoA a21f9e4d.
+
+## v5.14.1-frontier (2026-10-12)
+- **Validator bug fix (2/12 real-file false-422)**: paren/brace balance counter no longer counts literals inside strings and comments. New `stripStringsAndComments()` state machine runs before both balance loops; newlines preserved so error line numbers stay exact. Real-world cases fixed: SoSoValueLabs/ssi-protocol (422→200 clean), dangerousfood/ethstrategy (422→200 clean).
+- **BS-014 guard class (a): zero-endTime voting window** — per-proposal upper-bound window (`block.timestamp <= proposal.endTime/deadline/...` forward or reversed, prefix proposal/proposals[]/prop required) counts as an existence proof: a phantom id yields endTime=0, so the window check reverts. Real-world FP fixed: genyleap/geny-token (536★).
+- **BS-014 guard class (b): enum-state existence** — `.state != ProposalState.X` guard credited when the enum's first member is a zero-default non-existence sentinel (NonExistent/None/Unset/Uninitialized/Empty/Null/Undefined). Real-world FP fixed: SoSoValueLabs/ssi-protocol. Computed `state()` mappings (Confetti class) remain non-guards by design.
+- **Known limit (documented, not fixed)**: bare signaling vote counters with no proposal lifecycle/execution path (Grok-chain class) remain flagged — distinguishing impactless signaling votes needs cross-function impact analysis beyond static scope; Layer 1 catches these.
+- Validation: tests/v514 9/9 + new v5.14.1 suite 11/11 + offline regression 22F/16NC 0 FAIL + v512 34+87 + v513 41 + W4 30+5+19+10+20 + W3 35+22+19 + live E2E (SoSoValue/ethstrategy 200 clean, NC16 Confetti still high, genyleap clean, grok flagged) + live regression 22F/16NC 0 FAIL 740ms. PoA 462e33a7.

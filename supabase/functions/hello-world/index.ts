@@ -90,7 +90,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.14.0-frontier",
+  engine_version: "v5.14.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +433,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.14.0-frontier",
+  version: "5.14.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -592,7 +592,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.14.0-frontier (BS-014 Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.14.1-frontier (validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -5893,7 +5893,33 @@ function parseSolidityContract(source: string, chain?: string | null): ParsedCon
     /_?proposalI[dD]\s*(?:\x3c|>=)\s*[\w.]*(?:proposalCount|numProposals|nextProposalId|proposalLength|length)\b/i,
     /(?:proposalCount|numProposals|nextProposalId)\s*(?:>|>=|\x3c=)\s*_?proposalI[dD]\b/,
     /(?:voteStart|snapshot|getDeadline|deadline|votingDeadline)\w*\s*\(?\s*\)?\s*==\s*0/,
+    // v5.14.1: per-proposal upper-bound voting window is an existence proof -
+    // a never-created proposalId has endTime/deadline == 0 and cannot satisfy
+    // `block.timestamp <= proposal.endTime` (genyleap GenyDao class, field hit
+    // 2026-10-12). The member MUST hang off proposal/proposals[...] - a
+    // contest-wide deadline fn (Confetti contestDeadline()) proves NOTHING.
+    /block\.timestamp\s*\x3c=?\s*(?:proposals\s*\[[^\]]*\]|\bproposal\b|\bprop\b)\s*(?:\.\w+)*\.(?:endTime|deadline|votingDeadline|voteDeadline|expiresAt|expiry|votingEndsAt)\w*\b/i,
+    /(?:proposals\s*\[[^\]]*\]|\bproposal\b|\bprop\b)\s*(?:\.\w+)*\.(?:endTime|deadline|votingDeadline|voteDeadline|expiresAt|expiry|votingEndsAt)\w*\s*(?:>|>=)\s*block\.timestamp/i,
   ];
+  // v5.14.1: enum-state existence guard - a STORED per-proposal `state` field
+  // compared against an enum member (e.g. `proposal.state != ProposalState.Voting`
+  // -> revert) proves existence when the enum's ZERO-default member is inert
+  // (NonExistent/None/Unset/...) - phantom ids read as the inert default and
+  // revert (SoSoValue ResearchHubVoting class, field hit 2026-10-12). Distinct
+  // from Confetti's COMPUTED state() function, which stays a non-guard.
+  {
+    const enumM = source.match(/enum\s+\w*[Ss]tate\w*\s*\{/);
+    if (enumM) {
+      const after = source
+        .slice(source.indexOf(enumM[0]) + enumM[0].length, source.indexOf(enumM[0]) + 400)
+        .replace(/\/\/[^\n]*/g, "")
+        .replace(/\/\*[^]*?\*\//g, "");
+      const firstMember = after.match(/\s*(\w+)\s*[,}]/);
+      if (firstMember && /^(NonExistent|None|Unset|Uninitialized|Empty|Null|Undefined)$/i.test(firstMember[1])) {
+        PHANTOM_VOTE_GUARD_RES.push(/\.state\s*[!=]==?\s*\w*[Ss]tate\w*\.\w+/);
+      }
+    }
+  }
   const phantomVoteFuncs: string[] = [];
   const phantomVoteDetails: string[] = [];
   for (const f of functions) {
@@ -6842,6 +6868,45 @@ function simulateBreachScenarios(parsed: ParsedContract): BreachSimulationResult
   };
 }
 
+
+// v5.14.1: strip string literals + comments before balance counting.
+// Real-world false-422 fix: parens/braces inside strings or comments (emojis,
+// ASCII art, NatSpec examples) used to break the naive balance counters and
+// reject valid contracts (SoSoValue ssi-protocol + ethstrategy hits 2026-10-12).
+// Newlines are preserved so reported line numbers stay accurate.
+function stripStringsAndComments(src: string): string {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  let state: "code" | "line" | "block" | "dq" | "sq" = "code";
+  while (i < n) {
+    const c = src[i];
+    const next = i + 1 < n ? src[i + 1] : "";
+    if (state === "code") {
+      if (c === "/" && next === "/") { state = "line"; i += 2; continue; }
+      if (c === "/" && next === "*") { state = "block"; i += 2; continue; }
+      if (c === "\"") { state = "dq"; i++; continue; }
+      if (c === "'") { state = "sq"; i++; continue; }
+      out += c; i++; continue;
+    }
+    if (state === "line") {
+      if (c === "\n") { state = "code"; out += "\n"; }
+      i++; continue;
+    }
+    if (state === "block") {
+      if (c === "*" && next === "/") { state = "code"; i += 2; continue; }
+      if (c === "\n") out += "\n";
+      i++; continue;
+    }
+    if (c === "\\") { i += 2; continue; }
+    if (state === "dq" && c === "\"") { state = "code"; i++; continue; }
+    if (state === "sq" && c === "'") { state = "code"; i++; continue; }
+    if (c === "\n") out += "\n";
+    i++; continue;
+  }
+  return out;
+}
+
 function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contract_name: string | null; pragma: string | null; license: string | null; functions: string[]; events: string[]; modifiers: string[]; line_count: number } {
   const issues: SyntaxIssue[] = [];
   const lines = source.split("\n");
@@ -6876,11 +6941,12 @@ function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contra
     }
   }
 
-  // Check balanced braces
+  // Check balanced braces (v5.14.1: on comment/string-stripped source)
+  const strippedLines = stripStringsAndComments(source).split("\n");
   let braceDepth = 0;
   let maxBraceDepth = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (let i = 0; i < strippedLines.length; i++) {
+    const line = strippedLines[i];
     for (const ch of line) {
       if (ch === "{") { braceDepth++; maxBraceDepth = Math.max(maxBraceDepth, braceDepth); }
       if (ch === "}") braceDepth--;
@@ -6890,9 +6956,9 @@ function validateSoliditySyntax(source: string): { issues: SyntaxIssue[]; contra
     issues.push({ severity: "error", line: lineCount, message: `Unbalanced braces: ${braceDepth > 0 ? "missing " + braceDepth + " closing brace(s)" : "extra " + Math.abs(braceDepth) + " closing brace(s)"}.`, rule: "BALANCED_BRACES" });
   }
 
-  // Check balanced parentheses
+  // Check balanced parentheses (v5.14.1: stripped source)
   let parenDepth = 0;
-  for (const line of lines) {
+  for (const line of strippedLines) {
     for (const ch of line) {
       if (ch === "(") parenDepth++;
       if (ch === ")") parenDepth--;
