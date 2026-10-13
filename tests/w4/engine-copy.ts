@@ -53,6 +53,14 @@ import {
   resolveUnsupportedPrecompiles,
   PRECOMPILE_LABELS,
 } from "./modexp_gas.ts";
+import {
+  LOCKFILE_MAX_BYTES,
+  PACKAGES_MAX,
+  detectLockfileFormat,
+  mergePackageLists,
+  parseLockfile,
+  type ResolvedPackage,
+} from "./lockfile_parse.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -90,7 +98,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.14.3-frontier",
+  engine_version: "v5.16.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -433,7 +441,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.14.3-frontier",
+  version: "5.16.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -487,7 +495,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /x402/fitness": {
-      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. legal_weight: 0 — not legal advice, factual only. Input {repo, packages} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
+      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest ({lockfile:{filename,content}} — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root; exact versions are queried version-scoped at OSV (fewer false positives); merged list capped at 250 with per-package resolution provenance (input/lockfile/manifest/unpinned). legal_weight: 0 — not legal advice, factual only. Input {repo, packages, lockfile} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
       billing: "0.05 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -592,7 +600,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.14.3-frontier (BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.16.0-frontier (W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2905,7 +2913,7 @@ async function handleEvmSentinelScanWithBilling(
 // advisory affects it. Factual elapsed-time measurement, not a claim.
 // ----------------------------------------------------------------------------
 
-const FITNESS_VERSION = "1.0.0";
+const FITNESS_VERSION = "1.1.0";
 const FITNESS_TTL_MS = 10 * 60 * 1000; // 10-minute freshness cron window
 
 // SPDX ids we treat as copyleft or otherwise risky for downstream reuse.
@@ -2919,51 +2927,100 @@ const RISKY_LICENSES = new Set([
   "GPL-2.0", "GPL-3.0", "AGPL-3.0", "AGPL-1.0", "LGPL-2.1", "LGPL-3.0",
 ]);
 
-async function osvQuery(pkg: { name: string; ecosystem: string }): Promise<{
-  advisories: Array<{ id: string; summary: string; severity_class: string; published: string; url: string; cvss_vector: string | null; severity_label: string | null }>;
+interface OsvAdvisory {
+  id: string; summary: string; severity_class: string; published: string; url: string;
+  cvss_vector: string | null; severity_label: string | null;
+}
+
+function parseOsvVulns(vulns: Array<Record<string, unknown>> | undefined): OsvAdvisory[] {
+  return (vulns ?? []).map((v) => {
+    const sev = String(v.severity?.[0]?.score ?? "");
+    const dbSev = String((v.database_specific as Record<string, unknown> | undefined)?.severity ?? "");
+    // v5.7.2: expose the raw CVSS vector + GHSA severity label so the
+    // exploitability formula can compute the cvss component from real data
+    // instead of the 50 neutral default (W3.1 roadmap item).
+    const cvssVector = sev.startsWith("CVSS:") ? sev : null;
+    const severityLabel = dbSev || null;
+    // Map CVSS vector to a coarse class — factual reading of the vector.
+    let severity_class = "UNKNOWN";
+    const m = sev.match(/CVSS:[23]\/\d(\.\d)?\/AV:.*?\/(C|P):[HML]/);
+    const cvssBase = sev.match(/CVSS:[23]\/(\d)/)?.[1];
+    if (cvssBase === "9" || cvssBase === "8") severity_class = "CRITICAL";
+    else if (cvssBase === "7" || cvssBase === "6" || cvssBase === "4") severity_class = "HIGH";
+    else if (cvssBase) severity_class = "MEDIUM";
+    else if (dbSev.toUpperCase() === "CRITICAL" || sev.toUpperCase().includes("CRITICAL")) severity_class = "CRITICAL";
+    else if (dbSev.toUpperCase() === "HIGH" || sev.toUpperCase().includes("HIGH")) severity_class = "HIGH";
+    else if (dbSev.toUpperCase() === "MODERATE" || dbSev.toUpperCase() === "MEDIUM") severity_class = "MEDIUM";
+    void m;
+    return {
+      id: String(v.id),
+      summary: String(v.summary ?? v.details ?? "").slice(0, 200),
+      severity_class,
+      published: String(v.published ?? ""),
+      url: `https://osv.dev/vulnerability/${v.id}`,
+      cvss_vector: cvssVector,
+      severity_label: severityLabel,
+    };
+  });
+}
+
+// v5.16.0 (W7): optional version — when an exact version is known (lockfile),
+// OSV filters to version-applicable advisories (large false-positive reduction
+// vs name-only queries). Callers without a version keep the old behavior.
+async function osvQuery(pkg: { name: string; ecosystem: string; version?: string }): Promise<{
+  advisories: OsvAdvisory[];
   error?: string;
 }> {
   try {
+    const body: Record<string, unknown> = { package: { name: pkg.name, ecosystem: pkg.ecosystem } };
+    if (pkg.version) body.version = pkg.version;
     const res = await fetch("https://api.osv.dev/v1/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ package: { name: pkg.name, ecosystem: pkg.ecosystem } }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       return { advisories: [], error: `OSV HTTP ${res.status}` };
     }
     const data = await res.json() as { vulns?: Array<Record<string, unknown>> };
-    const advisories = (data.vulns ?? []).map((v) => {
-      const sev = String(v.severity?.[0]?.score ?? "");
-      const dbSev = String((v.database_specific as Record<string, unknown> | undefined)?.severity ?? "");
-      // v5.7.2: expose the raw CVSS vector + GHSA severity label so the
-      // exploitability formula can compute the cvss component from real data
-      // instead of the 50 neutral default (W3.1 roadmap item).
-      const cvssVector = sev.startsWith("CVSS:") ? sev : null;
-      const severityLabel = dbSev || null;
-      // Map CVSS vector to a coarse class — factual reading of the vector.
-      let severity_class = "UNKNOWN";
-      const m = sev.match(/CVSS:[23]\/\d(\.\d)?\/AV:.*?\/(C|P):[HML]/);
-      const cvssBase = sev.match(/CVSS:[23]\/(\d)/)?.[1];
-      if (cvssBase === "9" || cvssBase === "8") severity_class = "CRITICAL";
-      else if (cvssBase === "7" || cvssBase === "6" || cvssBase === "4") severity_class = "HIGH";
-      else if (cvssBase) severity_class = "MEDIUM";
-      else if (dbSev.toUpperCase() === "CRITICAL" || sev.toUpperCase().includes("CRITICAL")) severity_class = "CRITICAL";
-      else if (dbSev.toUpperCase() === "HIGH" || sev.toUpperCase().includes("HIGH")) severity_class = "HIGH";
-      else if (dbSev.toUpperCase() === "MODERATE" || dbSev.toUpperCase() === "MEDIUM") severity_class = "MEDIUM";
-      return {
-        id: String(v.id),
-        summary: String(v.summary ?? v.details ?? "").slice(0, 200),
-        severity_class,
-        published: String(v.published ?? ""),
-        url: `https://osv.dev/vulnerability/${v.id}`,
-        cvss_vector: cvssVector,
-        severity_label: severityLabel,
-      };
-    });
-    return { advisories };
+    return { advisories: parseOsvVulns(data.vulns) };
   } catch (e) {
     return { advisories: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// v5.16.0 (W7): batch path for large resolved dependency lists (lockfiles).
+// One POST per 1000-package chunk instead of N sequential queries.
+async function osvQueryBatch(pkgs: Array<{ name: string; ecosystem: string; version?: string }>): Promise<{
+  results: Array<{ advisories: OsvAdvisory[] }>;
+  error?: string;
+}> {
+  const results: Array<{ advisories: OsvAdvisory[] }> = [];
+  const CHUNK = 1000;
+  try {
+    for (let off = 0; off < pkgs.length; off += CHUNK) {
+      const chunk = pkgs.slice(off, off + CHUNK);
+      const res = await fetch("https://api.osv.dev/v1/querybatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: chunk.map((p) => ({
+            package: { name: p.name, ecosystem: p.ecosystem },
+            ...(p.version ? { version: p.version } : {}),
+          })),
+        }),
+      });
+      if (!res.ok) return { results, error: `OSV batch HTTP ${res.status}` };
+      const data = await res.json() as { results?: Array<{ vulns?: Array<Record<string, unknown>> }> };
+      for (const r of data.results ?? []) {
+        results.push({ advisories: parseOsvVulns(r.vulns) });
+      }
+      // Defensive: if OSV returns fewer results than queries, pad with empty.
+      while (results.length < off + chunk.length) results.push({ advisories: [] });
+    }
+    return { results };
+  } catch (e) {
+    return { results, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -2972,6 +3029,7 @@ async function githubRepoFacts(repo: string, token?: string): Promise<{
   last_commit_iso?: string;
   pushed_at?: string;
   stars?: number;
+  default_branch?: string;
   error?: string;
 }> {
   try {
@@ -2985,10 +3043,64 @@ async function githubRepoFacts(repo: string, token?: string): Promise<{
       last_commit_iso: d.pushed_at ?? undefined,
       pushed_at: d.pushed_at ?? undefined,
       stars: d.stargazers_count ?? undefined,
+      default_branch: d.default_branch ?? undefined,
     };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+// v5.16.0 (W7): fetch known dependency manifests/lockfiles from a repo root
+// and parse them into a resolved package list. Lockfile formats win over the
+// bare package.json manifest for the same ecosystem (lockfiles are exact).
+// Failures are non-fatal — callers surface them as repo_warning, never 5xx.
+const REPO_MANIFEST_CANDIDATES: Array<{ file: string; kind: "lockfile" | "manifest" }> = [
+  { file: "package-lock.json", kind: "lockfile" },
+  { file: "yarn.lock", kind: "lockfile" },
+  { file: "requirements.txt", kind: "lockfile" },
+  { file: "Pipfile.lock", kind: "lockfile" },
+  { file: "go.mod", kind: "lockfile" },
+  { file: "Cargo.lock", kind: "lockfile" },
+  { file: "package.json", kind: "manifest" },
+];
+
+async function fetchRepoManifestPackages(repo: string, branch: string, token?: string): Promise<{
+  packages: ResolvedPackage[];
+  detected: Array<{ file: string; format: string; package_count: number }>;
+  error?: string;
+}> {
+  const headers: Record<string, string> = { "User-Agent": "nexus-gateway" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const fetched: Array<{ file: string; kind: "lockfile" | "manifest"; content: string }> = [];
+  try {
+    await Promise.all(REPO_MANIFEST_CANDIDATES.map(async (c) => {
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${repo}/${branch}/${c.file}`, { headers });
+        if (!res.ok) return;
+        const content = await res.text();
+        if (new TextEncoder().encode(content).length > LOCKFILE_MAX_BYTES) return; // skip oversized, deterministic
+        fetched.push({ file: c.file, kind: c.kind, content });
+      } catch { /* per-file non-fatal */ }
+    }));
+  } catch (e) {
+    return { packages: [], detected: [], error: e instanceof Error ? e.message : String(e) };
+  }
+  // Deterministic order: candidate order, not fetch-completion order.
+  fetched.sort((a, b) =>
+    REPO_MANIFEST_CANDIDATES.findIndex((c) => c.file === a.file) -
+    REPO_MANIFEST_CANDIDATES.findIndex((c) => c.file === b.file)
+  );
+  const hasNpmLockfile = fetched.some((f) => f.kind === "lockfile" && (f.file === "package-lock.json" || f.file === "yarn.lock"));
+  const detected: Array<{ file: string; format: string; package_count: number }> = [];
+  const packages: ResolvedPackage[] = [];
+  for (const f of fetched) {
+    if (f.kind === "manifest" && f.file === "package.json" && hasNpmLockfile) continue; // lockfile authoritative
+    const parsed = parseLockfile(f.file, f.content);
+    if (parsed.error) continue; // unparseable manifest in repo = skip, not fatal
+    detected.push({ file: f.file, format: parsed.format, package_count: parsed.packages.length });
+    packages.push(...parsed.packages);
+  }
+  return { packages, detected };
 }
 
 function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; version?: string }>): Record<string, unknown> {
@@ -3019,12 +3131,27 @@ async function runFitnessAttestation(
   let highCount = 0;
   const osvErrors: string[] = [];
 
-  // 1. Advisory facts (OSV) for each declared package
-  for (const p of input.packages ?? []) {
-    const eco = p.ecosystem ?? "npm";
-    const result = await osvQuery({ name: p.name, ecosystem: eco });
-    if (result.error) osvErrors.push(`${p.name}: ${result.error}`);
-    for (const a of result.advisories) {
+  // 1. Advisory facts (OSV) for each declared package.
+  //    v5.16.0 (W7): exact versions are passed to OSV (fewer false positives);
+  //    lists > 10 packages use /v1/querybatch (one POST per 1000) for latency.
+  const declaredPkgs = input.packages ?? [];
+  const advisoriesPerPkg: Array<{ pkgName: string; advs: OsvAdvisory[] }> = [];
+  if (declaredPkgs.length > 10) {
+    const batch = await osvQueryBatch(
+      declaredPkgs.map((p) => ({ name: p.name, ecosystem: p.ecosystem ?? "npm", version: p.version })),
+    );
+    if (batch.error) osvErrors.push(`querybatch: ${batch.error}`);
+    declaredPkgs.forEach((p, i) => advisoriesPerPkg.push({ pkgName: p.name, advs: batch.results[i]?.advisories ?? [] }));
+  } else {
+    for (const p of declaredPkgs) {
+      const eco = p.ecosystem ?? "npm";
+      const result = await osvQuery({ name: p.name, ecosystem: eco, version: p.version });
+      if (result.error) osvErrors.push(`${p.name}: ${result.error}`);
+      advisoriesPerPkg.push({ pkgName: p.name, advs: result.advisories });
+    }
+  }
+  for (const { pkgName, advs } of advisoriesPerPkg) {
+    for (const a of advs) {
       if (a.severity_class === "CRITICAL") criticalCount++;
       else if (a.severity_class === "HIGH") highCount++;
       // Exposure window (W5): days since public disclosure — factual
@@ -3037,7 +3164,7 @@ async function runFitnessAttestation(
           exposure_days = Math.max(0, Math.round((Date.now() - pubMs) / 86400000));
         }
       }
-      advisories.push({ package: p.name, ...a, exposure_days });
+      advisories.push({ package: pkgName, ...a, exposure_days });
     }
   }
 
@@ -3123,22 +3250,83 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
   const serviceType = "fitness_attestation";
 
   // Validate input BEFORE billing — malformed requests fail 400, not 402.
-  let preBody: { repo?: string; packages?: Array<{ name: string; ecosystem?: string; version?: string }> };
+  let preBody: {
+    repo?: string;
+    packages?: Array<{ name: string; ecosystem?: string; version?: string }>;
+    lockfile?: { filename?: string; content?: string };
+  };
   try {
     preBody = await req.clone().json();
   } catch {
     return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
   }
   const repoOk = typeof preBody.repo === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(preBody.repo);
-  const pkgsOk = Array.isArray(preBody.packages) && preBody.packages.length > 0 && preBody.packages.length <= 25 &&
+  const pkgsOk = Array.isArray(preBody.packages) && preBody.packages.length > 0 && preBody.packages.length <= PACKAGES_MAX &&
     preBody.packages.every((p) => typeof p?.name === "string" && p.name.length > 0 && p.name.length <= 100);
-  if (!repoOk && !pkgsOk) {
+  // v5.16.0 (W7): lockfile ingestion — {lockfile: {filename?, content}}.
+  // Size validated pre-billing; parse happens pre-billing too (400, no charge).
+  const lockfilePresent = preBody.lockfile !== undefined && preBody.lockfile !== null;
+  let lockfileContent: string | null = null;
+  if (lockfilePresent) {
+    const lf = preBody.lockfile;
+    if (typeof lf?.content !== "string" || lf.content.length === 0) {
+      return m2mError("INVALID_INPUT", "lockfile.content must be a non-empty string.", serviceType, 400, 0, reqStartTime);
+    }
+    if (new TextEncoder().encode(lf.content).length > LOCKFILE_MAX_BYTES) {
+      return m2mError("LOCKFILE_TOO_LARGE", `lockfile.content exceeds ${LOCKFILE_MAX_BYTES} bytes.`, serviceType, 400, 0, reqStartTime);
+    }
+    lockfileContent = lf.content;
+  }
+  const lockfileOk = lockfileContent !== null;
+  if (!repoOk && !pkgsOk && !lockfileOk) {
     return m2mError(
       "INVALID_INPUT",
-      "Provide {repo: 'owner/name'} and/or {packages: [{name, ecosystem, version}]} (max 25 packages).",
+      "Provide {repo: 'owner/name'} and/or {packages: [{name, ecosystem, version}]} and/or {lockfile: {filename, content}}.",
       serviceType, 400, 0, reqStartTime,
     );
   }
+
+  // v5.16.0 (W7): resolve the dependency list BEFORE billing (deterministic,
+  // cheap, no charge). Precedence: user packages > pasted lockfile > repo
+  // manifest auto-extraction. Repo manifest fetch failures are non-fatal.
+  const inputPkgs: ResolvedPackage[] = (pkgsOk ? preBody.packages ?? [] : []).map((p) => ({
+    name: p.name,
+    ecosystem: p.ecosystem ?? "npm",
+    version: p.version,
+    version_source: "input" as const,
+  }));
+  let lockPkgs: ResolvedPackage[] = [];
+  const lockfilesDetected: Array<{ file: string; format: string; package_count: number }> = [];
+  if (lockfileOk) {
+    const parsed = parseLockfile(preBody.lockfile?.filename, lockfileContent!);
+    if (parsed.error) {
+      return m2mError("LOCKFILE_PARSE_FAILED", parsed.error, serviceType, 400, 0, reqStartTime);
+    }
+    lockPkgs = parsed.packages;
+    lockfilesDetected.push({
+      file: preBody.lockfile?.filename?.split("/").pop() ?? "(pasted)",
+      format: parsed.format,
+      package_count: parsed.packages.length,
+    });
+  }
+  let repoManifestPkgs: ResolvedPackage[] = [];
+  if (repoOk) {
+    const ghToken = Deno.env.get("GITHUB_TOKEN") ?? undefined;
+    let branch = "main";
+    try {
+      const facts = await githubRepoFacts(preBody.repo!, ghToken);
+      if (facts.default_branch) branch = facts.default_branch;
+    } catch { /* non-fatal — default branch fallback */ }
+    const man = await fetchRepoManifestPackages(preBody.repo!, branch, ghToken);
+    repoManifestPkgs = man.packages;
+    lockfilesDetected.push(...man.detected);
+  }
+  const mergedPkgs = mergePackageLists(inputPkgs, lockPkgs, repoManifestPkgs);
+  const resolvedSimple = mergedPkgs.packages.map((p) => ({
+    name: p.name,
+    ecosystem: p.ecosystem,
+    version: p.version,
+  }));
 
   const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
   if (!gatekeeper.allowed) {
@@ -3187,7 +3375,7 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
 
   // 10-minute cache keyed by subject hash — freshness matters for exposure
   // windows, so TTL is short (not the 1h scan cache).
-  const subjectKey = JSON.stringify({ r: preBody.repo ?? null, p: preBody.packages ?? [] });
+  const subjectKey = JSON.stringify({ r: repoOk ? preBody.repo : null, p: resolvedSimple });
   const cacheKey = `fitness:${await sha256Hex(subjectKey)}`;
   let result: Record<string, unknown> | null = null;
   try {
@@ -3206,7 +3394,11 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
 
   let cacheHit = false;
   if (!result) {
-    result = await runFitnessAttestation(preBody);
+    result = await runFitnessAttestation({ repo: repoOk ? preBody.repo : undefined, packages: resolvedSimple });
+    // v5.16.0 (W7): disclose how each dependency was resolved (facts, no claims).
+    (result.subject as Record<string, unknown>).packages_resolved = mergedPkgs.packages;
+    (result.subject as Record<string, unknown>).lockfiles_detected = lockfilesDetected;
+    (result.subject as Record<string, unknown>).dependency_capped = mergedPkgs.capped;
     try {
       const supabase = getSupabaseClient();
       await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "fitness", result });
@@ -4122,7 +4314,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.13.1",
+    version: "5.16.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4398,7 +4590,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
         description:
-          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
+          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest via {lockfile:{filename,content}} (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root — exact versions are queried version-scoped at OSV; merged list capped at 250 with per-package resolution provenance. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
         "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["fitness-attestation", "cve-check", "license-check", "sbom", "exposure-window"],
         requestBody: {
@@ -4411,7 +4603,7 @@ const OPENAPI_SPEC = {
                   repo: { type: "string", description: "GitHub repo as owner/name" },
                   packages: {
                     type: "array",
-                    maxItems: 25,
+                    maxItems: 250,
                     items: {
                       type: "object",
                       properties: {
@@ -4421,6 +4613,15 @@ const OPENAPI_SPEC = {
                       },
                       required: ["name"],
                     },
+                  },
+                  lockfile: {
+                    type: "object",
+                    description: "W7: pasted dependency lockfile/manifest (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock). Content max 512 KiB; parsed pre-billing (400 on failure, no charge).",
+                    properties: {
+                      filename: { type: "string", description: "optional — used for format detection (content sniffed otherwise)" },
+                      content: { type: "string" },
+                    },
+                    required: ["content"],
                   },
                 },
               },
@@ -4565,7 +4766,7 @@ const OPENAPI_SPEC = {
           chain: {
             type: "string",
             description:
-              "Optional chain hint (v5.13.2+) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, zksync|324, scroll|534352, linea|59144, hyperevm|hyperliquid|999 (eip2565-class) = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
+              "Optional chain hint (v5.13.2+) — BS-008 fork-aware MODEXP pricing + precompile AVAILABILITY: ethereum|1, base|8453, polygon|137, arbitrum|42161, optimism|10, bsc|56, monad|143, berachain|80094, bepolia|80069, zksync|324, scroll|534352, linea|59144, hyperevm|hyperliquid|999 (eip2565-class) = probe-verified regimes; polygon-zkevm|1101 has NO MODEXP (unsupported → availability_blocked when code calls it). Unknown/absent = conservative EIP-2565. See /llms.txt for the full regime + missing-precompile table.",
             example: "ethereum",
           },
         },
@@ -4693,7 +4894,8 @@ BS-008 gas-asymmetry MODEXP pricing is fork-aware and PROBE-VERIFIED. EIP-7883
 (Osaka) pricing applies to: ethereum (eth, mainnet, 1), base (8453), polygon
 (matic, 137 — Madhugiri 2025-12-09), arbitrum (arb, arbitrum-one, 42161),
 arbitrum-nova (nova, 42170), arbitrum-sepolia (421614), optimism (op, 10),
-bsc (bnb, 56), monad (143, monad-testnet, 10143). On those chains the
+bsc (bnb, 56), monad (143, monad-testnet, 10143), berachain (bera, 80094 —
+BRIP-0010 Fusaka) and bepolia (berachain-testnet, 80069). On those chains the
 canonical MODEXP asymmetry class is repriced ~6x and protocol-mitigated; any
 other value, or none, keeps the conservative EIP-2565 default (flags more,
 never silently downgrades). The regime map is DYNAMIC: it lives in a
@@ -4728,7 +4930,11 @@ Response fields: contract_info.gas_asymmetry .unsupported_precompiles /
 - POST /x402/fitness — Fitness Attestation, $0.05 USDC. Factual fitness
   facts — NOT legal advice (legal_weight: 0). Input:
   {"repo":"owner/name"} and/or
-  {"packages":[{"name":"ethers","ecosystem":"npm"}]} (max 25).
+  {"packages":[{"name":"ethers","ecosystem":"npm"}]} and/or
+  {"lockfile":{"filename":"package-lock.json","content":"..."}} — paste a
+  lockfile/manifest (package-lock.json, yarn.lock, requirements.txt,
+  Pipfile.lock, go.mod, Cargo.lock) or let repo mode auto-extract manifests
+  (merged cap 250, version-scoped OSV queries, resolution provenance).
   Output: { "facts": {advisories (GHSA/CVE via osv.dev), license (SPDX),
   last_commit_days, stars}, "score": 0-100 (deterministic fixed formula:
   100 - 25*critical - 15*high - 15*license_risk - 10*(freshness>180d)),
@@ -8149,5 +8355,6 @@ async function telemetryWrapper(req: Request): Promise<Response> {
 // -- Entry Point --------------------------------------------------------------
 
 Deno.serve(telemetryWrapper);
+
 export { parseSolidityContract, dryRunHandler, simulateBreachScenarios, handleFitnessLiteWithBilling, handlePeerCheckWithBilling, isVendoredSolPath, isValidPeerUrl, probePeerEndpoint };
 export { buildGasRank, GAS_RANK_MODEL } from "./w4_gas_rank.ts";

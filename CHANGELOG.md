@@ -1,5 +1,36 @@
 # Nexus Gateway Changelog
 
+## v5.16.0-frontier — 2026-10-13
+
+### W7 Web2 Dependency Fitness — lockfile ingestion + repo manifest extraction
+- **POST /x402/fitness ($0.05) now ingests dependency lockfiles/manifests.**
+  Paste any supported file via `{lockfile:{filename?,content}}` (content
+  max 512 KiB): package-lock.json / npm-shrinkwrap.json, yarn.lock,
+  requirements.txt, Pipfile.lock, go.mod, Cargo.lock, or package.json.
+  Format is detected from the filename with content-sniffing fallback.
+- **Repo mode auto-extracts dependency manifests** from the repo root
+  (default branch): the same 7 file candidates are fetched (deterministic
+  order), so a bare `{repo:"owner/name"}` call now scans real dependencies
+  instead of reporting "no packages supplied".
+- **Exact versions from lockfiles are queried version-scoped at OSV** —
+  a pinned `lodash@4.17.20` reports its own advisories instead of every
+  lodash advisory ever published (false-positive reduction). Range
+  specifiers (`^1.2.3`, `>=1.0`) stay unpinned and are disclosed as such
+  (no registry guessing).
+- **Merged cap 250 packages** (input > lockfile > repo manifest precedence,
+  dedup by ecosystem|name|version); OSV querybatch for lists > 10.
+  Resolution provenance disclosed per package:
+  `subject.packages_resolved[]` with `version_source`
+  (input/lockfile/manifest/unpinned), `subject.lockfiles_detected[]`,
+  `subject.dependency_capped`.
+- **Pre-billing validation** (never charged): 400 LOCKFILE_PARSE_FAILED
+  (unrecognized/corrupt lockfile), 400 LOCKFILE_TOO_LARGE (>512 KiB).
+  FITNESS_VERSION 1.0.0 → 1.1.0.
+- Validation: 40/40 lockfile-parse unit tests + 6/6 handler negative
+  controls + 97/97 modexp-calc + 40/40 engine-regime + 41/41 availability +
+  9/9 BS-014 + 11/11 v5.14.1 + 12/12 BS-015 + W4 19/19+10/10+20/20 +
+  W3 35/35+22/22+19/19 + offline regression 22F/3G/17NC 0 FAIL.
+
 ## v5.14.3-frontier — 2026-10-12
 
 ### BS-008 regime map + Berachain/Bepolia (Protocol Review #7 correction)
