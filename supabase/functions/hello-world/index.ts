@@ -454,13 +454,16 @@ const TRIAL_CONFIG = {
 
 const NODE_MANIFEST = {
   ...NODE_IDENTITY,
-  description: "M2M Autonomous Legal, Smart Contract & Web3 Schema Verification Gateway",
+  description: "M2M Autonomous Legal, Smart Contract, Web3 Schema & Fitness Attestation Gateway — deterministic signed attestation for repos, dependency lockfiles, and packages; every paid fitness response is EIP-712 signed by ERC-8004 agent #636, Merkle-anchored daily on Polygon, and independently verifiable via free public audit endpoints (GET /attestations, GET /attestations/proof).",
   protocol_compatibility: ["A2A-Direct", "MCP-Standard", "x402-Microtransactions"],
   semantic_tags: [
     "legal.hybrid-contract-pro",
     "web3.solidity-audited-modules",
     "data.verified-structured-schema",
     "compliance.mica-ready",
+    "attestation.fitness-signed-verifiable",
+    "security.dependency-sbom-fitness",
+    "proof.merkle-anchored-public-audit",
   ],
   performance_metrics: {
     avg_latency_ms: "< 250.0",
