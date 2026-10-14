@@ -186,6 +186,9 @@ const CHAIN_PRICING_REGIMES: Record<string, RegimeEntry> = {
   // v5.13.2 HyperEVM (Protocol Review #6, probe-verified 2026-10-11 — reference/hyperevm-review.md):
   hyperevm: { regime: "eip2565", since: null, note: "Hyperliquid HyperEVM mainnet (chain 999): Cancun-class EVM without blob txs. Live MODEXP price probe 2026-10-11: BIG 114,614 / SMALL 24,655 gas = EIP-2565 class. Full standard precompile set incl. 0x0a (valid KZG vector, 64B out). 20 HyperCore read precompiles 0x0800-0x0813 measured ~1334+33*(in+out) — BELOW documented 2000+65*(in+out) (safe direction, docs divergence noted)." },
   "hyperevm-testnet": { regime: "eip2565", since: null, note: "Hyperliquid HyperEVM testnet (chain 998): MODEXP BIG estimate 114,614 identical to mainnet (probe 2026-10-11); 0x0a present (valid KZG vector)." },
+  // v5.14.3 Berachain (Protocol Review #7, probe-verified 2026-10-12 — reference/berachain-review.md):
+  berachain: { regime: "eip7883", since: "2026-06-24", note: "Berachain mainnet (chain 80094) runs Bera-Reth (Reth v1.11.4 fork) with STOCK revm precompiles — zero custom precompiles registered. Fusaka (BRIP-0010) mainnet 2026-06-24 activates Osaka EIPs incl. EIP-7823/7883/7939/7951. Live MODEXP price probe 2026-10-12: BIG 554,303 / SMALL 27,380 gas = EIP-7883 class. Full standard set 0x01-0x0a + BLS 0x0b-0x11 (behavior identical to Ethereum mainnet incl. pairing k=0 revert) + P-256 0x100 at standard 6,900 gas. Deposit 0x4242...42 is a regular contract (4,190 B), not a precompile." },
+  bepolia: { regime: "eip7883", since: "2026-05-27", note: "Berachain Bepolia testnet (chain 80069): Fusaka activated 2026-05-27 (BRIP-0010). Live MODEXP price probe 2026-10-12: BIG 554,303 / SMALL 27,380 gas = EIP-7883 class, identical to mainnet. Full standard precompile set + P-256 0x100 present." },
 };
 
 const CHAIN_ALIASES: Record<string, string> = {
@@ -206,6 +209,9 @@ const CHAIN_ALIASES: Record<string, string> = {
   // v5.13.2 HyperEVM:
   hyperliquid: "hyperevm", "hyperevm-mainnet": "hyperevm", "hyperliquid-mainnet": "hyperevm", "999": "hyperevm",
   "hyperliquid-testnet": "hyperevm-testnet", "998": "hyperevm-testnet",
+  // v5.14.3 Berachain:
+  bera: "berachain", "berachain-mainnet": "berachain", "80094": "berachain",
+  "berachain-testnet": "bepolia", "80069": "bepolia",
 };
 
 // ---------------------------------------------------------------------------

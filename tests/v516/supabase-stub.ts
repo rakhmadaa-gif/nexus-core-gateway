@@ -1,9 +1,10 @@
+declare const globalThis: any;
 const makeRow = () => ({
   id: "stub-id",
   client_id: "stub-client",
   tier: "standard",
   free_requests_left: 0,
-  balance_credits: 0,
+  balance_credits: (globalThis.__STUB_BALANCE ?? 0),
   total_invocations: 0,
   code_modules_trial_used: true,
   trial_expires_at: null,

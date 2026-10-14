@@ -24,6 +24,10 @@ const call = async (body) => {
 };
 
 console.log("v5.16.0 W7 handler negative controls");
+// v5.16.1: unfunded callers now get the priced 402 BEFORE validation
+// (paywallPrecheck). Fund the stub for NC1-NC5 so they still exercise
+// validation-before-charge for clients who CAN pay; NC6 unfunds again.
+globalThis.__STUB_BALANCE = 10000;
 
 // NC1: garbage lockfile content -> 400 LOCKFILE_PARSE_FAILED (pre-billing)
 {
@@ -67,6 +71,7 @@ console.log("v5.16.0 W7 handler negative controls");
     `got ${r.status}/${codeOf(r.json)}`);
 }
 
+globalThis.__STUB_BALANCE = 0;
 // NC6: VALID package-lock parses pre-billing and reaches billing (stub balance 0 -> 402).
 // Proves order: parse OK -> then billing. Any 400 here = resolution bug.
 {

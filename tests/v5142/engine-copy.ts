@@ -98,7 +98,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.16.0-frontier",
+  engine_version: "v5.16.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -441,7 +441,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.16.0-frontier",
+  version: "5.16.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -454,13 +454,16 @@ const TRIAL_CONFIG = {
 
 const NODE_MANIFEST = {
   ...NODE_IDENTITY,
-  description: "M2M Autonomous Legal, Smart Contract & Web3 Schema Verification Gateway",
+  description: "M2M Autonomous Legal, Smart Contract, Web3 Schema & Fitness Attestation Gateway — deterministic signed attestation for repos, dependency lockfiles, and packages; every paid fitness response is EIP-712 signed by ERC-8004 agent #636, Merkle-anchored daily on Polygon, and independently verifiable via free public audit endpoints (GET /attestations, GET /attestations/proof).",
   protocol_compatibility: ["A2A-Direct", "MCP-Standard", "x402-Microtransactions"],
   semantic_tags: [
     "legal.hybrid-contract-pro",
     "web3.solidity-audited-modules",
     "data.verified-structured-schema",
     "compliance.mica-ready",
+    "attestation.fitness-signed-verifiable",
+    "security.dependency-sbom-fitness",
+    "proof.merkle-anchored-public-audit",
   ],
   performance_metrics: {
     avg_latency_ms: "< 250.0",
@@ -600,7 +603,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.16.0-frontier (W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.16.1-frontier (W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -2786,12 +2789,95 @@ async function handleEvmSentinelScan(
 // v5.0.0: billing wrapper for the scan routes — mirrors the main handler's
 // gatekeeper + 402 x402 + M2M envelope flow, specialized for scan_quick /
 // scan_deep. Returns the machine scan output inside the standard envelope.
+
+// =============================================================================
+// PRE-VALIDATION PAYWALL PRECHECK (v5.16.1)
+// x402-list monitors probe every declared path with a bare POST (no client id,
+// empty body) and require an HTTP 402 priced at the advertised service price.
+// Dedicated endpoints used to validate input first (400) and the /v1/* legacy
+// paths fell through to the structured_data catch-all ($0.20 for everything).
+// This helper runs the gatekeeper BEFORE input validation and returns a priced
+// 402 with an x402 envelope when the caller cannot pay. The authoritative
+// gatekeeper check later in each handler still applies, and credits are only
+// recorded on success (recordUsageAfterSuccess), so callers who CAN pay still
+// receive 400-class validation errors without charge (exactly as before).
+// =============================================================================
+async function paywallPrecheck(
+  req: Request,
+  serviceType: string,
+  resource: { url: string; description: string },
+  reqStartTime: number,
+  legalTier?: string,
+): Promise<Response | null> {
+  const gk = await checkQuotaAndRate(req, serviceType, legalTier);
+  if (gk.allowed) return null;
+  await logServiceCall(gk.clientId, serviceType, 402, null, 0);
+  const denied = gk.deniedResponse as Record<string, unknown>;
+  let costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 20;
+  if (serviceType === "legal_code") {
+    const tier = (legalTier ?? "standard").toLowerCase();
+    const tierDef = PRICING_MODEL.legal_code_tiers[tier as keyof typeof PRICING_MODEL.legal_code_tiers];
+    if (tierDef) costCredits = tierDef.credits;
+  }
+  const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+  const x402PaymentRequired = {
+    x402Version: 2,
+    error: "Payment required",
+    resource: { url: resource.url, description: resource.description, mimeType: "application/json" },
+    accepts: [{
+      scheme: "exact",
+      network: "eip155:137",
+      asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      amount: amountUsdcAtomic,
+      payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+      maxTimeoutSeconds: 300,
+      extra: {
+        name: "USD Coin",
+        version: "2",
+        gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
+        note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
+      },
+    }],
+  };
+  const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+  const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+  const body = {
+    status: "failed",
+    payload_id: null,
+    timestamp: new Date().toISOString(),
+    service_type: serviceType,
+    error: {
+      error_code: String(denied.error_code ?? "DENIED"),
+      message: String(denied.message ?? "Request denied by gatekeeper."),
+    },
+    metadata: buildM2MMetadata(0, reqStartTime),
+  };
+  return new Response(JSON.stringify(body, null, 2), {
+    status: 402,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+  });
+}
+
 async function handleEvmSentinelScanWithBilling(
   req: Request,
   tier: "quick" | "deep",
 ): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = tier === "quick" ? "scan_quick" : "scan_deep";
+  // v5.16.1: paywall precheck BEFORE input validation — the x402-list monitor
+  // probes /evm-sentinel/v1/scan-quick and /scan-deep bare; they must answer
+  // 402 priced at 0.05 / 0.50 USDC respectively, not 400. Callers who can pay
+  // still get 400-class validation errors below, without charge.
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: `/evm-sentinel/v1/scan-${tier}`,
+    description: tier === "quick"
+      ? "Nexus EVM Sentinel — machine-readable Solidity security pre-screening (13 breach scenarios)."
+      : "Nexus EVM Sentinel — deep static scan with BS-010 Permit2 drainer and BS-011 zero-min analysis.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+
+
 
   // v5.0.1: validate input BEFORE billing — malformed requests must fail
   // with 400, not 402. Clients should never pay to discover their payload
@@ -3248,6 +3334,17 @@ async function runFitnessAttestation(
 async function handleFitnessWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = "fitness_attestation";
+  // v5.16.1: paywall precheck BEFORE input validation — bare monitor probes
+  // (x402-list) must receive the priced 402 envelope, not a 400. Callers who
+  // can pay still get the 400 validation errors below, without charge.
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: "/x402/fitness",
+    description: "Nexus Fitness Attestation — factual GHSA/CVE + SPDX license + freshness + CycloneDX SBOM + deterministic score. legal_weight 0.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+
+
 
   // Validate input BEFORE billing — malformed requests fail 400, not 402.
   let preBody: {
@@ -3475,6 +3572,15 @@ async function fetchRepoSolFilesForGasRank(repo: string): Promise<{ files: Array
 async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = "fitness_lite";
+  // v5.16.1: paywall precheck BEFORE input validation (see handleFitnessWithBilling).
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: "/x402/fitness/lite",
+    description: "Nexus Fitness Lite — W4 Gas Efficiency Rank (deterministic static estimate vs public reference cohort). legal_weight 0.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+
+
 
   // Validate input BEFORE billing — malformed requests fail 400, not 402.
   let preBody: { repo?: string; files?: Array<{ path: string; source: string }> };
@@ -3625,6 +3731,15 @@ const FITNESS_FULL_TTL_MS = 10 * 60 * 1000;
 async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = "fitness_full";
+  // v5.16.1: paywall precheck BEFORE input validation (see handleFitnessWithBilling).
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: "/x402/fitness/full",
+    description: "Nexus Fitness Full — gas rank + exploitability score + on-chain source match. legal_weight 0.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+
+
 
   // 1. Validate input BEFORE anything — 400 class, never charged.
   let body: unknown;
@@ -4086,6 +4201,15 @@ async function fetchPeerIncidentHistory(peerUrl: string): Promise<Record<string,
 async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = "fitness_attestation"; // billed at the $0.05 fitness rate per approved design
+  // v5.16.1: paywall precheck BEFORE input validation (see handleFitnessWithBilling).
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: "/x402/fitness/peer-check",
+    description: "Nexus Transaction Peer-Check — direct factual probe of a peer endpoint. legal_weight 0.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+
+
 
   // Validate input BEFORE billing.
   let preBody: { peer_url?: string; peer_urls?: string[]; peer_name?: string };
@@ -4314,7 +4438,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.16.0",
+    version: "5.16.1",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -7871,6 +7995,23 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
   }
 
+  // v5.16.1: Legacy per-path service routes. x402-list declares one path per
+  // service and the monitor probes each path bare — it must receive a 402
+  // priced at THAT service's price. These paths previously fell through to
+  // the catch-all and all answered at the structured_data price ($0.20).
+  const LEGACY_SERVICE_ROUTES: Record<string, string> = {
+    "/structured-data": "structured_data",
+    "/v1/structured-data": "structured_data",
+    "/code-modules": "code_modules",
+    "/v1/code-modules": "code_modules",
+    "/legal-code": "legal_code",
+    "/v1/legal-code": "legal_code",
+  };
+  const legacyRouteService = LEGACY_SERVICE_ROUTES[docsRoute];
+  if (legacyRouteService && req.method === "GET") {
+    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+  }
+
   // 2. Manifest Discovery Endpoint
   // (GET catch-all preserved: any GET without a matching route returns the A2A
   // manifest.)
@@ -7879,12 +8020,12 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // 3. Extract service_type for gatekeeper pre-check
-  let serviceType = "structured_data";
+  let serviceType = legacyRouteService ?? "structured_data";
   let reqBody: Record<string, unknown> = {};
   try {
     const cloneReq = req.clone();
     reqBody = await cloneReq.json();
-    if (reqBody.service_type) serviceType = String(reqBody.service_type);
+    if (!legacyRouteService && reqBody.service_type) serviceType = String(reqBody.service_type);
   } catch (_) {}
 
   // v4.5.0: legal_code tier extraction (light / standard / enterprise)
@@ -8001,9 +8142,18 @@ async function handler(req: Request): Promise<Response> {
     });
   }
 
-  // 6. Delegate to Core Payload Engine — Phase 2.2: track stage timing
+  // 6. Delegate to Core Payload Engine — Phase 2.2: track stage timing.
+  // Legacy route: the path itself selects the service — the body cannot
+  // override it (price integrity for the monitor-listed per-service paths).
   const engineStart = Date.now();
-  const response = await payloadHandler(req);
+  const engineReq = legacyRouteService
+    ? new Request(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: JSON.stringify({ ...reqBody, service_type: legacyRouteService }),
+    })
+    : req;
+  const response = await payloadHandler(engineReq);
   recordStageTiming("engine", Date.now() - engineStart);
 
   // 7. Record usage + log after success — Phase 2.2: parallel DB writes

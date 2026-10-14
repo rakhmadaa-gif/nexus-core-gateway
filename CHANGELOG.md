@@ -1,6 +1,34 @@
 # Nexus Gateway Changelog
 
-## v5.16.0-frontier — 2026-10-13
+## v5.16.1-frontier — 2026-10-14
+
+### Pre-validation paywall precheck + legacy per-path routes (x402-list monitor compatibility)
+- **Problem (x402-list rejection root cause):** the listing monitor probes every
+  declared endpoint path with a bare POST (no client id, empty body) and
+  requires HTTP 402 priced at the advertised service price. Dedicated
+  endpoints validated input first (400 INVALID_INPUT), and the declared
+  /v1/structured-data, /v1/code-modules, /v1/legal-code paths fell through
+  to the catch-all which priced ALL of them at structured_data ($0.20).
+- **New `paywallPrecheck()` helper** runs the gatekeeper BEFORE input
+  validation in the 5 dedicated paid handlers (fitness, fitness/lite,
+  fitness/full, fitness/peer-check, evm-sentinel scan quick/deep): callers
+  who cannot pay now receive the priced 402 + x402 envelope immediately.
+  The authoritative gatekeeper check later in each handler still applies;
+  credits are only recorded on success (recordUsageAfterSuccess), so
+  callers who CAN pay still receive 400-class validation errors without
+  charge — identical behavior as before for funded clients.
+- **Legacy per-path service routes:** /structured-data, /v1/structured-data,
+  /code-modules, /v1/code-modules, /legal-code, /v1/legal-code now map to
+  their service type at the router level. The path selects the service
+  (body `service_type` cannot override it — price integrity), so a bare
+  probe of /v1/code-modules answers 402 at $1.20 and /v1/legal-code at
+  $450 (standard tier) instead of $0.20. GET on these paths → 405.
+- Zero behavior change for funded clients and for all free endpoints.
+- Validation: offline harness NCs (bare probes 402 at correct amounts for
+  all 9 paid paths, dummy-id 402, route-forcing, GET 405) + full offline
+  regression + live E2E on all monitor-declared paths + live regression.
+
+## v5.16.0-frontier — 2026-10-13 — 2026-10-13
 
 ### W7 Web2 Dependency Fitness — lockfile ingestion + repo manifest extraction
 - **POST /x402/fitness ($0.05) now ingests dependency lockfiles/manifests.**
