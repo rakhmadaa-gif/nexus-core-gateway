@@ -15,7 +15,12 @@ const PROJECT = "xibzsthfrbomefnvbicb";
 const REST = `https://${PROJECT}.supabase.co/rest/v1/attestation_log`;
 const MGMT = `https://api.supabase.com/v1/projects/${PROJECT}/database/query`;
 const POA = `https://${PROJECT}.supabase.co/functions/v1/hello-world/poa/record`;
-const RPC = "https://polygon-bor-rpc.publicnode.com";
+const RPC_CANDIDATES = [
+  process.env.POLYGON_RPC_URL,
+  "https://polygon-bor-rpc.publicnode.com",
+  "https://polygon.drpc.org",
+  "https://1rpc.io/matic",
+].filter(Boolean);
 
 const args = process.argv.slice(2);
 const INCLUDE_TODAY = args.includes("--include-today");
@@ -56,6 +61,28 @@ async function waitReceipt(provider, hash, tries = 40) {
 
 const esc = (s) => String(s).replace(/'/g, "''");
 
+// Recover anchor tx metadata via the public explorer (browser UA required —
+// Blockscout Cloudflare-blocks bare clients). Returns { tx, block } or null.
+async function findAnchorTx(root) {
+  try {
+    const r = await fetch(
+      `https://polygon.blockscout.com/api/v2/addresses/${ANCHOR_ADDRESS}/transactions`,
+      { headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" } },
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const needle = root.toLowerCase().replace(/^0x/, "");
+    for (const tx of d.items || []) {
+      if (String(tx.raw_input || "").toLowerCase().includes(needle)) {
+        return { tx: tx.hash, block: tx.block_number };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const rows = await fetchUnanchored();
   if (!rows.length) {
@@ -64,7 +91,26 @@ async function main() {
   }
   const byDay = {};
   for (const r of rows) (byDay[r.day] ||= []).push(r);
-  const provider = new JsonRpcProvider(RPC, 137, { staticNetwork: true });
+  // RPC failover: some free endpoints now classify fee-history/archive calls
+  // as premium. Probe each candidate with a full fee-data round-trip and use
+  // the first that answers cleanly.
+  let provider = null;
+  let rpcUsed = null;
+  const probeErrors = [];
+  for (const url of RPC_CANDIDATES) {
+    try {
+      const p = new JsonRpcProvider(url, 137, { staticNetwork: true });
+      await p.getBlockNumber();
+      await p.getFeeData();
+      provider = p;
+      rpcUsed = url;
+      break;
+    } catch (e) {
+      probeErrors.push(`${url}: ${String(e.message || e).slice(0, 120)}`);
+    }
+  }
+  if (!provider) throw new Error(`no usable RPC: ${probeErrors.join(" | ")}`);
+  console.log(JSON.stringify({ rpc: rpcUsed }));
   const wallet = new Wallet(pk.startsWith("0x") ? pk : `0x${pk}`, provider);
   const anchor = new Contract(ANCHOR_ADDRESS, ANCHOR_ABI, wallet);
   const summary = [];
@@ -74,7 +120,25 @@ async function main() {
     const dayNum = Number(day.replaceAll("-", ""));
     const onchain = await anchor.anchoredAt(root);
     if (onchain !== 0n) {
-      console.log(JSON.stringify({ day, root, skipped: "already anchored on-chain" }));
+      // Self-heal: a previous run broadcast the anchor tx but died before the
+      // DB write-back (e.g. transient RPC failure). Backfill merkle metadata
+      // so the public proof endpoint stops reporting PENDING_ANCHOR.
+      const anchoredAtIso = new Date(Number(onchain) * 1000).toISOString();
+      const info = await findAnchorTx(root);
+      let backfilled = 0;
+      for (const r of dayRows) {
+        const proof = proofs[r.struct_hash.toLowerCase()] || [];
+        let set =
+          `merkle_root='${esc(root)}', merkle_proof='${JSON.stringify(proof)}'::jsonb, anchored_at='${esc(anchoredAtIso)}'`;
+        if (info) set += `, anchor_tx='${esc(info.tx)}', anchor_block=${info.block}`;
+        await runSql(
+          `UPDATE public.attestation_log SET ${set} WHERE id='${esc(r.id)}' AND merkle_root IS NULL;`,
+        );
+        backfilled++;
+      }
+      console.log(
+        JSON.stringify({ day, root, skipped: "already anchored on-chain", backfilled, anchor_tx: info?.tx || null }),
+      );
       continue;
     }
     if (DRY) {
