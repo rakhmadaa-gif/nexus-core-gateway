@@ -17,8 +17,8 @@ const MGMT = `https://api.supabase.com/v1/projects/${PROJECT}/database/query`;
 const POA = `https://${PROJECT}.supabase.co/functions/v1/hello-world/poa/record`;
 const RPC_CANDIDATES = [
   process.env.POLYGON_RPC_URL,
-  "https://polygon-bor-rpc.publicnode.com",
   "https://polygon.drpc.org",
+  "https://polygon-bor-rpc.publicnode.com",
   "https://1rpc.io/matic",
 ].filter(Boolean);
 
