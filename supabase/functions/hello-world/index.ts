@@ -478,6 +478,8 @@ const NODE_MANIFEST = {
     "attestation.fitness-signed-verifiable",
     "security.dependency-sbom-fitness",
     "proof.merkle-anchored-public-audit",
+    "security.exploitability-scoring",
+    "evidence.tamper-evident-ipfs-bundle",
   ],
   performance_metrics: {
     avg_latency_ms: "< 250.0",
