@@ -1,6 +1,41 @@
 # Nexus Gateway Changelog
 
+## v5.17.0-frontier — 2026-10-16
+
+### W6 Fitness Forensic — POST /x402/fitness/forensic ($3.50 USDC / 350 CRED)
+- **New top fitness tier (spec 1.0-FINAL + Amendment A1 + Amendment A2).**
+  Everything in Full (gas rank vs cohort, base attestation, per-advisory
+  exploitability; source-match when {address} supplied) plus:
+  - **Top-3 exploit scenarios:** all detected BS-001..BS-015 scenarios
+    (13-scenario library) ranked severity desc with scenario_id asc
+    tie-break; top 3 reported with affected functions and per-file
+    detected_in attribution (multi-file inputs merged, worst severity wins).
+  - **Deterministic attack narratives:** per-scenario narrative builders
+    are pure functions over the detection evidence (prerequisites,
+    attack_path, evidence) — no wall-clock, no RNG; identical input
+    produces byte-identical narratives.
+  - **observable_impact (Amendment A1):** address-mode only, scoped to
+    drain-class scenarios (affected functions must contain value-transfer
+    ops). Reports the observed native balance at the recorded block B with
+    the label "observed state at block B, not a loss prediction".
+    Non-drain scenarios and source-only mode carry explicit omit-reasons.
+  - **IPFS evidence bundle (Amendment A2):** the canonical JSON forensic
+    bundle (schema w6-forensic/1.0, deterministic, block-B-as-input) is
+    dual-pinned to Pinata (primary) + Filebase (redundant). Fewer than 2
+    healthy pin legs returns 422 DEGRADED_IPFS **without charge**
+    (pre-billing). The EIP-712 attestation resultHash covers the response
+    including the bundle CID — no attestation schema change.
+- Input: {repo}|{files} (max 200 files / 2 MiB) + optional {address}
+  (activates observable mode) + {chain=polygon} + optional {packages}.
+  All 400/422 failures are pre-billing. 10-minute cache (full charge on
+  hit — cache is speed, not discount). legal_weight: 0 — factual only.
+- Fitness suite is now 5 paid tiers: $0.05 / $0.05 / $1.25 / $2.25 / $3.50.
+- Validation: tests/v517 (narrative determinism golden tests, omit-reason
+  coverage, 400/422 pre-billing NCs, DEGRADED_IPFS NC) + offline
+  regression (22F/3G/17NC) + live E2E + PoA.
+
 ## v5.16.1-frontier — 2026-10-14
+
 
 ### Pre-validation paywall precheck + legacy per-path routes (x402-list monitor compatibility)
 - **Problem (x402-list rejection root cause):** the listing monitor probes every

@@ -50,6 +50,7 @@ export const ATTESTED_SERVICE_TYPES: ReadonlySet<string> = new Set([
   "fitness_attestation", // base fitness ($0.05) AND peer-check ($0.05)
   "fitness_lite", // gas efficiency rank ($1.25)
   "fitness_full", // exploitability + source-match ($2.25)
+  "fitness_forensic", // W6: narratives + observable impact + IPFS bundle ($3.50)
 ]);
 
 /**
