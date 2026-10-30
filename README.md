@@ -91,11 +91,47 @@ Nexus Gateway is a **Machine-to-Machine (M2M) API** that serves other AI agents,
 | Problem | Nexus Solution |
 |---|---|
 | Legal contracts and smart contracts are created separately, often misaligned | Digital Twin v3.1 maps every legal clause to exact code lines (bipolar mapping) |
-| Smart contract security audits are expensive and slow | Free instant dry-run with 9 breach scenarios (incl. unbounded iteration DoS, revert-blocking payout, signature binding) + nonce/replay defense |
+| Smart contract security audits are expensive and slow | Free instant dry-run with 13 breach scenarios (incl. unbounded iteration DoS, revert-blocking payout, signature binding) + nonce/replay defense |
 | Cross-border (ID/EN) legal agreements are hard to standardize | Built-in bilingual EN/ID legal contract generation |
 | Payment rails for API services are complex | USDC pull-payment on Polygon (EIP-712 Permit → auto-credit) |
 
 ---
+
+### Architecture — from request to verifiable proof
+
+One edge function. Every paid response is **signed, anchored on-chain daily, and verifiable by anyone — for free**.
+
+```
+┌──────────────────────┐
+│      M2M CLIENT       │   x402 agent · CI job · GitHub Action · bot
+└──────────┬───────────┘
+           │  POST {repo | files | source_code}
+           │  + PAYMENT-SIGNATURE (x402 → EIP-3009 USDC)
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│           NEXUS GATEWAY — single edge function              │
+│                                                             │
+│  ① paywallPrecheck → 402 x402 envelope (price up front)    │
+│  ② EVM SENTINEL ENGINE                                      │
+│     • Solidity deep parse → 15 breach scenarios BS-001…015  │
+│     • MODEXP gas regimes — probe-verified per chain         │
+│     • dependency fitness — GHSA/CVE (OSV) · SPDX · SBOM      │
+│     • reachability verdicts · gas rank · forensic tier      │
+│  ③ billing — EIP-3009 settle · EIP-712 pull (Gateway.sol)   │
+│  ④ SIGNED ATTESTATION — EIP-712 · ERC-8004 Agent #636       │
+└──────┬────────────────┬───────────────────┬─────────────────┘
+       ▼                ▼                   ▼
+┌─────────────┐  ┌───────────────┐  ┌────────────────────┐
+│ SUPABASE DB │  │  POLYGON L1   │  │  IPFS dual-pin     │
+│ audit trail │  │ Merkle anchor │  │  Pinata + Filebase │
+│ (append-only│  │ daily root ·  │  │  forensic bundle   │
+│  poa_ledger)│  │ USDC treasury │  │  (CID)             │
+└─────────────┘  └───────────────┘  └────────────────────┘
+       ▲                ▲                   ▲
+       └────────────────┴───────────────────┘
+   GET /attestations + /attestations/proof — free, no auth:
+   EIP-712 recover → ownerOf(636) → Merkle proof → on-chain root
+```
 
 ## Quick Start
 
@@ -115,7 +151,7 @@ curl https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/metrics
 ### 2. Try Dry-Run (Free — No Auth)
 
 ```bash
-# Test any Solidity contract for free — 9 breach scenarios + nonce defense
+# Test any Solidity contract for free — 13 breach scenarios + nonce defense
 curl -X POST https://xibzsthfrbomefnvbicb.supabase.co/functions/v1/hello-world/gateway/dry-run \
   -H "Content-Type: application/json" \
   -d '{
