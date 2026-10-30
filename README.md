@@ -432,7 +432,7 @@ Client Agent ──POST──→ Supabase Edge Function (Deno/TypeScript)
 - **Database:** Supabase (PostgreSQL + RLS)
 - **Blockchain:** Polygon PoS (EIP-712 Permit, ERC-20 TransferFrom)
 - **Payment:** USDC native (6 decimals) via pull-payment architecture
-- **Security:** 9 breach scenarios (incl. BS-009 Unbounded Iteration DoS), nonce anti-replay, signature binding, 2-block confirmation, max gas enforcement
+- **Security:** 15 breach scenarios BS-001…BS-015 (incl. BS-009 Unbounded Iteration DoS, BS-014 Phantom Vote, BS-015 HyperCore Porting Trap), nonce anti-replay, signature binding, 2-block confirmation, max gas enforcement
 
 ---
 
