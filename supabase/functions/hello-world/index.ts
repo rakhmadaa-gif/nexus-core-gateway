@@ -34,8 +34,9 @@ import {
 } from "./w3_fitness_full.ts";
 import {
   X402_CONFIG, verifyIncomingPayment, settleTransferWithAuthorization,
-  buildPaymentResponseHeader,
+  buildPaymentResponseHeader, buildX402Accepts, deriveSettlementClientId, getChainConfig,
 } from "./x402_settlement.ts";
+import { notifyRevenueBell } from "./revenue_bell.ts";
 import {
   ATTESTED_SERVICE_TYPES,
   ATTESTATION_DOMAIN,
@@ -112,7 +113,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.17.0-frontier",
+  engine_version: "v5.18.0-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -455,7 +456,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.17.0-frontier",
+  version: "5.18.0-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -588,6 +589,16 @@ const NODE_MANIFEST = {
       billing: "FREE",
       auth: "none",
     },
+    "GET /badge": {
+      description: "Shields.io-compatible badge JSON (v5.18.0) — live count of signed fitness attestations in the public audit trail. schemaVersion 1, label 'Nexus Attestations', color brightgreen when >0. Embed: https://img.shields.io/endpoint?url=<base>/badge",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /v1/balance": {
+      description: "Self-service credit balance check (v5.18.0) — x-client-id header returns {exists, balance_credits, tier, total_invocations}. Unknown clients get exists:false with 0 balance. No billing.",
+      billing: "FREE",
+      auth: "x-client-id header",
+    },
   },
   pricing_model: {
     currency_unit: "USDC",
@@ -624,7 +635,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.17.0-frontier (W6 Fitness Forensic: POST /x402/fitness/forensic $3.50 — Full + top-3 exploit scenarios (severity desc, scenario_id asc tie-break) + deterministic attack narratives (pure functions over detection evidence, no clock/RNG) + Amendment-A1 observable_impact (drain-class scoped, observed-state-not-prediction label) + Amendment-A2 IPFS dual-pin evidence bundle (Pinata+Filebase, CID in attestation resultHash; fewer than 2 pin legs = 422 DEGRADED_IPFS pre-billing); W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05 + /x402/fitness/forensic $3.50, legal_weight 0)",
+    version: "v5.18.0-frontier (Multi-chain x402 settlement: PAYMENT-SIGNATURE handler settles on the chain named in the payment payload — Polygon PoS + Base (Base accept advertised only while BASE_ACCEPTS_ENABLED=true; settlement needs treasury ETH on Base for gas); payer-derived settlement client ids: anonymous x402 clients get stable x402-payer-<address> credit buckets instead of a shared x402-anonymous bucket; fitness free trial: first $0.05 fitness attestation call free, 1x per client; GET /badge shields.io-compatible live attestation counter + GET /v1/balance self-service credit balance; Revenue Bell: per-transaction webhook wakes the operator agent when real revenue lands); W6 Fitness Forensic: POST /x402/fitness/forensic $3.50 — Full + top-3 exploit scenarios (severity desc, scenario_id asc tie-break) + deterministic attack narratives (pure functions over detection evidence, no clock/RNG) + Amendment-A1 observable_impact (drain-class scoped, observed-state-not-prediction label) + Amendment-A2 IPFS dual-pin evidence bundle (Pinata+Filebase, CID in attestation resultHash; fewer than 2 pin legs = 422 DEGRADED_IPFS pre-billing); W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05 + /x402/fitness/forensic $3.50, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1258,6 +1269,7 @@ const PRICING_MODEL = {
   trials: {
     structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial ($0.20 value, covers one structured_data call)" },
     code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: $1.00 off code_modules — client pays $0.20 for a $1.20 service" },
+    fitness_attestation: { credits: 5, expiry_hours: 24, limit: "1x per client", note: "Free trial — first fitness attestation call free ($0.05 value), then balance/x402" },
   },
 };
 
@@ -1718,7 +1730,13 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
     }
   } else {
     // legal_code and other services — balance only
-    if ((client.balance_credits || 0) >= pricing.finalCost) {
+    if (serviceType === "fitness_attestation" && client.fitness_trial_used !== true) {
+      // v5.18.0: fitness free trial — first $0.05 base fitness call free, 1x
+      // per client. (fitness_lite/full/forensic are separate service types
+      // and are NOT trialed; peer-check bills as fitness_attestation.)
+      paymentPath = "fitness_trial";
+      creditsToCharge = 0;
+    } else if ((client.balance_credits || 0) >= pricing.finalCost) {
       paymentPath = "balance";
       creditsToCharge = pricing.finalCost;
     } else {
@@ -1751,12 +1769,15 @@ async function recordUsageAfterSuccess(
     let freeLeft = client.free_requests_left;
     let balance = client.balance_credits || 0;
     let codeModulesTrialUsed = client.code_modules_trial_used;
+    let fitnessTrialUsed = client.fitness_trial_used === true;
 
     if (paymentPath === "structured_data_trial") {
       freeLeft -= 1;
     } else if (paymentPath === "code_modules_trial") {
       balance = Math.max(0, balance - creditsToCharge);
       codeModulesTrialUsed = true;
+    } else if (paymentPath === "fitness_trial") {
+      fitnessTrialUsed = true;
     } else if (paymentPath === "balance") {
       balance = Math.max(0, balance - creditsToCharge);
     }
@@ -1765,6 +1786,7 @@ async function recordUsageAfterSuccess(
       free_requests_left: freeLeft,
       balance_credits: balance,
       code_modules_trial_used: codeModulesTrialUsed,
+      fitness_trial_used: fitnessTrialUsed,
       total_invocations: (client.total_invocations || 0) + 1,
       last_invoked_at: new Date().toISOString(),
     }).eq("client_id", clientId);
@@ -2845,7 +2867,7 @@ async function paywallPrecheck(
     x402Version: 2,
     error: "Payment required",
     resource: { url: resource.url, description: resource.description, mimeType: "application/json" },
-    accepts: [{
+    accepts: buildX402Accepts({
       scheme: "exact",
       network: "eip155:137",
       asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -2858,7 +2880,7 @@ async function paywallPrecheck(
         gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
         note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
       },
-    }],
+    }),
   };
   const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
   const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -2930,7 +2952,7 @@ async function handleEvmSentinelScanWithBilling(
         description: `EVM Sentinel ${tier === "quick" ? "Quick-Check" : "Deep-Scan"} — static Solidity security scan`,
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",  // Polygon PoS
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
@@ -2942,7 +2964,7 @@ async function handleEvmSentinelScanWithBilling(
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one ${serviceType} scan.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -3459,7 +3481,7 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3471,7 +3493,7 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one fitness attestation.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -3664,7 +3686,7 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Lite — W4 Gas Efficiency Rank vs fixed public cohort",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3676,7 +3698,7 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Lite gas rank.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -3912,7 +3934,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Full — gas rank + attestation + exploitability + source-match",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3924,7 +3946,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Full attestation.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -4189,7 +4211,7 @@ async function handleFitnessForensicWithBilling(req: Request): Promise<Response>
         description: "Nexus Fitness Forensic — full-tier + top-3 scenario narratives + observable impact + dual-pinned IPFS evidence bundle",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -4201,7 +4223,7 @@ async function handleFitnessForensicWithBilling(req: Request): Promise<Response>
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Forensic report.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -4632,7 +4654,7 @@ async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
         description: "Nexus Transaction Peer-Check — direct factual probe of a peer endpoint",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -4644,7 +4666,7 @@ async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one transaction peer-check.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -4822,7 +4844,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.17.0",
+    version: "5.18.0",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4832,6 +4854,8 @@ const OPENAPI_SPEC = {
       "GET /pricing.manifest.json",
       "GET /attestations",
       "GET /attestations/proof",
+      "GET /badge",
+      "GET /v1/balance",
     ],
   },
   servers: [{ url: BASE_URL_DOCS }],
@@ -5605,6 +5629,10 @@ daily to NexusAttestationAnchor
 - GET /manifest.json — A2A agent discovery manifest.
 - GET /samples — free multi-tier sample manifests (legal + code + matrix).
 - GET /metrics — live telemetry (uptime, latency, concurrency).
+- GET /attestations — public list of signed fitness attestations (filter by day/service_type/anchored/subject).
+- GET /attestations/proof?hash=0x... — zero-trust proof package (EIP-712 signature + Merkle proof + anchor tx).
+- GET /badge — shields.io-compatible JSON badge: live attestation count.
+- GET /v1/balance — self-service credit balance check (x-client-id header).
 - GET /pricing.manifest.json — machine-readable pricing.
 
 ## Payment protocol
@@ -5766,6 +5794,15 @@ function m2mSuccess(
       envelope.attestation = att;
       logAttestationForAnchor(att, serviceType);
     }
+  }
+  // v5.18.0: Revenue Bell — wake the operator agent on real revenue (non-fatal).
+  if (credits > 0) {
+    notifyRevenueBell({
+      source: "m2m_success",
+      service_type: serviceType,
+      credits_charged: credits,
+      payload_id: payloadId,
+    });
   }
   return jsonResponse(envelope, status);
 }
@@ -8314,6 +8351,71 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse(buildMetricsPayload(), 200);
   }
 
+  // 2d-b. Badge Endpoint (v5.18.0 — GET /badge)
+  // Free shields.io-compatible JSON: live signed-attestation count. No billing.
+  if (url.pathname.endsWith("/badge")) {
+    try {
+      const supabaseBadge = getSupabaseClient();
+      const { count } = await supabaseBadge
+        .from("attestation_log")
+        .select("id", { count: "exact", head: true });
+      const n = Number(count ?? 0);
+      return jsonResponse({
+        schemaVersion: 1,
+        label: "Nexus Attestations",
+        message: String(n),
+        color: n > 0 ? "brightgreen" : "lightgray",
+        cacheSeconds: 300,
+      }, 200);
+    } catch {
+      return jsonResponse({
+        schemaVersion: 1,
+        label: "Nexus Attestations",
+        message: "unavailable",
+        color: "lightgray",
+        cacheSeconds: 300,
+      }, 200);
+    }
+  }
+
+  // 2d-c. Balance Endpoint (v5.18.0 — GET /v1/balance)
+  // Free self-service credit balance check via x-client-id. No billing.
+  if (url.pathname.endsWith("/v1/balance") || url.pathname.endsWith("/balance")) {
+    const balanceClientId = req.headers.get("x-client-id");
+    if (!balanceClientId) {
+      return jsonResponse({
+        status: "failed",
+        error_code: "MISSING_CLIENT_ID",
+        message: "x-client-id header required.",
+      }, 400);
+    }
+    try {
+      const supabaseBalance = getSupabaseClient();
+      const { data: balanceClient } = await supabaseBalance
+        .from("client_usage")
+        .select("balance_credits, tier, total_invocations")
+        .eq("client_id", balanceClientId)
+        .maybeSingle();
+      if (!balanceClient) {
+        return jsonResponse({
+          client_id: balanceClientId,
+          exists: false,
+          balance_credits: 0,
+          note: "Unknown client — no usage recorded yet. Paid calls create the record automatically.",
+        }, 200);
+      }
+      return jsonResponse({
+        client_id: balanceClientId,
+        exists: true,
+        balance_credits: balanceClient.balance_credits ?? 0,
+        tier: balanceClient.tier ?? "new",
+        total_invocations: balanceClient.total_invocations ?? 0,
+      }, 200);
+    } catch {
+      return jsonResponse({ status: "failed", error_code: "BALANCE_LOOKUP_FAILED", message: "Balance lookup failed." }, 500);
+    }
+  }
+
   // 2b. Pricing Manifest Endpoint (v4.4.0 — M2M pricing discovery)
   // Free, own schema, no billing, no x-client-id. Static read for
   // orchestrator autonomous purchase decisions.
@@ -8546,7 +8648,7 @@ async function handler(req: Request): Promise<Response> {
         description: `Nexus Gateway - ${serviceType}`,
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",  // Polygon PoS
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
@@ -8559,7 +8661,7 @@ async function handler(req: Request): Promise<Response> {
           gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
           note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
         },
-      }],
+      }),
     };
 
     // Encode as base64 for the payment-required header (Unicode-safe)
@@ -8684,7 +8786,8 @@ async function telemetryWrapper(req: Request): Promise<Response> {
   // price — credits are never lost.
   const paymentSignatureHeader = req.headers.get("payment-signature");
   if (paymentSignatureHeader) {
-    const settlementClientId = req.headers.get("x-client-id") || "x402-anonymous";
+    const headerClientId = req.headers.get("x-client-id");
+    const settlementClientId = headerClientId || "x402-anonymous";
     const x402Start = Date.now();
     TELEMETRY.total_requests++;
     TELEMETRY.last_request_at = x402Start;
@@ -8705,6 +8808,15 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       );
     }
 
+    // v5.18.0: payer-derived client id — spec-compliant x402 clients may send
+    // no x-client-id; a stable per-payer id lets credits persist across calls
+    // and the paid request pass the gatekeeper instead of dying at MISSING_CLIENT_ID.
+    const creditClientId = deriveSettlementClientId(headerClientId, verification.payer ?? "");
+    const settlementChain = getChainConfig(verification.network);
+    const paidReq = headerClientId ? req : new Request(req, {
+      headers: new Headers({ ...Object.fromEntries(req.headers.entries()), "x-client-id": creditClientId }),
+    });
+
     // Replay guard at DB level: if this exact nonce was already settled by us,
     // skip re-settlement (on-chain would revert) and just re-run the request.
     const supabase = getSupabaseClient();
@@ -8723,7 +8835,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
     } else {
       const privateKey = normalizePrivateKey(Deno.env.get("POLYGON_PRIVATE_KEY") || "");
       if (!privateKey) {
-        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8739,6 +8851,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       const settlement = await settleTransferWithAuthorization(
         verification.payload!,
         privateKey,
+        settlementChain,
       );
       if (!settlement.ok) {
         // Reconciliation: if the nonce is now used on-chain, the settlement
@@ -8752,14 +8865,14 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             .eq("entry_type", "credit_x402")
             .eq("reason_code", payloadNonce)
             .maybeSingle();
-          if (priorCredit?.pull_tx_hash && priorCredit.client_id === settlementClientId) {
+          if (priorCredit?.pull_tx_hash && priorCredit.client_id === creditClientId) {
             // Already credited for THIS client — idempotent success.
             txHash = priorCredit.pull_tx_hash;
           } else if (priorCredit?.pull_tx_hash) {
             // Nonce credited to a DIFFERENT client — captured-payload replay.
             // Do not credit the replaying client; run the request normally
             // (their own balance applies, typically 402).
-            await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+            await logServiceCall(creditClientId, "x402_settlement", 402, null, 0);
             TELEMETRY.error_count++;
             recordLatency(Date.now() - x402Start);
             return m2mError(
@@ -8778,11 +8891,11 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             const amountAtomic2 = Number(verification.amount_atomic ?? "0");
             const amountUsdc2 = amountAtomic2 / 10 ** X402_CONFIG.usdc_decimals;
             const creditsMinted2 = Math.floor(amountUsdc2 * X402_CONFIG.cred_per_usdc);
-            const clientIdHashBytes2 = new TextEncoder().encode(settlementClientId);
+            const clientIdHashBytes2 = new TextEncoder().encode(creditClientId);
             const clientIdHashBuf2 = await crypto.subtle.digest("SHA-256", clientIdHashBytes2);
             const clientIdHash2 = "0x" + [...new Uint8Array(clientIdHashBuf2)].map(b => b.toString(16).padStart(2, "0")).join("");
             const { error: creditError2 } = await supabase.rpc("record_x402_credits", {
-              p_client_id: settlementClientId,
+              p_client_id: creditClientId,
               p_client_id_hash: clientIdHash2,
               p_tx_hash: txHash,
               p_payer: verification.payer ?? "",
@@ -8790,7 +8903,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
               p_credits_minted: creditsMinted2,
             });
             if (creditError2) {
-              await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+              await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
               TELEMETRY.error_count++;
               recordLatency(Date.now() - x402Start);
               return m2mError(
@@ -8807,9 +8920,10 @@ async function telemetryWrapper(req: Request): Promise<Response> {
               .update({ reason_code: payloadNonce })
               .eq("pull_tx_hash", txHash)
               .eq("entry_type", "credit_x402");
-            await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
-            const settledResponse2 = await handler(req);
-            const paymentResponseHeader2 = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+            await logServiceCall(creditClientId, "x402_settlement", 200, null, 0);
+            notifyRevenueBell({ source: "x402_settlement", service_type: "x402_topup", credits_charged: creditsMinted2, client_id: creditClientId, payer: verification.payer ?? null, tx_hash: txHash, network: verification.network ?? null });
+            const settledResponse2 = await handler(paidReq);
+            const paymentResponseHeader2 = buildPaymentResponseHeader(txHash, verification.network ?? "eip155:137", verification.payer);
             const headers2 = new Headers(settledResponse2.headers);
             headers2.set("payment-response", paymentResponseHeader2);
             headers2.set("Access-Control-Expose-Headers", "payment-response");
@@ -8822,7 +8936,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             });
           }
         } else {
-        await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 402, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8841,11 +8955,11 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       const amountAtomic = Number(verification.amount_atomic ?? "0");
       const amountUsdc = amountAtomic / 10 ** X402_CONFIG.usdc_decimals;
       const creditsMinted = Math.floor(amountUsdc * X402_CONFIG.cred_per_usdc);
-      const clientIdHashBytes = new TextEncoder().encode(settlementClientId);
+      const clientIdHashBytes = new TextEncoder().encode(creditClientId);
       const clientIdHashBuf = await crypto.subtle.digest("SHA-256", clientIdHashBytes);
       const clientIdHash = "0x" + [...new Uint8Array(clientIdHashBuf)].map(b => b.toString(16).padStart(2, "0")).join("");
       const { error: creditError } = await supabase.rpc("record_x402_credits", {
-        p_client_id: settlementClientId,
+        p_client_id: creditClientId,
         p_client_id_hash: clientIdHash,
         p_tx_hash: txHash,
         p_payer: verification.payer ?? "",
@@ -8853,7 +8967,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
         p_credits_minted: creditsMinted,
       });
       if (creditError) {
-        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8873,13 +8987,14 @@ async function telemetryWrapper(req: Request): Promise<Response> {
         .eq("pull_tx_hash", txHash)
         .eq("entry_type", "credit_x402");
 
-      await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
+      await logServiceCall(creditClientId, "x402_settlement", 200, null, 0);
+      notifyRevenueBell({ source: "x402_settlement", service_type: "x402_topup", credits_charged: creditsMinted, client_id: creditClientId, payer: verification.payer ?? null, tx_hash: txHash, network: verification.network ?? null });
     }
 
     // Payment settled & credited — run the ORIGINAL request through the normal
     // pipeline, then attach PAYMENT-RESPONSE so the x402 client sees success.
-    const settledResponse = await handler(req);
-    const paymentResponseHeader = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+    const settledResponse = await handler(paidReq);
+    const paymentResponseHeader = buildPaymentResponseHeader(txHash, verification.network ?? "eip155:137", verification.payer);
     const headers = new Headers(settledResponse.headers);
     headers.set("payment-response", paymentResponseHeader);
     // Expose the header to browsers/spec-compliant clients

@@ -9,7 +9,7 @@
 //   client ── 402 + PAYMENT-REQUIRED ──> gateway            (existing)
 //   client ── req + PAYMENT-SIGNATURE ──> gateway            (NEW — this module)
 //     1. decode base64 PaymentPayload (x402 v2)
-//     2. validate schema: scheme=exact, network=eip155:137, asset=USDC,
+//     2. validate schema: scheme=exact, network in X402_CHAINS, asset=USDC,
 //        payTo=treasury, amount>0
 //     3. verify EIP-3009 transferWithAuthorization signature LOCALLY
 //        (ethers verifyTypedData, USDC domain name "USD Coin" version "2",
@@ -43,6 +43,102 @@ export const X402_CONFIG = {
   usdc_decimals: 6,
   max_settle_wait_ms: 15_000, // keep inside x402 client 10-15s timeout
 };
+
+// -- v5.18.0: Multi-chain support (Polygon PoS + Base) -------------------------
+// Settlement is chain-aware: the PAYMENT-SIGNATURE payload names the network it
+// pays on, and verification/settlement use that chain's USDC domain + RPC.
+// The Base accept is advertised only while the BASE_ACCEPTS_ENABLED edge secret
+// is "true" — the treasury needs ETH on Base for settlement gas before the
+// rail can be advertised (settlement reverts without gas).
+
+export interface X402ChainConfig {
+  network: string;
+  chain_id: number;
+  name: string;
+  rpc_url: string;
+  usdc_address: string;
+  usdc_name: string;
+  usdc_version: string;
+  usdc_decimals: number;
+}
+
+export const X402_CHAINS: Record<string, X402ChainConfig> = {
+  "eip155:137": {
+    network: "eip155:137",
+    chain_id: 137,
+    name: "Polygon PoS",
+    rpc_url: "https://polygon-bor-rpc.publicnode.com",
+    usdc_address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    usdc_name: "USD Coin",
+    usdc_version: "2",
+    usdc_decimals: 6,
+  },
+  "eip155:8453": {
+    network: "eip155:8453",
+    chain_id: 8453,
+    name: "Base",
+    rpc_url: "https://mainnet.base.org",
+    usdc_address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    usdc_name: "USD Coin",
+    usdc_version: "2",
+    usdc_decimals: 6,
+  },
+};
+
+export function getChainConfig(network: string | undefined | null): X402ChainConfig {
+  const key = (network ?? "eip155:137").toLowerCase();
+  return X402_CHAINS[key] ?? X402_CHAINS["eip155:137"];
+}
+
+// v5.18.0: payer-derived settlement client id. Spec-compliant x402 clients may
+// send no x-client-id at all — crediting "x402-anonymous" lumped every
+// anonymous payer into one bucket and the paid request then died at the
+// gatekeeper's MISSING_CLIENT_ID check. Derive a stable per-payer id instead:
+// the same payer always maps to the same id, credits persist across calls,
+// and the paid request proceeds through the gatekeeper with that id injected.
+export function deriveSettlementClientId(
+  headerClientId: string | null | undefined,
+  payer: string,
+): string {
+  if (headerClientId && headerClientId.trim().length > 0) return headerClientId;
+  const p = (payer ?? "").trim().toLowerCase();
+  if (p.length > 0) return `x402-payer-${p}`;
+  return "x402-unknown";
+}
+
+// v5.18.0: x402 accepts array builder. The Polygon accept stays byte-identical
+// to the pre-v5.18.0 single accept (zero-diff while the flag is off). When
+// BASE_ACCEPTS_ENABLED is "true", an equivalent Base accept is appended.
+export function buildX402Accepts(
+  polygonAccept: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const accepts: Array<Record<string, unknown>> = [polygonAccept];
+  let baseEnabled = false;
+  try {
+    const deno = (globalThis as Record<string, unknown>)["Deno"] as
+      | { env?: { get?: (k: string) => string | undefined } }
+      | undefined;
+    const flag = deno?.env?.get?.("BASE_ACCEPTS_ENABLED");
+    baseEnabled = flag === "true" || flag === "1";
+  } catch { /* flag off */ }
+  if (baseEnabled) {
+    const base = X402_CHAINS["eip155:8453"];
+    accepts.push({
+      scheme: "exact",
+      network: base.network,
+      asset: base.usdc_address,
+      amount: polygonAccept.amount,
+      payTo: X402_CONFIG.treasury,
+      maxTimeoutSeconds: polygonAccept.maxTimeoutSeconds ?? 300,
+      extra: {
+        name: base.usdc_name,
+        version: base.usdc_version,
+        description: "Payment for Nexus Gateway services (Base)",
+      },
+    });
+  }
+  return accepts;
+}
 
 // -- Minimal ABIs -------------------------------------------------------------
 
@@ -94,6 +190,7 @@ export interface X402VerifyResult {
   payer?: string;
   amount_atomic?: string;
   nonce?: string;
+  network?: string;
 }
 
 // -- Decode -------------------------------------------------------------------
@@ -132,11 +229,12 @@ export function validatePaymentPayload(
   if (scheme !== "exact") {
     return { ok: false, error_code: "UNSUPPORTED_SCHEME", message: `Only 'exact' scheme accepted, got '${scheme}'.` };
   }
-  if (network !== "eip155:137") {
-    return { ok: false, error_code: "UNSUPPORTED_NETWORK", message: `Only eip155:137 (Polygon PoS) accepted, got '${network}'.` };
+  const chain = getChainConfig(network);
+  if (!X402_CHAINS[network.toLowerCase()]) {
+    return { ok: false, error_code: "UNSUPPORTED_NETWORK", message: `Unsupported network '${network}'. Supported: ${Object.keys(X402_CHAINS).join(", ")}.` };
   }
-  if (asset.toLowerCase() !== X402_CONFIG.usdc_address.toLowerCase()) {
-    return { ok: false, error_code: "UNSUPPORTED_ASSET", message: "Only native USDC on Polygon PoS accepted." };
+  if (asset.toLowerCase() !== chain.usdc_address.toLowerCase()) {
+    return { ok: false, error_code: "UNSUPPORTED_ASSET", message: `Only native USDC on ${chain.name} accepted.` };
   }
   if (payTo.toLowerCase() !== expectedPayTo.toLowerCase()) {
     return { ok: false, error_code: "WRONG_PAYEE", message: `payTo mismatch: expected ${expectedPayTo}.` };
@@ -169,20 +267,21 @@ export function validatePaymentPayload(
   if (nowSec >= validBefore) {
     return { ok: false, error_code: "AUTHORIZATION_EXPIRED", message: `validBefore passed (${validBefore}).` };
   }
-  return { ok: true, payer: auth.from, amount_atomic: auth.value, nonce: auth.nonce };
+  return { ok: true, payer: auth.from, amount_atomic: auth.value, nonce: auth.nonce, network: chain.network };
 }
 
 // -- EIP-3009 signature verification (local, standard USDC domain) ------------
 
 export function verifyEip3009Signature(
   p: X402PaymentPayload,
+  chain: X402ChainConfig = getChainConfig("eip155:137"),
 ): X402VerifyResult {
   const auth = p.payload!.authorization!;
   const domain = {
-    name: X402_CONFIG.usdc_name,
-    version: X402_CONFIG.usdc_version,
-    chainId: X402_CONFIG.chain_id,
-    verifyingContract: X402_CONFIG.usdc_address,
+    name: chain.usdc_name,
+    version: chain.usdc_version,
+    chainId: chain.chain_id,
+    verifyingContract: chain.usdc_address,
   };
   const types = {
     TransferWithAuthorization: [
@@ -205,7 +304,7 @@ export function verifyEip3009Signature(
   try {
     const recovered = verifyTypedData(domain, types, message, p.payload!.signature!);
     if (recovered.toLowerCase() === auth.from!.toLowerCase()) {
-      return { ok: true, payer: auth.from, amount_atomic: auth.value, nonce: auth.nonce };
+      return { ok: true, payer: auth.from, amount_atomic: auth.value, nonce: auth.nonce, network: chain.network };
     }
     return {
       ok: false,
@@ -228,7 +327,7 @@ export function verifyIncomingPayment(headerValue: string, expectedPayTo: string
   if (!decoded.ok) return decoded;
   const schema = validatePaymentPayload(decoded.payload!, expectedPayTo);
   if (!schema.ok) return schema;
-  const sig = verifyEip3009Signature(decoded.payload!);
+  const sig = verifyEip3009Signature(decoded.payload!, getChainConfig(schema.network));
   if (!sig.ok) return sig;
   return { ...sig, payload: decoded.payload };
 }
@@ -247,10 +346,11 @@ export interface SettlementResult {
 export async function settleTransferWithAuthorization(
   p: X402PaymentPayload,
   privateKey: string,
+  chain: X402ChainConfig = getChainConfig("eip155:137"),
 ): Promise<SettlementResult> {
-  const provider = new JsonRpcProvider(X402_CONFIG.rpc_url);
+  const provider = new JsonRpcProvider(chain.rpc_url);
   const wallet = new Wallet(privateKey, provider);
-  const usdc = new Contract(X402_CONFIG.usdc_address, ERC3009_ABI, wallet);
+  const usdc = new Contract(chain.usdc_address, ERC3009_ABI, wallet);
   const auth = p.payload!.authorization!;
   const sig = p.payload!.signature!;
   const { v, r, s } = splitSignature65(sig);

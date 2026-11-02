@@ -1,5 +1,47 @@
 # Nexus Gateway Changelog
 
+## v5.18.0-frontier — 2026-11-02
+
+### x402 multi-chain settlement (Polygon + Base) + Revenue Bell + fitness trial + badge/balance
+
+- **Multi-chain x402 settlement.** `x402_settlement.ts` is now chain-aware:
+  `X402_CHAINS` map (eip155:137 Polygon PoS + eip155:8453 Base, native USDC
+  each), `getChainConfig()`, `validatePaymentPayload` cross-chain validation
+  (UNSUPPORTED_NETWORK / UNSUPPORTED_ASSET per chain), EIP-3009 signature
+  verification + on-chain settlement against the paying chain's domain
+  (name "USD Coin" v2, chainId 137 or 8453, chain's USDC contract).
+- **Payer-derived client IDs.** x402 payments without `x-client-id` header
+  no longer collapse into one anonymous bucket: `deriveSettlementClientId()`
+  credits the balance of `x402-payer-<address>` (from the verified signature
+  payer). Header passthrough preserved; `x402-unknown` last-resort fallback.
+- **Dual-chain 402 accepts (flag-gated).** `buildX402Accepts()` appends a Base
+  accept mirroring the Polygon one when env `BASE_ACCEPTS_ENABLED` is
+  "true"/"1". Flag OFF (default) = byte-identical single-accept responses —
+  zero-diff for existing clients. Flag stays OFF until the treasury holds
+  ETH on Base for settlement gas.
+- **Revenue Bell (v1.0 spec).** New module `revenue_bell.ts`: every paid
+  success (m2mSuccess credits>0), x402 settlement credit, and pull-payment
+  credit fires a fire-and-forget webhook notification to the architect's
+  Letta agent (EdgeRuntime.waitUntil, non-fatal, Basic auth +
+  x-nexus-webhook-secret header). The agent is woken per-transaction;
+  quota cost proportional to revenue (silent at $0).
+- **Fitness free trial (1x per client).** Gatekeeper branch: first
+  `fitness_attestation` call per client is free (payment_path
+  "fitness_trial", 0 credits, 24h expiry), tracked via new
+  `client_usage.fitness_trial_used` column (DB migration applied).
+  Trial scope is exactly fitness_attestation — lite/full/forensic/peer-check
+  unaffected.
+- **GET /v1/badge** (free): shields.io JSON endpoint with the live count of
+  public signed attestations (attestation_log) + version.
+- **GET /v1/balance** (free): client self-service balance check via
+  x-client-id (balance, tier, total invocations); 400 MISSING_CLIENT_ID
+  without header, exists:false for unknown clients.
+- Validation: tests/v518 — 31/31 (buildX402Accepts flag off/on zero-diff,
+  deriveSettlementClientId, cross-chain validatePaymentPayload, EIP-3009
+  Base-domain sign→verify round-trip with negative control on Polygon
+  domain, verifyIncomingPayment chain threading). Live E2E post-deploy.
+
+
 ## v5.17.0-frontier — 2026-10-16
 
 ### W6 Fitness Forensic — POST /x402/fitness/forensic ($3.50 USDC / 350 CRED)

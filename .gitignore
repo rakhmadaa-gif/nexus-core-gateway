@@ -9,3 +9,4 @@ scripts/node_modules/
 tests/*/engine-bundle.js
 tests/v517/engine-bundle.js
 tests/v517/w6-bundle.js
+tests/v518/settlement-bundle.js
