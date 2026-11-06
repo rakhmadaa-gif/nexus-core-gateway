@@ -13,6 +13,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20%23636-8247E5)](https://polygonscan.com/tx/0x0b78a5f710069917f93d8c9bf130a3b65f06547742099f4e89914ada40bba4d8)
 [![x402-list](https://x402-list.com/badge/nexus-gateway.svg?data=uptime)](https://x402-list.com/services/nexus-gateway)
+[![x402-list Fitness](https://x402-list.com/badge/nexus-fitness-attestation.svg?data=uptime)](https://x402-list.com/services/nexus-fitness-attestation)
 
 ---
 
@@ -321,7 +322,7 @@ const vercelTools = createNexusVercelTools({ clientId: "my-agent" });
 |---|---|---|---|
 | `NexusStructuredDataTool` | structured_data | 20 CRED ($0.20) | CrewAI, LangChain, LangChain.js |
 | `NexusCodeModulesTool` | code_modules | 120 CRED ($1.20) | CrewAI, LangChain, LangChain.js |
-| `NexusLegalCodeTool` | legal_code | 29,900 CRED ($299.00) | CrewAI, LangChain, LangChain.js |
+| `NexusLegalCodeTool` | legal_code | 45,000 CRED ($450.00 Standard) | CrewAI, LangChain, LangChain.js |
 | `NexusDryRunTool` | dry-run | **FREE** | CrewAI, LangChain, LangChain.js |
 | `NexusManifestTool` | manifest | **FREE** | CrewAI, LangChain, LangChain.js |
 
@@ -337,7 +338,7 @@ const vercelTools = createNexusVercelTools({ clientId: "my-agent" });
 |---|---|---|---|
 | `structured_data` | JSON | 20 CRED ($0.20) | Verified JSON schemas for Web3, regulatory compliance |
 | `code_modules` | Solidity | 120 CRED ($1.20) | Security-checked smart contract code (ERC-20, ERC-721, Escrow) |
-| `legal_code` | Hybrid | 29,900 CRED ($299.00) | Bilingual EN/ID legal contract + Solidity code + Digital Twin matrix |
+| `legal_code` | Hybrid | 30,000/45,000/80,000 CRED ($300/$450/$800 by tier) | Bilingual EN/ID legal contract + Solidity code + Digital Twin matrix |
 | `pull_payment` | Top-Up | FREE | USDC pull payment → auto-credit CRED (adds credits, no charge) |
 | `error` | System | FREE | Standard error response |
 
