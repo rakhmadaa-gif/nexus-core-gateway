@@ -34,14 +34,16 @@ import {
 } from "./w3_fitness_full.ts";
 import {
   X402_CONFIG, verifyIncomingPayment, settleTransferWithAuthorization,
-  buildPaymentResponseHeader,
+  buildPaymentResponseHeader, buildX402Accepts, deriveSettlementClientId, getChainConfig,
 } from "./x402_settlement.ts";
+import { notifyRevenueBell } from "./revenue_bell.ts";
 import {
   ATTESTED_SERVICE_TYPES,
   ATTESTATION_DOMAIN,
   ATTESTATION_TYPES,
   ERC8004_AGENT_ID,
   ERC8004_REGISTRY,
+  canonicalJson,
   normalizePrivateKey,
   signFitnessAttestation,
 } from "./attestation_signer.ts";
@@ -61,6 +63,19 @@ import {
   parseLockfile,
   type ResolvedPackage,
 } from "./lockfile_parse.ts";
+import {
+  W6_MODEL,
+  validateForensicInput,
+  mergeScenarios,
+  selectTopScenarios,
+  buildNarrative,
+  buildObservableImpact,
+  isDrainClass,
+  fetchObservableState,
+  buildForensicBundle,
+  pinBundleDual,
+  type MergedScenario,
+} from "./w6_forensic.ts";
 
 // ----------------------------------------------------------------------------
 // 0a. SHARED SUPABASE CLIENT (Phase 2.2 — Pipeline Optimization)
@@ -98,7 +113,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.16.1-frontier",
+  engine_version: "v5.18.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -441,7 +456,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.16.1-frontier",
+  version: "5.18.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -464,6 +479,8 @@ const NODE_MANIFEST = {
     "attestation.fitness-signed-verifiable",
     "security.dependency-sbom-fitness",
     "proof.merkle-anchored-public-audit",
+    "security.exploitability-scoring",
+    "evidence.tamper-evident-ipfs-bundle",
   ],
   performance_metrics: {
     avg_latency_ms: "< 250.0",
@@ -498,8 +515,13 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /x402/fitness": {
-      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest ({lockfile:{filename,content}} — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root; exact versions are queried version-scoped at OSV (fewer false positives); merged list capped at 250 with per-package resolution provenance (input/lockfile/manifest/unpinned). legal_weight: 0 — not legal advice, factual only. Input {repo, packages, lockfile} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
+      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest ({lockfile:{filename,content}} — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json) or let {repo} mode auto-extract dependency manifests from the repo root; exact versions are queried version-scoped at OSV (fewer false positives); merged list capped at 250 with per-package resolution provenance (input/lockfile/manifest/unpinned). legal_weight: 0 — not legal advice, factual only. Input {repo, packages, lockfile} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
       billing: "0.05 USDC per call (x402 exact, eip155:137)",
+      auth: "x-client-id header required",
+    },
+    "POST /x402/fitness/forensic": {
+      description: "Fitness Forensic — W6 (v5.17.0): everything in Full (gas rank + attestation + exploitability; source-match when {address} supplied) + top-3 detected exploit scenarios (severity desc, tie scenario_id asc) with deterministic attack narratives (pure functions over detection evidence — no clock, no RNG) + observable_impact (address-mode only, Amendment A1 drain-class scoping: observed native balance at the recorded block B, labeled 'observed state at block B, not a loss prediction'; non-drain scenarios carry an explicit omit-reason) + canonical JSON evidence bundle dual-pinned to IPFS (Pinata primary + Filebase redundant, Amendment A2 — fewer than 2 healthy pin legs returns 422 DEGRADED_IPFS without charge). The EIP-712 attestation resultHash covers the response including the bundle CID (no schema change). legal_weight: 0 — factual only. Input {repo}|{files} + optional {address} + {chain=polygon} + optional {packages}. Fatal pre-billing failures (400/422) never charged. 10-minute cache (full charge on hit — cache is speed, not discount).",
+      billing: "3.50 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
     "POST /": {
@@ -567,6 +589,16 @@ const NODE_MANIFEST = {
       billing: "FREE",
       auth: "none",
     },
+    "GET /badge": {
+      description: "Shields.io-compatible badge JSON (v5.18.0) — live count of signed fitness attestations in the public audit trail. schemaVersion 1, label 'Nexus Attestations', color brightgreen when >0. Embed: https://img.shields.io/endpoint?url=<base>/badge",
+      billing: "FREE",
+      auth: "none",
+    },
+    "GET /v1/balance": {
+      description: "Self-service credit balance check (v5.18.0) — x-client-id header returns {exists, balance_credits, tier, total_invocations}. Unknown clients get exists:false with 0 balance. No billing.",
+      billing: "FREE",
+      auth: "x-client-id header",
+    },
   },
   pricing_model: {
     currency_unit: "USDC",
@@ -603,7 +635,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.16.1-frontier (W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05, legal_weight 0)",
+    version: "v5.18.1-frontier (Gas Bahasa: lockfile/manifest ingestion expanded to 10 formats — PHP composer.lock + composer.json manifest (Packagist), Dart pubspec.lock (Pub, hosted pub.dev packages only — sdk/path/git skipped), Ruby Gemfile.lock (RubyGems, platform suffixes stripped); CycloneDX SBOM purl types now spec-correct (npm, pypi, golang, cargo, composer, pub, gem); repo auto-extract checks 11 root candidates; Multi-chain x402 settlement: PAYMENT-SIGNATURE handler settles on the chain named in the payment payload — Polygon PoS + Base (Base accept advertised only while BASE_ACCEPTS_ENABLED=true; settlement needs treasury ETH on Base for gas); payer-derived settlement client ids: anonymous x402 clients get stable x402-payer-<address> credit buckets instead of a shared x402-anonymous bucket; fitness free trial: first $0.05 fitness attestation call free, 1x per client; GET /badge shields.io-compatible live attestation counter + GET /v1/balance self-service credit balance; Revenue Bell: per-transaction webhook wakes the operator agent when real revenue lands); W6 Fitness Forensic: POST /x402/fitness/forensic $3.50 — Full + top-3 exploit scenarios (severity desc, scenario_id asc tie-break) + deterministic attack narratives (pure functions over detection evidence, no clock/RNG) + Amendment-A1 observable_impact (drain-class scoped, observed-state-not-prediction label) + Amendment-A2 IPFS dual-pin evidence bundle (Pinata+Filebase, CID in attestation resultHash; fewer than 2 pin legs = 422 DEGRADED_IPFS pre-billing); W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05 + /x402/fitness/forensic $3.50, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -1218,7 +1250,7 @@ const PRICING_MODEL = {
     // Cost + Bytecode Match), H+21/$3.50 Forensic (+3 exploit scenarios + IPFS).
     fitness_lite: { base_credits: 125, description: "Fitness Lite — W4 Gas Efficiency Rank: static heuristic gas estimate vs fixed public cohort ($1.25) [LIVE — specs/w4-gas-efficiency-rank.md]" },
     fitness_full: { base_credits: 225, description: "Fitness Full — W3: gas rank + base attestation + per-advisory Exploitability Score (fixed public formula) + source-match vs explorer-verified on-chain source ($2.25) [LIVE — reference/w3-fitness-full-spec.md]" },
-    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — Full + top 3 detected exploit scenarios by severity + IPFS timestamp ($3.50) [PLANNED H+21]" },
+    fitness_forensic: { base_credits: 350, description: "Fitness Forensic — W6: full-tier analysis + top-3 exploit scenario narratives + observable impact + dual-pinned IPFS evidence bundle ($3.50) [LIVE — reference/w6-forensic-spec.md]" },
     error: { base_credits: 0, description: "Fallback Error Payload (FREE)" },
     pull_payment: { base_credits: 0, description: "EIP-712 Pull Payment Top-Up (FREE call, adds credits)" },
   },
@@ -1237,6 +1269,7 @@ const PRICING_MODEL = {
   trials: {
     structured_data: { credits: 20, expiry_hours: 24, limit: "1x per client", note: "Full free trial ($0.20 value, covers one structured_data call)" },
     code_modules: { discount_credits: 100, expiry_hours: 24, limit: "1x per client", min_balance_credits: 20, note: "Discount trial: $1.00 off code_modules — client pays $0.20 for a $1.20 service" },
+    fitness_attestation: { credits: 5, expiry_hours: 24, limit: "1x per client", note: "Free trial — first fitness attestation call free ($0.05 value), then balance/x402" },
   },
 };
 
@@ -1697,7 +1730,13 @@ async function checkQuotaAndRate(req: Request, serviceType: string, legalTier?: 
     }
   } else {
     // legal_code and other services — balance only
-    if ((client.balance_credits || 0) >= pricing.finalCost) {
+    if (serviceType === "fitness_attestation" && client.fitness_trial_used !== true) {
+      // v5.18.0: fitness free trial — first $0.05 base fitness call free, 1x
+      // per client. (fitness_lite/full/forensic are separate service types
+      // and are NOT trialed; peer-check bills as fitness_attestation.)
+      paymentPath = "fitness_trial";
+      creditsToCharge = 0;
+    } else if ((client.balance_credits || 0) >= pricing.finalCost) {
       paymentPath = "balance";
       creditsToCharge = pricing.finalCost;
     } else {
@@ -1730,12 +1769,15 @@ async function recordUsageAfterSuccess(
     let freeLeft = client.free_requests_left;
     let balance = client.balance_credits || 0;
     let codeModulesTrialUsed = client.code_modules_trial_used;
+    let fitnessTrialUsed = client.fitness_trial_used === true;
 
     if (paymentPath === "structured_data_trial") {
       freeLeft -= 1;
     } else if (paymentPath === "code_modules_trial") {
       balance = Math.max(0, balance - creditsToCharge);
       codeModulesTrialUsed = true;
+    } else if (paymentPath === "fitness_trial") {
+      fitnessTrialUsed = true;
     } else if (paymentPath === "balance") {
       balance = Math.max(0, balance - creditsToCharge);
     }
@@ -1744,6 +1786,7 @@ async function recordUsageAfterSuccess(
       free_requests_left: freeLeft,
       balance_credits: balance,
       code_modules_trial_used: codeModulesTrialUsed,
+      fitness_trial_used: fitnessTrialUsed,
       total_invocations: (client.total_invocations || 0) + 1,
       last_invoked_at: new Date().toISOString(),
     }).eq("client_id", clientId);
@@ -2824,7 +2867,7 @@ async function paywallPrecheck(
     x402Version: 2,
     error: "Payment required",
     resource: { url: resource.url, description: resource.description, mimeType: "application/json" },
-    accepts: [{
+    accepts: buildX402Accepts({
       scheme: "exact",
       network: "eip155:137",
       asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -2837,7 +2880,7 @@ async function paywallPrecheck(
         gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
         note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
       },
-    }],
+    }),
   };
   const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
   const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -2909,7 +2952,7 @@ async function handleEvmSentinelScanWithBilling(
         description: `EVM Sentinel ${tier === "quick" ? "Quick-Check" : "Deep-Scan"} — static Solidity security scan`,
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",  // Polygon PoS
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
@@ -2921,7 +2964,7 @@ async function handleEvmSentinelScanWithBilling(
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one ${serviceType} scan.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -2999,7 +3042,7 @@ async function handleEvmSentinelScanWithBilling(
 // advisory affects it. Factual elapsed-time measurement, not a claim.
 // ----------------------------------------------------------------------------
 
-const FITNESS_VERSION = "1.1.0";
+const FITNESS_VERSION = "1.2.0";
 const FITNESS_TTL_MS = 10 * 60 * 1000; // 10-minute freshness cron window
 
 // SPDX ids we treat as copyleft or otherwise risky for downstream reuse.
@@ -3147,7 +3190,11 @@ const REPO_MANIFEST_CANDIDATES: Array<{ file: string; kind: "lockfile" | "manife
   { file: "Pipfile.lock", kind: "lockfile" },
   { file: "go.mod", kind: "lockfile" },
   { file: "Cargo.lock", kind: "lockfile" },
+  { file: "composer.lock", kind: "lockfile" },
+  { file: "pubspec.lock", kind: "lockfile" },
+  { file: "Gemfile.lock", kind: "lockfile" },
   { file: "package.json", kind: "manifest" },
+  { file: "composer.json", kind: "manifest" },
 ];
 
 async function fetchRepoManifestPackages(repo: string, branch: string, token?: string): Promise<{
@@ -3177,10 +3224,12 @@ async function fetchRepoManifestPackages(repo: string, branch: string, token?: s
     REPO_MANIFEST_CANDIDATES.findIndex((c) => c.file === b.file)
   );
   const hasNpmLockfile = fetched.some((f) => f.kind === "lockfile" && (f.file === "package-lock.json" || f.file === "yarn.lock"));
+  const hasComposerLockfile = fetched.some((f) => f.kind === "lockfile" && f.file === "composer.lock");
   const detected: Array<{ file: string; format: string; package_count: number }> = [];
   const packages: ResolvedPackage[] = [];
   for (const f of fetched) {
     if (f.kind === "manifest" && f.file === "package.json" && hasNpmLockfile) continue; // lockfile authoritative
+    if (f.kind === "manifest" && f.file === "composer.json" && hasComposerLockfile) continue; // lockfile authoritative
     const parsed = parseLockfile(f.file, f.content);
     if (parsed.error) continue; // unparseable manifest in repo = skip, not fatal
     detected.push({ file: f.file, format: parsed.format, package_count: parsed.packages.length });
@@ -3188,6 +3237,17 @@ async function fetchRepoManifestPackages(repo: string, branch: string, token?: s
   }
   return { packages, detected };
 }
+
+// CycloneDX purl type per OSV ecosystem name (spec-correct purls; unknown ecosystems pass through).
+const PURL_TYPES: Record<string, string> = {
+  npm: "npm",
+  PyPI: "pypi",
+  Go: "golang",
+  "crates.io": "cargo",
+  Packagist: "composer",
+  Pub: "pub",
+  RubyGems: "gem",
+};
 
 function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; version?: string }>): Record<string, unknown> {
   return {
@@ -3202,7 +3262,7 @@ function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; 
       type: "library",
       "bom-ref": `pkg-${i}`,
       name: p.name,
-      purl: `pkg:${p.ecosystem ?? "generic"}/${p.name}${p.version ? "@" + p.version : ""}`,
+      purl: `pkg:${(p.ecosystem && PURL_TYPES[p.ecosystem]) || p.ecosystem || "generic"}/${p.name}${p.version ? "@" + p.version : ""}`,
       ...(p.version ? { version: p.version } : {}),
     })),
   };
@@ -3438,7 +3498,7 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3450,7 +3510,7 @@ async function handleFitnessWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one fitness attestation.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -3643,7 +3703,7 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Lite — W4 Gas Efficiency Rank vs fixed public cohort",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3655,7 +3715,7 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Lite gas rank.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -3727,6 +3787,7 @@ async function handleFitnessLiteWithBilling(req: Request): Promise<Response> {
 // ----------------------------------------------------------------------------
 
 const FITNESS_FULL_TTL_MS = 10 * 60 * 1000;
+const FITNESS_FORENSIC_TTL_MS = 10 * 60 * 1000; // W6 (v5.17.0): same 10-min window
 
 async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
@@ -3890,7 +3951,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
         description: "Nexus Fitness Full — gas rank + attestation + exploitability + source-match",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -3902,7 +3963,7 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Full attestation.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -4022,7 +4083,366 @@ async function handleFitnessFullWithBilling(req: Request): Promise<Response> {
 }
 
 // ----------------------------------------------------------------------------
-// PEER-CHECK (v5.4.1): POST /x402/fitness/peer-check — $0.05 USDC (5 CRED)
+// W6 FORENSIC (v5.17.0): POST /x402/fitness/forensic — $3.50 USDC (350 CRED)
+// Full-tier analysis + top-3 exploit scenario narratives (deterministic) +
+// observable impact (Amendment A1 drain-class scoping) + canonical JSON
+// evidence bundle dual-pinned to IPFS (Pinata + Filebase, Amendment A2).
+// ----------------------------------------------------------------------------
+
+async function handleFitnessForensicWithBilling(req: Request): Promise<Response> {
+  const reqStartTime = Date.now();
+  const serviceType = "fitness_forensic";
+  // paywall precheck BEFORE input validation (v5.16.1 pattern — bare probes
+  // from unfunded callers must see a 402 at the advertised price).
+  const paywall = await paywallPrecheck(req, serviceType, {
+    url: "/x402/fitness/forensic",
+    description: "Nexus Fitness Forensic — full-tier analysis + top-3 exploit scenario narratives + observable impact + dual-pinned IPFS evidence bundle. legal_weight 0.",
+  }, reqStartTime);
+  if (paywall) return paywall;
+
+  // 1. Validate input BEFORE anything — 400 class, never charged.
+  let body: unknown;
+  try {
+    body = await req.clone().json();
+  } catch {
+    return m2mError("INVALID_JSON", "Invalid JSON body.", serviceType, 400, 0, reqStartTime);
+  }
+  const validated = validateForensicInput(body);
+  if (!validated.ok) {
+    return m2mError("INVALID_INPUT", validated.error, serviceType, 400, 0, reqStartTime);
+  }
+  const input = validated.input;
+  await ensureRegimeMapFresh(getSupabaseClient());
+
+  // 2. Resolve .sol files (pre-billing — fetch failures are not chargeable).
+  let inputFiles: Array<{ path: string; source: string }> = [];
+  if (input.mode === "repo") {
+    const fetched = await fetchRepoSolFilesForGasRank(input.repo!);
+    if (fetched.error) {
+      return m2mError("GITHUB_FETCH_FAILED", fetched.error, serviceType, 502, 0, reqStartTime);
+    }
+    inputFiles = fetched.files;
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "No non-vendored .sol files found in this repo.", serviceType, 422, 0, reqStartTime);
+    }
+  } else {
+    inputFiles = input.files!.filter((f) => !isVendoredSolPath(f.path));
+    if (inputFiles.length === 0) {
+      return m2mError("NO_SOL_FILES", "All submitted files were filtered as vendored/test code.", serviceType, 422, 0, reqStartTime);
+    }
+  }
+
+  // 3. Source-match vs explorer — only when an address is supplied (observable
+  //    mode). Fatal 422 classes identical to full: bytecode_match evidence is
+  //    part of the forensic bundle, so we never charge for a run without it.
+  let sourceMatch: Record<string, unknown> | null = null;
+  if (input.address) {
+    const sm = await buildSourceMatch(inputFiles, input.address, input.chain, sha256Hex);
+    if ("unavailable" in sm) {
+      return m2mError(
+        "EXPLORER_UNAVAILABLE",
+        `Explorer source unavailable: ${sm.unavailable}. Source-match is required evidence for address-mode forensic — no charge when it cannot run.`,
+        serviceType, 422, 0, reqStartTime,
+      );
+    }
+    if ("no_code" in sm) {
+      return m2mError(
+        "ADDRESS_HAS_NO_CODE",
+        "eth_getCode/explorer returned no contract at this address. Nothing to match — no charge.",
+        serviceType, 422, 0, reqStartTime,
+      );
+    }
+    sourceMatch = sm;
+  }
+
+  // 4. Gas rank (identical to Lite/Full — pre-billing gate).
+  const rankResult = buildGasRank(inputFiles, { repo: input.mode === "repo" ? input.repo : undefined });
+  if (rankResult.status === "NO_RANKABLE_FUNCTIONS") {
+    return m2mError(
+      "NO_RANKABLE_FUNCTIONS",
+      "No rankable public/external functions found in the submitted code. Nothing to rank — no charge.",
+      serviceType, 422, 0, reqStartTime,
+    );
+  }
+
+  // 5. Base attestation (repo facts) — same block as fitness_full.
+  let repoFacts: Awaited<ReturnType<typeof githubRepoFacts>> = {};
+  let degraded = false;
+  if (input.mode === "repo") {
+    repoFacts = await githubRepoFacts(input.repo!, Deno.env.get("GITHUB_TOKEN"));
+    if (repoFacts.error) degraded = true;
+  }
+
+  // 6. Exploitability (W3.1) — deterministic formula over available advisories.
+  const imported = extractSolidityImports(inputFiles);
+  const merged = mergeDependencyLists(input.packages, imported);
+  const perAdvisory: Array<Record<string, unknown>> = [];
+  let maxExploitability = 0;
+  let osvDegraded = false;
+  const advisoriesForAttestation: Array<Record<string, unknown>> = [];
+  for (const pkg of merged.packages) {
+    const osv = await osvQuery({ name: pkg.name, ecosystem: pkg.ecosystem || "npm" });
+    if (osv.error) osvDegraded = true;
+    for (const adv of osv.advisories) {
+      advisoriesForAttestation.push({
+        id: adv.id, summary: adv.summary, severity_class: adv.severity_class,
+        published: adv.published, url: adv.url, package: pkg.name, source: pkg.origin,
+        cvss_vector: adv.cvss_vector, severity_label: adv.severity_label,
+      });
+      const daysSincePublished = adv.published
+        ? Math.max(0, Math.floor((Date.now() - new Date(adv.published).getTime()) / 86_400_000))
+        : null;
+      const components = {
+        cvss: cvssFromAdvisory(adv.cvss_vector, adv.severity_label),
+        reachability: 60,
+        exploit_maturity: W3_MODEL.neutral.exploit_maturity,
+        freshness_penalty: freshnessPenaltyComponent(daysSincePublished),
+        asset_exposure: W3_MODEL.neutral.asset_exposure,
+      };
+      const score = computeExploitability(components);
+      if (score > maxExploitability) maxExploitability = score;
+      perAdvisory.push({
+        id: adv.id, package: pkg.name, source: pkg.origin,
+        exploitability_score: score,
+        components,
+      });
+    }
+  }
+  const dependencyNotice = merged.packages.length === 0
+    ? "Advisory detail skipped due to missing package manifest (no packages supplied and no external imports detected); baseline global score applied."
+    : merged.truncated
+      ? "Dependency list capped at 25 packages (user-supplied first, then auto-extracted imports) — advisories beyond the cap are not queried."
+      : null;
+
+  // 7. Gatekeeper + 402 x402 envelope (350 CRED = 3,500,000 atomic USDC).
+  const gatekeeper = await checkQuotaAndRate(req, serviceType, undefined);
+  if (!gatekeeper.allowed) {
+    await logServiceCall(gatekeeper.clientId, serviceType, 402, null, 0);
+    const costCredits = PRICING_MODEL.services[serviceType]?.base_credits ?? 350;
+    const amountUsdcAtomic = (costCredits * PRICING_MODEL.atomic_units_per_credit).toString();
+    const x402PaymentRequired = {
+      x402Version: 2,
+      error: "Payment required",
+      resource: {
+        url: "/x402/fitness/forensic",
+        description: "Nexus Fitness Forensic — full-tier + top-3 scenario narratives + observable impact + dual-pinned IPFS evidence bundle",
+        mimeType: "application/json",
+      },
+      accepts: buildX402Accepts({
+        scheme: "exact",
+        network: "eip155:137",
+        asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        amount: amountUsdcAtomic,
+        payTo: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USD Coin",
+          version: "2",
+          note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one Fitness Forensic report.`,
+        },
+      }),
+    };
+    const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
+    const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
+    const denied = gatekeeper.deniedResponse as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      status: "failed",
+      timestamp: new Date().toISOString(),
+      service_type: serviceType,
+      error: {
+        error_code: String(denied.error_code ?? "INSUFFICIENT_CREDITS"),
+        message: String(denied.message ?? "Payment required."),
+      },
+      metadata: buildM2MMetadata(0, reqStartTime),
+    }, null, 2), {
+      status: 402,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "payment-required": x402Base64 },
+    });
+  }
+
+  // 8. 10-minute cache (cache = speed, NOT discount — full charge on hit).
+  const subjectKey = JSON.stringify({
+    r: input.mode === "repo" ? input.repo : null,
+    f: inputFiles.map((x) => x.path),
+    a: input.address ? input.address.toLowerCase() : null,
+    c: input.chain,
+  });
+  const cacheKey = `fitness_forensic:${await sha256Hex(subjectKey)}`;
+  let cachedResult: Record<string, unknown> | null = null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from("scan_cache")
+      .select("result, created_at")
+      .eq("code_hash", cacheKey)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const age = Date.now() - new Date(data[0].created_at).getTime();
+      if (age < FITNESS_FORENSIC_TTL_MS) cachedResult = data[0].result as Record<string, unknown>;
+    }
+  } catch (_) { /* non-fatal */ }
+
+  let result: Record<string, unknown>;
+  let cacheHit = false;
+  if (cachedResult) {
+    result = cachedResult;
+    cacheHit = true;
+  } else {
+    // 9. Single parse pass per file: breach simulation + localization advice +
+    //    function bodies (drain-class evidence) + worst gas asymmetry.
+    const perFile: Array<{ file: string; scenarios: BreachScenario[] }> = [];
+    const mergedLocPatterns: Array<{ pattern: string; isolate: string; bound: string; guard: string; verify: string; file: string }> = [];
+    let maxLocRatio = 0;
+    let locDosDelay = false;
+    const fnBodies = new Map<string, string>();
+    let maxGasAsym: Record<string, unknown> | null = null;
+    let maxGasRatio = -1;
+    for (const f of inputFiles) {
+      try {
+        const p = parseSolidityContract(f.source, input.chain);
+        const sim = simulateBreachScenarios(p);
+        perFile.push({ file: f.path, scenarios: sim.scenarios });
+        for (const fn of p.functions) {
+          if (!fnBodies.has(fn.name) && typeof fn.body === "string") fnBodies.set(fn.name, fn.body);
+        }
+        const adv = buildLocalizationAdvice(p.gas_asymmetry);
+        if (adv) {
+          for (const pat of adv.patterns) mergedLocPatterns.push({ ...pat, file: f.path });
+          if (p.gas_asymmetry.compute_to_gas_ratio > maxLocRatio) maxLocRatio = p.gas_asymmetry.compute_to_gas_ratio;
+          if (p.gas_asymmetry.dos_validator_delay) locDosDelay = true;
+        }
+        const ratio = typeof p.gas_asymmetry?.compute_to_gas_ratio === "number"
+          ? p.gas_asymmetry.compute_to_gas_ratio : -1;
+        if (ratio > maxGasRatio) {
+          maxGasRatio = ratio;
+          maxGasAsym = p.gas_asymmetry as unknown as Record<string, unknown>;
+        }
+      } catch (_) { /* non-fatal per file */ }
+    }
+    const fitnessLocalization = mergedLocPatterns.length > 0
+      ? {
+          risk_summary:
+            `One or more files use opcode pattern(s) that let a cheap transaction impose disproportionate CPU/RAM burden on validators (EVM protocol-level gas asymmetry, max compute_to_gas_ratio ${maxLocRatio.toFixed(1)}). The patterns below localize each vector so a refactor can contain it without changing the EVM itself.`,
+          priority: locDosDelay || maxLocRatio > 12.5 ? "high" : "medium",
+          patterns: mergedLocPatterns,
+        }
+      : null;
+
+    // 10. Top-3 selection + deterministic narratives (pure — spec §3.b/§3.c).
+    const mergedScenarios = mergeScenarios(perFile);
+    const detectedIds = mergedScenarios.filter((m) => m.scenario.detected).map((m) => m.scenario.scenario_id);
+    const selected = selectTopScenarios(mergedScenarios);
+    const narrativeCtx = { chain: input.chain, gas_asymmetry: maxGasAsym };
+    const narratives = selected.map((m: MergedScenario) => buildNarrative(m, narrativeCtx));
+
+    // 11. Observable impact (Amendment A1): one shared state read at block B,
+    //     reused for every drain-class scenario. Block B is recorded in the
+    //     response and frozen in the cache — never silently re-read.
+    const fnBodyLookup = (name: string) => fnBodies.get(name);
+    const needsState = input.address !== null &&
+      selected.some((m: MergedScenario) => isDrainClass(m.scenario, fnBodyLookup));
+    const observableState = needsState
+      ? await fetchObservableState(input.address!, input.chain)
+      : null;
+    const observable = buildObservableImpact(selected, {
+      address: input.address,
+      state: observableState,
+      fnBody: fnBodyLookup,
+    });
+
+    // 12. Canonical bundle → dual pin (pre-billing: <2 legs = 422 DEGRADED_IPFS).
+    const subject = {
+      mode: input.mode,
+      repo: input.mode === "repo" ? input.repo : null,
+      files_digest: input.mode === "files"
+        ? `sha256:${await sha256Hex(JSON.stringify(inputFiles.map((f) => [f.path, f.source.length])))}`
+        : null,
+      address: input.address ? input.address.toLowerCase() : null,
+      chain: input.chain,
+    };
+    const bundle = buildForensicBundle({
+      subject,
+      engine_version: buildM2MMetadata(0, reqStartTime).version as string,
+      detected_scenario_ids: detectedIds,
+      selected: narratives,
+      observable_impact: observable,
+    });
+    const bundleCanonical = canonicalJson(bundle);
+    const bundleSha = await sha256Hex(bundleCanonical);
+    const pin = await pinBundleDual(bundleCanonical, {
+      pinataJwt: Deno.env.get("PINATA_JWT") ?? null,
+      filebaseToken: Deno.env.get("FILEBASE_TOKEN") ?? null,
+      name: `nexus-forensic-${bundleSha.slice(0, 12)}`,
+    });
+    if (!pin.ok) {
+      return m2mError(
+        "DEGRADED_IPFS",
+        `Dual-pin degraded (${pin.legs.map((l) => `${l.provider}:${l.ok ? "ok" : l.error ?? "failed"}`).join("; ")}). The evidence bundle requires 2 healthy pin legs — no charge.`,
+        serviceType, 422, 0, reqStartTime,
+      );
+    }
+
+    result = {
+      schema_version: W6_MODEL.schema_version,
+      service: W6_MODEL.service,
+      legal_weight: 0,
+      disclaimer: W6_MODEL.disclaimer,
+      generated_at: new Date().toISOString(),
+      input_digest: `sha256:${await sha256Hex(subjectKey)}`,
+      gas_rank: rankResult,
+      localization_advice: fitnessLocalization,
+      attestation: {
+        repo: input.mode === "repo" ? input.repo : null,
+        license: repoFacts.license ?? null,
+        license_risk: repoFacts.license ? RISKY_LICENSES.has(repoFacts.license) : null,
+        freshness_days: repoFacts.pushed_at
+          ? Math.floor((Date.now() - new Date(repoFacts.pushed_at).getTime()) / 86_400_000)
+          : null,
+        stars: repoFacts.stars ?? null,
+        advisories: advisoriesForAttestation,
+        dependencies: merged.packages,
+      },
+      exploitability: {
+        per_advisory: perAdvisory,
+        max_exploitability_score: maxExploitability,
+        dependency_notice: dependencyNotice,
+        note: "Per-advisory exploitability from the fixed public formula (weights in w3_model). Components use neutral defaults where a data source is not available in v5.7.1 — stated, never fabricated.",
+      },
+      source_match: sourceMatch,
+      source_match_note: input.address
+        ? null
+        : "source-match skipped — no contract address supplied (source-only mode).",
+      forensic: {
+        detected_scenario_ids: detectedIds,
+        selection_rule: "top 3 by severity desc, tie scenario_id asc",
+        selected_count: narratives.length,
+        narratives,
+        observable_impact: observable,
+      },
+      ipfs_bundle: {
+        cid: pin.cid,
+        bundle_sha256: bundleSha,
+        gateway_urls: pin.gateway_urls,
+        pin_legs: pin.legs,
+        verification_note: "Bundle pinned as canonical JSON; the EIP-712 attestation resultHash covers this response (including the CID). Retrieve the bundle from any gateway URL and re-hash to verify.",
+      },
+      degraded: degraded || osvDegraded,
+      w6_model: { spec_version: W6_MODEL.spec_version, top_scenarios: W6_MODEL.top_scenarios },
+    };
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from("scan_cache").insert({ code_hash: cacheKey, scan_tier: "fitness_forensic", result });
+    } catch (_) { /* non-fatal */ }
+  }
+
+  await Promise.all([
+    recordUsageAfterSuccess(gatekeeper.clientId, gatekeeper.paymentPath ?? "credits", gatekeeper.creditsToCharge ?? 0),
+    logServiceCall(gatekeeper.clientId, serviceType, 200, null, gatekeeper.creditsToCharge ?? 0),
+  ]);
+  recordThroughput();
+  return m2mSuccess({ ...result, cache: cacheHit ? "hit" : "miss" }, serviceType, null, gatekeeper.creditsToCharge, reqStartTime);
+}
 // ----------------------------------------------------------------------------
 // Design: reference/peer-check-design.md v0.1 (user-approved 2026-10-03).
 // Transaction peer-check for x402 buyers: probe a peer endpoint DIRECTLY
@@ -4198,6 +4618,9 @@ async function fetchPeerIncidentHistory(peerUrl: string): Promise<Record<string,
   }
 }
 
+// ----------------------------------------------------------------------------
+// PEER-CHECK (v5.4.1): POST /x402/fitness/peer-check — $0.05 USDC (5 CRED)
+// ----------------------------------------------------------------------------
 async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
   const reqStartTime = Date.now();
   const serviceType = "fitness_attestation"; // billed at the $0.05 fitness rate per approved design
@@ -4248,7 +4671,7 @@ async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
         description: "Nexus Transaction Peer-Check — direct factual probe of a peer endpoint",
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -4260,7 +4683,7 @@ async function handlePeerCheckWithBilling(req: Request): Promise<Response> {
           version: "2",
           note: `x402 exact payment. ${(costCredits / 100).toFixed(2)} USDC for one transaction peer-check.`,
         },
-      }],
+      }),
     };
     const x402Bytes = new TextEncoder().encode(JSON.stringify(x402PaymentRequired));
     const x402Base64 = btoa(String.fromCharCode(...x402Bytes));
@@ -4438,7 +4861,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.16.1",
+    version: "5.18.1",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -4448,6 +4871,8 @@ const OPENAPI_SPEC = {
       "GET /pricing.manifest.json",
       "GET /attestations",
       "GET /attestations/proof",
+      "GET /badge",
+      "GET /v1/balance",
     ],
   },
   servers: [{ url: BASE_URL_DOCS }],
@@ -4673,6 +5098,73 @@ const OPENAPI_SPEC = {
         },
       },
     },
+    "/x402/fitness/forensic": {
+      post: {
+        summary: "Fitness Forensic — Full + top-3 exploit scenarios + deterministic narratives + observable impact + IPFS evidence bundle",
+        description:
+          "Everything in Full (gas rank, base attestation, exploitability; source-match when {address} supplied) plus: top-3 detected exploit scenarios ranked by severity (desc) with scenario_id tie-break (asc), deterministic attack narratives generated as pure functions over the detection evidence (no wall-clock, no RNG — byte-identical across calls), observable_impact for drain-class scenarios in address mode (observed native balance at the recorded block B — labeled observed state, not a loss prediction; non-drain scenarios carry an explicit omit-reason per Amendment A1), and a canonical JSON evidence bundle dual-pinned to IPFS via Pinata + Filebase (Amendment A2). Fewer than 2 healthy pin legs returns 422 DEGRADED_IPFS without charge. The ERC-8004 EIP-712 attestation resultHash covers the response including the bundle CID. legal_weight: 0 — factual only. Cost: $3.50 USDC.",
+        "x-pricing": "3.50 USDC per call, x402 exact, eip155:137",
+        "x-keywords": ["fitness-forensic", "exploit-scenarios", "attack-narrative", "observable-impact", "ipfs-evidence-bundle", "merkle-attestation"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  repo: { type: "string", description: "GitHub repo as owner/name (public) — XOR with files" },
+                  files: {
+                    type: "array",
+                    maxItems: 200,
+                    description: "Direct file input: [{path, source}] — max 200 files, 2 MiB total",
+                    items: {
+                      type: "object",
+                      properties: {
+                        path: { type: "string" },
+                        source: { type: "string" },
+                      },
+                      required: ["path", "source"],
+                    },
+                  },
+                  address: { type: "string", description: "Deployed contract address (0x + 40 hex) — OPTIONAL; activates observable mode (source-match + observable_impact)" },
+                  packages: {
+                    type: "array",
+                    maxItems: 25,
+                    description: "Optional dependency list [{name, ecosystem?, version?}] — merged with packages auto-extracted from Solidity import directives",
+                    items: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        ecosystem: { type: "string", description: "Default: npm" },
+                        version: { type: "string" },
+                      },
+                      required: ["name"],
+                    },
+                  },
+                  chain: { type: "string", enum: ["polygon"], description: "v5.17.0: polygon only; enum open for expansion" },
+                },
+              },
+              example: { repo: "Vectorized/solady", address: "0x0000000000000000000000000000000000000000" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "M2M envelope; data carries ForensicResult { gas_rank, attestation, exploitability, source_match?, forensic {top_scenarios, narratives, observable_impact?}, ipfs_bundle {cid, gateway_urls, pin_legs}, degraded, input_digest }",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/M2MEnvelope" },
+              },
+            },
+          },
+          "400": { description: "Invalid input (validated before billing) — not charged." },
+          "402": { description: "Payment required (x402 envelope in payment-required header)." },
+          "422": {
+            description: "Fatal pre-billing failure (no .sol files, explorer unavailable, no rankable functions, DEGRADED_IPFS) — not charged.",
+          },
+        },
+      },
+    },
     "/attestations": {
       get: {
         summary: "Public Attestation Audit — list every ERC-8004 signed fitness attestation",
@@ -4714,7 +5206,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
         description:
-          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest via {lockfile:{filename,content}} (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root — exact versions are queried version-scoped at OSV; merged list capped at 250 with per-package resolution provenance. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
+          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest via {lockfile:{filename,content}} (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json) or let {repo} mode auto-extract dependency manifests from the repo root — exact versions are queried version-scoped at OSV; merged list capped at 250 with per-package resolution provenance. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
         "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["fitness-attestation", "cve-check", "license-check", "sbom", "exposure-window"],
         requestBody: {
@@ -4732,7 +5224,7 @@ const OPENAPI_SPEC = {
                       type: "object",
                       properties: {
                         name: { type: "string" },
-                        ecosystem: { type: "string", description: "npm, crates.io, PyPI, Go, etc. (default npm)" },
+                        ecosystem: { type: "string", description: "npm, crates.io, PyPI, Go, Packagist, Pub, RubyGems, etc. (default npm)" },
                         version: { type: "string" },
                       },
                       required: ["name"],
@@ -4740,7 +5232,7 @@ const OPENAPI_SPEC = {
                   },
                   lockfile: {
                     type: "object",
-                    description: "W7: pasted dependency lockfile/manifest (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock). Content max 512 KiB; parsed pre-billing (400 on failure, no charge).",
+                    description: "W7: pasted dependency lockfile/manifest (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json). Content max 512 KiB; parsed pre-billing (400 on failure, no charge).",
                     properties: {
                       filename: { type: "string", description: "optional — used for format detection (content sniffed otherwise)" },
                       content: { type: "string" },
@@ -5057,7 +5549,8 @@ Response fields: contract_info.gas_asymmetry .unsupported_precompiles /
   {"packages":[{"name":"ethers","ecosystem":"npm"}]} and/or
   {"lockfile":{"filename":"package-lock.json","content":"..."}} — paste a
   lockfile/manifest (package-lock.json, yarn.lock, requirements.txt,
-  Pipfile.lock, go.mod, Cargo.lock) or let repo mode auto-extract manifests
+  Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock,
+  Gemfile.lock, package.json, composer.json) or let repo mode auto-extract manifests
   (merged cap 250, version-scoped OSV queries, resolution provenance).
   Output: { "facts": {advisories (GHSA/CVE via osv.dev), license (SPDX),
   last_commit_days, stars}, "score": 0-100 (deterministic fixed formula:
@@ -5096,6 +5589,22 @@ Response fields: contract_info.gas_asymmetry .unsupported_precompiles /
   endorsement, no composite score (a single probe is a fact, not an
   opinion). Input: {"peer_url":"https://..."} or {"peer_urls":[...]}
   (max 3). Cached 10 minutes.
+- POST /x402/fitness/forensic — Fitness Forensic (W6), $3.50 USDC.
+  Everything in Full plus: top-3 detected exploit scenarios (severity
+  desc, scenario_id asc tie-break) with deterministic attack narratives
+  (pure functions over detection evidence — no wall-clock, no RNG,
+  byte-identical across calls), observable_impact for drain-class
+  scenarios when {address} is supplied (observed native balance at the
+  recorded block B — observed state, NOT a loss prediction; non-drain
+  scenarios carry an explicit omit-reason), and a canonical JSON
+  evidence bundle dual-pinned to IPFS (Pinata + Filebase) whose CID is
+  covered by the ERC-8004 EIP-712 attestation resultHash. Input:
+  {"repo":"owner/name"} or {"files":[...]} (max 200 files, 2 MiB) +
+  optional {"address":"0x..."} (activates observable mode) +
+  {"chain":"polygon"} + optional {"packages":[...]}. Fatal pre-billing
+  failures (400/422 incl. DEGRADED_IPFS when fewer than 2 pin legs are
+  healthy) return without charge. Cached 10 minutes — cache is speed,
+  not discount. legal_weight: 0 — factual only.
 
 ## Signed attestations & public audit (free, zero-trust)
 
@@ -5138,6 +5647,10 @@ daily to NexusAttestationAnchor
 - GET /manifest.json — A2A agent discovery manifest.
 - GET /samples — free multi-tier sample manifests (legal + code + matrix).
 - GET /metrics — live telemetry (uptime, latency, concurrency).
+- GET /attestations — public list of signed fitness attestations (filter by day/service_type/anchored/subject).
+- GET /attestations/proof?hash=0x... — zero-trust proof package (EIP-712 signature + Merkle proof + anchor tx).
+- GET /badge — shields.io-compatible JSON badge: live attestation count.
+- GET /v1/balance — self-service credit balance check (x-client-id header).
 - GET /pricing.manifest.json — machine-readable pricing.
 
 ## Payment protocol
@@ -5299,6 +5812,15 @@ function m2mSuccess(
       envelope.attestation = att;
       logAttestationForAnchor(att, serviceType);
     }
+  }
+  // v5.18.0: Revenue Bell — wake the operator agent on real revenue (non-fatal).
+  if (credits > 0) {
+    notifyRevenueBell({
+      source: "m2m_success",
+      service_type: serviceType,
+      credits_charged: credits,
+      payload_id: payloadId,
+    });
   }
   return jsonResponse(envelope, status);
 }
@@ -7847,6 +8369,71 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse(buildMetricsPayload(), 200);
   }
 
+  // 2d-b. Badge Endpoint (v5.18.0 — GET /badge)
+  // Free shields.io-compatible JSON: live signed-attestation count. No billing.
+  if (url.pathname.endsWith("/badge")) {
+    try {
+      const supabaseBadge = getSupabaseClient();
+      const { count } = await supabaseBadge
+        .from("attestation_log")
+        .select("id", { count: "exact", head: true });
+      const n = Number(count ?? 0);
+      return jsonResponse({
+        schemaVersion: 1,
+        label: "Nexus Attestations",
+        message: String(n),
+        color: n > 0 ? "brightgreen" : "lightgray",
+        cacheSeconds: 300,
+      }, 200);
+    } catch {
+      return jsonResponse({
+        schemaVersion: 1,
+        label: "Nexus Attestations",
+        message: "unavailable",
+        color: "lightgray",
+        cacheSeconds: 300,
+      }, 200);
+    }
+  }
+
+  // 2d-c. Balance Endpoint (v5.18.0 — GET /v1/balance)
+  // Free self-service credit balance check via x-client-id. No billing.
+  if (url.pathname.endsWith("/v1/balance") || url.pathname.endsWith("/balance")) {
+    const balanceClientId = req.headers.get("x-client-id");
+    if (!balanceClientId) {
+      return jsonResponse({
+        status: "failed",
+        error_code: "MISSING_CLIENT_ID",
+        message: "x-client-id header required.",
+      }, 400);
+    }
+    try {
+      const supabaseBalance = getSupabaseClient();
+      const { data: balanceClient } = await supabaseBalance
+        .from("client_usage")
+        .select("balance_credits, tier, total_invocations")
+        .eq("client_id", balanceClientId)
+        .maybeSingle();
+      if (!balanceClient) {
+        return jsonResponse({
+          client_id: balanceClientId,
+          exists: false,
+          balance_credits: 0,
+          note: "Unknown client — no usage recorded yet. Paid calls create the record automatically.",
+        }, 200);
+      }
+      return jsonResponse({
+        client_id: balanceClientId,
+        exists: true,
+        balance_credits: balanceClient.balance_credits ?? 0,
+        tier: balanceClient.tier ?? "new",
+        total_invocations: balanceClient.total_invocations ?? 0,
+      }, 200);
+    } catch {
+      return jsonResponse({ status: "failed", error_code: "BALANCE_LOOKUP_FAILED", message: "Balance lookup failed." }, 500);
+    }
+  }
+
   // 2b. Pricing Manifest Endpoint (v4.4.0 — M2M pricing discovery)
   // Free, own schema, no billing, no x-client-id. Static read for
   // orchestrator autonomous purchase decisions.
@@ -7942,13 +8529,9 @@ async function handler(req: Request): Promise<Response> {
     return jsonResponse({ error: "Method not allowed. Use POST with {repo, packages}." }, 405);
   }
 
-  // v5.2.0 (planned): Fitness upgrade tiers — W2W external pricing, additional
-  // weapons. Routes are RESERVED: return 501 Not Implemented with a structured
-  // descriptor so M2M clients can discover the roadmap without being billed.
-  // H+7 Lite ($1.25): + Gas Efficiency Rank (W4). H+14 Full ($2.25): +
-  // Exploitability Score + Attack Cost USD (W2) + Bytecode Match (W3).
-  // H+21 Forensic ($3.50): + top 3 detected exploit scenarios by severity (W6 spec v1.0)
-  // + IPFS timestamp (W6).
+  // Fitness upgrade tiers: ALL LIVE. Lite $1.25 (v5.4.0), Full $2.25 (v5.7.0),
+  // Forensic $3.50 (v5.17.0 — W6 spec v1.0-FINAL+A1+A2). No reserved 501
+  // skeleton remains.
   // v5.4.1: Transaction Peer-Check — factual probe of a peer endpoint ($0.05).
   if (req.method === "POST" && docsRoute === "/x402/fitness/peer-check") {
     return handlePeerCheckWithBilling(req);
@@ -7973,26 +8556,12 @@ async function handler(req: Request): Promise<Response> {
   if (req.method === "GET" && docsRoute === "/x402/fitness/full") {
     return jsonResponse({ error: "Method not allowed. Use POST with {repo}|{files} + {address}." }, 405);
   }
-  const fitnessTierRoutes: Record<string, { tier: string; price: string; weapons: string[] }> = {
-    "/x402/fitness/forensic": { tier: "fitness_forensic", price: "3.50", weapons: ["W1", "W5", "W4", "W2", "W3", "W6"] },
-  };
-  const fitnessTier = fitnessTierRoutes[docsRoute];
-  if (fitnessTier && req.method === "POST") {
-    return jsonResponse({
-      status: "not_implemented",
-      error_code: "TIER_NOT_LIVE",
-      message: `Fitness ${fitnessTier.tier} ($${fitnessTier.price}) is planned but not yet deployed. Phase 1 /x402/fitness ($0.05) is live.`,
-      w4_model_version: GAS_RANK_MODEL.model_version,
-      w4_spec: GAS_RANK_MODEL.spec,
-      tier: fitnessTier.tier,
-      planned_price_usdc: fitnessTier.price,
-      planned_weapons: fitnessTier.weapons,
-      live_alternative: { endpoint: "POST /x402/fitness", price_usdc: "0.05" },
-      legal_weight: 0,
-    }, 501);
+  // W6 (v5.17.0): /x402/fitness/forensic is now LIVE — route to the billing handler.
+  if (req.method === "POST" && docsRoute === "/x402/fitness/forensic") {
+    return handleFitnessForensicWithBilling(req);
   }
-  if (fitnessTier && req.method === "GET") {
-    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+  if (req.method === "GET" && docsRoute === "/x402/fitness/forensic") {
+    return jsonResponse({ error: "Method not allowed. Use POST with {repo}|{files} (+ optional {address})." }, 405);
   }
 
   // v5.16.1: Legacy per-path service routes. x402-list declares one path per
@@ -8097,7 +8666,7 @@ async function handler(req: Request): Promise<Response> {
         description: `Nexus Gateway - ${serviceType}`,
         mimeType: "application/json",
       },
-      accepts: [{
+      accepts: buildX402Accepts({
         scheme: "exact",
         network: "eip155:137",  // Polygon PoS
         asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  // USDC (native, 6 decimals)
@@ -8110,7 +8679,7 @@ async function handler(req: Request): Promise<Response> {
           gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
           note: "EIP-712 USDC pull payment via Gateway.sol. Client signs permit, Gateway pulls USDC, balance credited.",
         },
-      }],
+      }),
     };
 
     // Encode as base64 for the payment-required header (Unicode-safe)
@@ -8235,7 +8804,8 @@ async function telemetryWrapper(req: Request): Promise<Response> {
   // price — credits are never lost.
   const paymentSignatureHeader = req.headers.get("payment-signature");
   if (paymentSignatureHeader) {
-    const settlementClientId = req.headers.get("x-client-id") || "x402-anonymous";
+    const headerClientId = req.headers.get("x-client-id");
+    const settlementClientId = headerClientId || "x402-anonymous";
     const x402Start = Date.now();
     TELEMETRY.total_requests++;
     TELEMETRY.last_request_at = x402Start;
@@ -8256,6 +8826,15 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       );
     }
 
+    // v5.18.0: payer-derived client id — spec-compliant x402 clients may send
+    // no x-client-id; a stable per-payer id lets credits persist across calls
+    // and the paid request pass the gatekeeper instead of dying at MISSING_CLIENT_ID.
+    const creditClientId = deriveSettlementClientId(headerClientId, verification.payer ?? "");
+    const settlementChain = getChainConfig(verification.network);
+    const paidReq = headerClientId ? req : new Request(req, {
+      headers: new Headers({ ...Object.fromEntries(req.headers.entries()), "x-client-id": creditClientId }),
+    });
+
     // Replay guard at DB level: if this exact nonce was already settled by us,
     // skip re-settlement (on-chain would revert) and just re-run the request.
     const supabase = getSupabaseClient();
@@ -8274,7 +8853,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
     } else {
       const privateKey = normalizePrivateKey(Deno.env.get("POLYGON_PRIVATE_KEY") || "");
       if (!privateKey) {
-        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8290,6 +8869,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       const settlement = await settleTransferWithAuthorization(
         verification.payload!,
         privateKey,
+        settlementChain,
       );
       if (!settlement.ok) {
         // Reconciliation: if the nonce is now used on-chain, the settlement
@@ -8303,14 +8883,14 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             .eq("entry_type", "credit_x402")
             .eq("reason_code", payloadNonce)
             .maybeSingle();
-          if (priorCredit?.pull_tx_hash && priorCredit.client_id === settlementClientId) {
+          if (priorCredit?.pull_tx_hash && priorCredit.client_id === creditClientId) {
             // Already credited for THIS client — idempotent success.
             txHash = priorCredit.pull_tx_hash;
           } else if (priorCredit?.pull_tx_hash) {
             // Nonce credited to a DIFFERENT client — captured-payload replay.
             // Do not credit the replaying client; run the request normally
             // (their own balance applies, typically 402).
-            await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+            await logServiceCall(creditClientId, "x402_settlement", 402, null, 0);
             TELEMETRY.error_count++;
             recordLatency(Date.now() - x402Start);
             return m2mError(
@@ -8329,11 +8909,11 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             const amountAtomic2 = Number(verification.amount_atomic ?? "0");
             const amountUsdc2 = amountAtomic2 / 10 ** X402_CONFIG.usdc_decimals;
             const creditsMinted2 = Math.floor(amountUsdc2 * X402_CONFIG.cred_per_usdc);
-            const clientIdHashBytes2 = new TextEncoder().encode(settlementClientId);
+            const clientIdHashBytes2 = new TextEncoder().encode(creditClientId);
             const clientIdHashBuf2 = await crypto.subtle.digest("SHA-256", clientIdHashBytes2);
             const clientIdHash2 = "0x" + [...new Uint8Array(clientIdHashBuf2)].map(b => b.toString(16).padStart(2, "0")).join("");
             const { error: creditError2 } = await supabase.rpc("record_x402_credits", {
-              p_client_id: settlementClientId,
+              p_client_id: creditClientId,
               p_client_id_hash: clientIdHash2,
               p_tx_hash: txHash,
               p_payer: verification.payer ?? "",
@@ -8341,7 +8921,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
               p_credits_minted: creditsMinted2,
             });
             if (creditError2) {
-              await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+              await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
               TELEMETRY.error_count++;
               recordLatency(Date.now() - x402Start);
               return m2mError(
@@ -8358,9 +8938,10 @@ async function telemetryWrapper(req: Request): Promise<Response> {
               .update({ reason_code: payloadNonce })
               .eq("pull_tx_hash", txHash)
               .eq("entry_type", "credit_x402");
-            await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
-            const settledResponse2 = await handler(req);
-            const paymentResponseHeader2 = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+            await logServiceCall(creditClientId, "x402_settlement", 200, null, 0);
+            notifyRevenueBell({ source: "x402_settlement", service_type: "x402_topup", credits_charged: creditsMinted2, client_id: creditClientId, payer: verification.payer ?? null, tx_hash: txHash, network: verification.network ?? null });
+            const settledResponse2 = await handler(paidReq);
+            const paymentResponseHeader2 = buildPaymentResponseHeader(txHash, verification.network ?? "eip155:137", verification.payer);
             const headers2 = new Headers(settledResponse2.headers);
             headers2.set("payment-response", paymentResponseHeader2);
             headers2.set("Access-Control-Expose-Headers", "payment-response");
@@ -8373,7 +8954,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
             });
           }
         } else {
-        await logServiceCall(settlementClientId, "x402_settlement", 402, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 402, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8392,11 +8973,11 @@ async function telemetryWrapper(req: Request): Promise<Response> {
       const amountAtomic = Number(verification.amount_atomic ?? "0");
       const amountUsdc = amountAtomic / 10 ** X402_CONFIG.usdc_decimals;
       const creditsMinted = Math.floor(amountUsdc * X402_CONFIG.cred_per_usdc);
-      const clientIdHashBytes = new TextEncoder().encode(settlementClientId);
+      const clientIdHashBytes = new TextEncoder().encode(creditClientId);
       const clientIdHashBuf = await crypto.subtle.digest("SHA-256", clientIdHashBytes);
       const clientIdHash = "0x" + [...new Uint8Array(clientIdHashBuf)].map(b => b.toString(16).padStart(2, "0")).join("");
       const { error: creditError } = await supabase.rpc("record_x402_credits", {
-        p_client_id: settlementClientId,
+        p_client_id: creditClientId,
         p_client_id_hash: clientIdHash,
         p_tx_hash: txHash,
         p_payer: verification.payer ?? "",
@@ -8404,7 +8985,7 @@ async function telemetryWrapper(req: Request): Promise<Response> {
         p_credits_minted: creditsMinted,
       });
       if (creditError) {
-        await logServiceCall(settlementClientId, "x402_settlement", 500, null, 0);
+        await logServiceCall(creditClientId, "x402_settlement", 500, null, 0);
         TELEMETRY.error_count++;
         recordLatency(Date.now() - x402Start);
         return m2mError(
@@ -8424,13 +9005,14 @@ async function telemetryWrapper(req: Request): Promise<Response> {
         .eq("pull_tx_hash", txHash)
         .eq("entry_type", "credit_x402");
 
-      await logServiceCall(settlementClientId, "x402_settlement", 200, null, 0);
+      await logServiceCall(creditClientId, "x402_settlement", 200, null, 0);
+      notifyRevenueBell({ source: "x402_settlement", service_type: "x402_topup", credits_charged: creditsMinted, client_id: creditClientId, payer: verification.payer ?? null, tx_hash: txHash, network: verification.network ?? null });
     }
 
     // Payment settled & credited — run the ORIGINAL request through the normal
     // pipeline, then attach PAYMENT-RESPONSE so the x402 client sees success.
-    const settledResponse = await handler(req);
-    const paymentResponseHeader = buildPaymentResponseHeader(txHash, "eip155:137", verification.payer);
+    const settledResponse = await handler(paidReq);
+    const paymentResponseHeader = buildPaymentResponseHeader(txHash, verification.network ?? "eip155:137", verification.payer);
     const headers = new Headers(settledResponse.headers);
     headers.set("payment-response", paymentResponseHeader);
     // Expose the header to browsers/spec-compliant clients

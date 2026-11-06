@@ -36,6 +36,10 @@ export function detectLockfileFormat(filename: string | undefined, content: stri
   if (base === "go.mod") return "go-mod";
   if (base === "cargo.lock") return "cargo";
   if (base === "package.json") return "package-json";
+  if (base === "composer.lock") return "composer";
+  if (base === "composer.json") return "composer-json";
+  if (base === "pubspec.lock") return "pubspec";
+  if (base === "gemfile.lock") return "gemfile";
 
   // Content sniffing (order matters — most distinctive first).
   const head = content.slice(0, 4096);
@@ -46,6 +50,10 @@ export function detectLockfileFormat(filename: string | undefined, content: stri
       if (j && typeof j === "object") {
         if ("lockfileVersion" in j) return "package-lock";
         if ("default" in j && typeof j.default === "object" && ("_meta" in j || "develop" in j)) return "pipfile";
+        if (Array.isArray((j as { packages?: unknown }).packages) &&
+          ("content-hash" in j || "packages-dev" in j || "platform" in j)) return "composer";
+        if ("require" in j && typeof (j as { require?: unknown }).require === "object" &&
+          !Array.isArray((j as { require?: unknown }).require)) return "composer-json";
         if ("name" in j && ("dependencies" in j || "devDependencies" in j)) return "package-json";
       }
     } catch { /* not JSON — fall through */ }
@@ -53,6 +61,8 @@ export function detectLockfileFormat(filename: string | undefined, content: stri
   if (content.includes("[[package]]")) return "cargo";
   if (/^# yarn lockfile/m.test(head) || /^__metadata:/m.test(head)) return "yarn";
   if (/^module\s+\S+/m.test(head)) return "go-mod";
+  if (/^packages:\s*$/m.test(content) && /^sdks:\s*$/m.test(content)) return "pubspec";
+  if ((/^GEM$/m.test(content) || /^GIT$/m.test(content) || /^PATH$/m.test(content)) && /^ {2}specs:/m.test(content)) return "gemfile";
   if (/^[A-Za-z0-9_.-]+(\[[^\]]*\])?\s*==\s*\S+/m.test(content)) return "requirements";
   // yarn v1 bare grammar: `name@range:` headers followed by `version "x"`.
   if (/^[^\s#][^\n]*@[^\n]*:\s*$/m.test(content) && /^\s+version\s+"[^"]+"/m.test(content)) return "yarn";
@@ -209,12 +219,108 @@ function parsePackageJson(content: string, file?: string): ResolvedPackage[] {
   return out;
 }
 
+// composer.lock (PHP / Packagist) — packages[] runtime, packages-dev[] dev.
+// dev-* branch versions are not pinned releases → reported unpinned (no version).
+function parseComposerLock(content: string, file?: string): ResolvedPackage[] {
+  const j = JSON.parse(content) as { packages?: unknown[]; "packages-dev"?: unknown[] };
+  const out: ResolvedPackage[] = [];
+  const emit = (raw: unknown, dev: boolean) => {
+    if (!raw || typeof raw !== "object") return;
+    const p = raw as { name?: unknown; version?: unknown };
+    if (typeof p.name !== "string" || !p.name) return;
+    let version: string | undefined;
+    if (typeof p.version === "string" && p.version) {
+      const v = p.version.trim().replace(/^v(?=\d)/, "");
+      if (/^dev-|-dev$/.test(v)) version = undefined; // dev branch — not a pinned release
+      else version = v;
+    }
+    out.push(pkg(p.name, "Packagist", version, "lockfile", file, dev));
+  };
+  if (Array.isArray(j.packages)) j.packages.forEach((p) => emit(p, false));
+  if (Array.isArray(j["packages-dev"])) (j["packages-dev"] as unknown[]).forEach((p) => emit(p, true));
+  return out;
+}
+
+// composer.json manifest (PHP) — require / require-dev constraints (unpinned).
+// PHP platform packages (php, ext-*, lib-*) are not Packagist packages — skipped.
+function parseComposerJson(content: string, file?: string): ResolvedPackage[] {
+  const j = JSON.parse(content) as { require?: Record<string, unknown>; "require-dev"?: Record<string, unknown> };
+  const out: ResolvedPackage[] = [];
+  const section = (obj: Record<string, unknown> | undefined, dev: boolean) => {
+    if (!obj || typeof obj !== "object") return;
+    for (const name of Object.keys(obj)) {
+      if (name === "php" || name.startsWith("ext-") || name.startsWith("lib-")) continue;
+      out.push(pkg(name, "Packagist", undefined, "manifest", file, dev));
+    }
+  };
+  section(j.require, false);
+  section(j["require-dev"], true);
+  return out;
+}
+
+// pubspec.lock (Dart / Pub) — YAML-lite state machine over the `packages:` block.
+// Only hosted pub.dev packages are queryable; sdk/path/git sources are skipped.
+function parsePubspecLock(content: string, file?: string): ResolvedPackage[] {
+  const out: ResolvedPackage[] = [];
+  let inPackages = false;
+  let current: { name?: string; dependency?: string; source?: string; version?: string } | null = null;
+  const flush = () => {
+    if (!current || !current.name) { current = null; return; }
+    if (current.source && current.source !== "hosted") { current = null; return; }
+    const dev = current.dependency === "direct dev" || current.dependency === "transitive dev";
+    out.push(pkg(current.name, "Pub", current.version || undefined, "lockfile", file, dev));
+    current = null;
+  };
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (/^packages:\s*$/.test(line)) { inPackages = true; continue; }
+    if (!inPackages) continue;
+    if (/^[^\s]/.test(line)) { flush(); inPackages = false; continue; } // col-0 key (sdks:) ends the block
+    const m2 = line.match(/^ {2}([A-Za-z0-9_.-]+):\s*$/);
+    if (m2) { flush(); current = { name: m2[1] }; continue; }
+    if (!current) continue;
+    const m4 = line.match(/^ {4}(dependency|source|version):\s*(.*)$/);
+    if (m4) {
+      const val = m4[2].trim().replace(/^["']|["']$/g, "");
+      if (m4[1] === "dependency") current.dependency = val;
+      else if (m4[1] === "source") current.source = val;
+      else current.version = val;
+    }
+  }
+  flush();
+  return out;
+}
+
+// Gemfile.lock (Ruby / RubyGems) — Bundler specs blocks (GEM/GIT/PATH all count).
+// dev flag is undefined: Bundler merges all groups, group info is not in the lockfile.
+function parseGemfileLock(content: string, file?: string): ResolvedPackage[] {
+  const out: ResolvedPackage[] = [];
+  let inSpecs = false;
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.length === 0) continue;
+    // Col-0 ALL-CAPS section header (GEM, GIT, PATH, PLATFORMS, DEPENDENCIES, BUNDLED WITH).
+    if (/^[A-Z][A-Z0-9 &.-]*$/.test(line)) { inSpecs = false; continue; }
+    if (/^ {2}specs:\s*$/.test(line)) { inSpecs = true; continue; }
+    if (!inSpecs) continue;
+    const m = line.match(/^ {4}([^ ]+) \(([^)]+)\)\s*$/);
+    if (m) {
+      let v = m[2];
+      const vm = v.match(/^(\d+(?:\.\d+)*)/); // strip platform suffix: 1.13.10-x86_64-linux → 1.13.10
+      if (vm) v = vm[1];
+      out.push(pkg(m[1], "RubyGems", v, "lockfile", file));
+    }
+    // 6+-indent constraint lines (rack (= 2.2.3)) are skipped — not package entries.
+  }
+  return out;
+}
+
 // -- top-level entry ----------------------------------------------------------
 
 export function parseLockfile(filename: string | undefined, content: string): LockfileParseResult {
   const format = detectLockfileFormat(filename, content);
   if (format === "unknown") {
-    return { packages: [], format, error: "unrecognized lockfile/manifest format (supported: package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, package.json)" };
+    return { packages: [], format, error: "unrecognized lockfile/manifest format (supported: package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, package.json, composer.lock, composer.json, pubspec.lock, Gemfile.lock)" };
   }
   const file = filename?.split("/").pop();
   try {
@@ -227,6 +333,10 @@ export function parseLockfile(filename: string | undefined, content: string): Lo
       case "go-mod": packages = parseGoMod(content, file); break;
       case "cargo": packages = parseCargoLock(content, file); break;
       case "package-json": packages = parsePackageJson(content, file); break;
+      case "composer": packages = parseComposerLock(content, file); break;
+      case "composer-json": packages = parseComposerJson(content, file); break;
+      case "pubspec": packages = parsePubspecLock(content, file); break;
+      case "gemfile": packages = parseGemfileLock(content, file); break;
       default: packages = [];
     }
     if (packages.length === 0) {

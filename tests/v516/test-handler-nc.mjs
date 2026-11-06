@@ -85,5 +85,24 @@ globalThis.__STUB_BALANCE = 0;
     `got ${r.status}/${codeOf(r.json)}`);
 }
 
+// NC6b (v5.18.0 fitness free trial): trial unused + balance 0 -> 200 free, 1x only.
+// Second call with trial now used -> 402 (no double free).
+{
+  globalThis.__STUB_TRIAL = false;
+  const lock = JSON.stringify({
+    name: "demo", lockfileVersion: 3,
+    packages: { "": { name: "demo" }, "node_modules/lodash": { version: "4.17.20" } },
+  });
+  const first = await call({ lockfile: { filename: "package-lock.json", content: lock } });
+  t("NC6b fitness trial first call free (200)",
+    first.status === 200,
+    `got ${first.status}/${codeOf(first.json)}`);
+  globalThis.__STUB_TRIAL = true; // stub reflects post-trial state
+  const second = await call({ lockfile: { filename: "package-lock.json", content: lock } });
+  t("NC6b second call after trial -> 402",
+    second.status === 402,
+    `got ${second.status}/${codeOf(second.json)}`);
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

@@ -5,6 +5,7 @@ const makeRow = () => ({
   tier: "standard",
   free_requests_left: 0,
   balance_credits: (globalThis.__STUB_BALANCE ?? 0),
+  fitness_trial_used: (globalThis.__STUB_TRIAL ?? true),
   total_invocations: 0,
   code_modules_trial_used: true,
   trial_expires_at: null,

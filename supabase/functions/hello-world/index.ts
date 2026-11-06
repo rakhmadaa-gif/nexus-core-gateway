@@ -113,7 +113,7 @@ const TELEMETRY = {
   error_count: 0,
   last_request_at: null as number | null,
   compiler_version: "^0.8.20",
-  engine_version: "v5.18.0-frontier",
+  engine_version: "v5.18.1-frontier",
   services_available: ["structured_data", "code_modules", "legal_code", "error", "pull_payment"],
   // Phase 2.2: Throughput tracking (rolling 60-min window)
   throughput_timestamps: [] as number[],
@@ -456,7 +456,7 @@ function calculateUrgencySignal(
 const NODE_IDENTITY = {
   node_id: "nexus.legal.contractdrafter",
   node_name: "Nexus.Legal.ContractDrafter",
-  version: "5.18.0-frontier",
+  version: "5.18.1-frontier",
   runtime: "supabase-edge-deno",
 };
 
@@ -515,7 +515,7 @@ const NODE_MANIFEST = {
       auth: "x-client-id header required",
     },
     "POST /x402/fitness": {
-      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest ({lockfile:{filename,content}} — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root; exact versions are queried version-scoped at OSV (fewer false positives); merged list capped at 250 with per-package resolution provenance (input/lockfile/manifest/unpinned). legal_weight: 0 — not legal advice, factual only. Input {repo, packages, lockfile} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
+      description: "Fitness Attestation — factual fitness facts for a GitHub repo and/or dependency list: known GHSA/CVE advisories (osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest ({lockfile:{filename,content}} — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json) or let {repo} mode auto-extract dependency manifests from the repo root; exact versions are queried version-scoped at OSV (fewer false positives); merged list capped at 250 with per-package resolution provenance (input/lockfile/manifest/unpinned). legal_weight: 0 — not legal advice, factual only. Input {repo, packages, lockfile} -> {facts, score, exposure_window, sbom}. 10-minute cache.",
       billing: "0.05 USDC per call (x402 exact, eip155:137)",
       auth: "x-client-id header required",
     },
@@ -635,7 +635,7 @@ const NODE_MANIFEST = {
     phase_1_status: "COMPLETE — all 5 tasks deployed",
     phase_2_status: "COMPLETE — all 3 tasks deployed (2.1+2.2+2.3)",
     phase_3_status: "COMPLETE — all 3 tasks deployed (3.1+3.2+3.3)",
-    version: "v5.18.0-frontier (Multi-chain x402 settlement: PAYMENT-SIGNATURE handler settles on the chain named in the payment payload — Polygon PoS + Base (Base accept advertised only while BASE_ACCEPTS_ENABLED=true; settlement needs treasury ETH on Base for gas); payer-derived settlement client ids: anonymous x402 clients get stable x402-payer-<address> credit buckets instead of a shared x402-anonymous bucket; fitness free trial: first $0.05 fitness attestation call free, 1x per client; GET /badge shields.io-compatible live attestation counter + GET /v1/balance self-service credit balance; Revenue Bell: per-transaction webhook wakes the operator agent when real revenue lands); W6 Fitness Forensic: POST /x402/fitness/forensic $3.50 — Full + top-3 exploit scenarios (severity desc, scenario_id asc tie-break) + deterministic attack narratives (pure functions over detection evidence, no clock/RNG) + Amendment-A1 observable_impact (drain-class scoped, observed-state-not-prediction label) + Amendment-A2 IPFS dual-pin evidence bundle (Pinata+Filebase, CID in attestation resultHash; fewer than 2 pin legs = 422 DEGRADED_IPFS pre-billing); W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05 + /x402/fitness/forensic $3.50, legal_weight 0)",
+    version: "v5.18.1-frontier (Gas Bahasa: lockfile/manifest ingestion expanded to 10 formats — PHP composer.lock + composer.json manifest (Packagist), Dart pubspec.lock (Pub, hosted pub.dev packages only — sdk/path/git skipped), Ruby Gemfile.lock (RubyGems, platform suffixes stripped); CycloneDX SBOM purl types now spec-correct (npm, pypi, golang, cargo, composer, pub, gem); repo auto-extract checks 11 root candidates; Multi-chain x402 settlement: PAYMENT-SIGNATURE handler settles on the chain named in the payment payload — Polygon PoS + Base (Base accept advertised only while BASE_ACCEPTS_ENABLED=true; settlement needs treasury ETH on Base for gas); payer-derived settlement client ids: anonymous x402 clients get stable x402-payer-<address> credit buckets instead of a shared x402-anonymous bucket; fitness free trial: first $0.05 fitness attestation call free, 1x per client; GET /badge shields.io-compatible live attestation counter + GET /v1/balance self-service credit balance; Revenue Bell: per-transaction webhook wakes the operator agent when real revenue lands); W6 Fitness Forensic: POST /x402/fitness/forensic $3.50 — Full + top-3 exploit scenarios (severity desc, scenario_id asc tie-break) + deterministic attack narratives (pure functions over detection evidence, no clock/RNG) + Amendment-A1 observable_impact (drain-class scoped, observed-state-not-prediction label) + Amendment-A2 IPFS dual-pin evidence bundle (Pinata+Filebase, CID in attestation resultHash; fewer than 2 pin legs = 422 DEGRADED_IPFS pre-billing); W7 Web2 Dependency Fitness: POST /x402/fitness now ingests pasted lockfiles/manifests — package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock — and auto-extracts dependency manifests from {repo} mode; exact lockfile versions passed to OSV (fewer false positives), querybatch for large lists, merged cap 250 packages, resolution provenance disclosed per package (input/lockfile/manifest/unpinned), 400 pre-billing LOCKFILE_PARSE_FAILED/LOCKFILE_TOO_LARGE; v5.14.3: BS-008 regime map + Berachain (80094)/Bepolia (80069) → eip7883 probe-verified — Protocol Review #7 correction, zero behavior change for other chains; v5.14.2: BS-015 HyperCore porting trap — HyperEVM review #6 class: calls to HyperCore read precompiles 0x0800-0x0813 / CoreWriter 0x3333...3333 graded chain-aware: high on known non-HyperEVM chains (revert-on-decode or silent zeros), medium without verifiable chain hint, clean on hyperevm 999/998; deployable=false when high. v5.14.1: validator balance checks now strip strings+comments (real-world false-422 fix); BS-014 v2: per-proposal upper-bound voting window recognized as existence guard (genyleap class), stored enum-state field with inert zero-default recognized (SoSoValue class); v5.14.0: Phantom Vote detection — Confetti GHSA-3g9w-x8qp-2qpq class: public vote-casting entry points taking proposalId without proposal-existence verification flagged HIGH; guards recognized across transitive call closure: .exists checks, NonexistentProposal-class reverts, counter-bounds, zero-deadline/snapshot==0 reverts; OZ Governor pattern clean, Confetti v6.21 vulnerable detected, v6.22 fixed clean; v5.13.3: FP-precision round from engine-progress-test 2026-10-11: BS-002 inline checked-arithmetic balance/allowance deduction recognized as guard (ERC-6909/solmate class), BS-012 bare block.timestamp comparisons stripped as deadline bookkeeping (if-return guard form), BS-009 read-only view/pure iteration + guarded-reach private iterators excluded from risk grading, if-revert compound auth conditions recognized; v5.13.2: BS-008 v3 chain-aware precompile AVAILABILITY — probe-verified missing-precompile detection on ZK chains (zksync/polygon-zkevm/scroll/linea), deployment-blocking porting-trap verdict, availability_blocked flag; v5.13.0: BS-008 v2 DYNAMIC regime map — chain_regimes db table refreshed by weekly live MODEXP probe, embedded snapshot fallback, stale entries refused with regime_stale flag, conservative EIP-2565 default for unknown chains, chain hint on dry-run/scan/fitness-full; v5.16.1: pre-validation paywall precheck + per-path legacy routes (/v1/structured-data, /v1/code-modules, /v1/legal-code) — every monitor-declared path answers 402 at its advertised price); ERC-8004 SIGNED ATTESTATIONS on all fitness endpoints — every paid fitness response carries an EIP-712 signature verifiable against ownerOf(636) on-chain; x402 handshake COMPLETE: PAYMENT-SIGNATURE handler — spec-compliant x402 clients can now pay & complete purchases via EIP-3009 transferWithAuthorization, instant auto-credit; EVM Sentinel engine +14 breach scenarios; Fitness suite: /x402/fitness $0.05 + /x402/fitness/lite $1.25 + /x402/fitness/full $2.25 + /x402/fitness/peer-check $0.05 + /x402/fitness/forensic $3.50, legal_weight 0)",
     gateway_contract: "0x2a3D917379Bf94D7B6f239D6BcbBdD7cD8543683",
     treasury: "0x80963791ce7cb9c5d580fe638c39fdd9ffdae2d5",
     chain: "polygon-mainnet",
@@ -3042,7 +3042,7 @@ async function handleEvmSentinelScanWithBilling(
 // advisory affects it. Factual elapsed-time measurement, not a claim.
 // ----------------------------------------------------------------------------
 
-const FITNESS_VERSION = "1.1.0";
+const FITNESS_VERSION = "1.2.0";
 const FITNESS_TTL_MS = 10 * 60 * 1000; // 10-minute freshness cron window
 
 // SPDX ids we treat as copyleft or otherwise risky for downstream reuse.
@@ -3190,7 +3190,11 @@ const REPO_MANIFEST_CANDIDATES: Array<{ file: string; kind: "lockfile" | "manife
   { file: "Pipfile.lock", kind: "lockfile" },
   { file: "go.mod", kind: "lockfile" },
   { file: "Cargo.lock", kind: "lockfile" },
+  { file: "composer.lock", kind: "lockfile" },
+  { file: "pubspec.lock", kind: "lockfile" },
+  { file: "Gemfile.lock", kind: "lockfile" },
   { file: "package.json", kind: "manifest" },
+  { file: "composer.json", kind: "manifest" },
 ];
 
 async function fetchRepoManifestPackages(repo: string, branch: string, token?: string): Promise<{
@@ -3220,10 +3224,12 @@ async function fetchRepoManifestPackages(repo: string, branch: string, token?: s
     REPO_MANIFEST_CANDIDATES.findIndex((c) => c.file === b.file)
   );
   const hasNpmLockfile = fetched.some((f) => f.kind === "lockfile" && (f.file === "package-lock.json" || f.file === "yarn.lock"));
+  const hasComposerLockfile = fetched.some((f) => f.kind === "lockfile" && f.file === "composer.lock");
   const detected: Array<{ file: string; format: string; package_count: number }> = [];
   const packages: ResolvedPackage[] = [];
   for (const f of fetched) {
     if (f.kind === "manifest" && f.file === "package.json" && hasNpmLockfile) continue; // lockfile authoritative
+    if (f.kind === "manifest" && f.file === "composer.json" && hasComposerLockfile) continue; // lockfile authoritative
     const parsed = parseLockfile(f.file, f.content);
     if (parsed.error) continue; // unparseable manifest in repo = skip, not fatal
     detected.push({ file: f.file, format: parsed.format, package_count: parsed.packages.length });
@@ -3231,6 +3237,17 @@ async function fetchRepoManifestPackages(repo: string, branch: string, token?: s
   }
   return { packages, detected };
 }
+
+// CycloneDX purl type per OSV ecosystem name (spec-correct purls; unknown ecosystems pass through).
+const PURL_TYPES: Record<string, string> = {
+  npm: "npm",
+  PyPI: "pypi",
+  Go: "golang",
+  "crates.io": "cargo",
+  Packagist: "composer",
+  Pub: "pub",
+  RubyGems: "gem",
+};
 
 function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; version?: string }>): Record<string, unknown> {
   return {
@@ -3245,7 +3262,7 @@ function buildCycloneDxSbom(packages: Array<{ name: string; ecosystem?: string; 
       type: "library",
       "bom-ref": `pkg-${i}`,
       name: p.name,
-      purl: `pkg:${p.ecosystem ?? "generic"}/${p.name}${p.version ? "@" + p.version : ""}`,
+      purl: `pkg:${(p.ecosystem && PURL_TYPES[p.ecosystem]) || p.ecosystem || "generic"}/${p.name}${p.version ? "@" + p.version : ""}`,
       ...(p.version ? { version: p.version } : {}),
     })),
   };
@@ -4844,7 +4861,7 @@ const OPENAPI_SPEC = {
     title: "Nexus Gateway",
     summary:
       "EVM Sentinel + M2M legal-code gateway: high-speed static Solidity security scans (honeypot check, drainer detection, 11+2 breach scenarios), bilingual EN/ID legal contract generation, and structured data payloads. Read-only static scan, no wallet approval required. Pay per call in USDC on Polygon PoS via x402 (HTTP 402). No API key; identify with the x-client-id header.",
-    version: "5.18.0",
+    version: "5.18.1",
     contact: { name: "Nexus Gateway", url: LANDING_URL },
     "x-endpoints-free": [
       "GET /manifest.json",
@@ -5189,7 +5206,7 @@ const OPENAPI_SPEC = {
       post: {
         summary: "Fitness Attestation — factual GHSA/CVE, license, freshness, SBOM, deterministic score",
         description:
-          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest via {lockfile:{filename,content}} (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock) or let {repo} mode auto-extract dependency manifests from the repo root — exact versions are queried version-scoped at OSV; merged list capped at 250 with per-package resolution provenance. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
+          "Factual fitness attestation for a GitHub repo and/or dependency list: known advisories (GHSA/CVE via osv.dev), SPDX license, commit freshness, CycloneDX 1.5 SBOM, and a deterministic 0-100 score from a fixed public formula. W7 (v5.16.0): paste a lockfile/manifest via {lockfile:{filename,content}} (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json) or let {repo} mode auto-extract dependency manifests from the repo root — exact versions are queried version-scoped at OSV; merged list capped at 250 with per-package resolution provenance. legal_weight: 0 — not legal advice, factual only; every fact reproducible from public sources. 10-minute result cache. Cost: $0.05 USDC.",
         "x-pricing": "0.05 USDC per call, x402 exact, eip155:137",
         "x-keywords": ["fitness-attestation", "cve-check", "license-check", "sbom", "exposure-window"],
         requestBody: {
@@ -5207,7 +5224,7 @@ const OPENAPI_SPEC = {
                       type: "object",
                       properties: {
                         name: { type: "string" },
-                        ecosystem: { type: "string", description: "npm, crates.io, PyPI, Go, etc. (default npm)" },
+                        ecosystem: { type: "string", description: "npm, crates.io, PyPI, Go, Packagist, Pub, RubyGems, etc. (default npm)" },
                         version: { type: "string" },
                       },
                       required: ["name"],
@@ -5215,7 +5232,7 @@ const OPENAPI_SPEC = {
                   },
                   lockfile: {
                     type: "object",
-                    description: "W7: pasted dependency lockfile/manifest (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock). Content max 512 KiB; parsed pre-billing (400 on failure, no charge).",
+                    description: "W7: pasted dependency lockfile/manifest (package-lock.json, yarn.lock, requirements.txt, Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock, Gemfile.lock, package.json, composer.json). Content max 512 KiB; parsed pre-billing (400 on failure, no charge).",
                     properties: {
                       filename: { type: "string", description: "optional — used for format detection (content sniffed otherwise)" },
                       content: { type: "string" },
@@ -5532,7 +5549,8 @@ Response fields: contract_info.gas_asymmetry .unsupported_precompiles /
   {"packages":[{"name":"ethers","ecosystem":"npm"}]} and/or
   {"lockfile":{"filename":"package-lock.json","content":"..."}} — paste a
   lockfile/manifest (package-lock.json, yarn.lock, requirements.txt,
-  Pipfile.lock, go.mod, Cargo.lock) or let repo mode auto-extract manifests
+  Pipfile.lock, go.mod, Cargo.lock, composer.lock, pubspec.lock,
+  Gemfile.lock, package.json, composer.json) or let repo mode auto-extract manifests
   (merged cap 250, version-scoped OSV queries, resolution provenance).
   Output: { "facts": {advisories (GHSA/CVE via osv.dev), license (SPDX),
   last_commit_days, stars}, "score": 0-100 (deterministic fixed formula:
