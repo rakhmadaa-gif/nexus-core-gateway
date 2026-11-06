@@ -97,7 +97,7 @@ export function createNexusTools(options: NexusToolOptions = {}): ToolLike[] {
     tools.push({
       name: "nexus_legal_code",
       description:
-        "Generate bilingual (EN/ID) legal contract + Solidity code + Digital Twin v3.1 mapping. Costs 29,900 CRED ($299.00). " +
+        "Generate bilingual (EN/ID) legal contract + Solidity code + Digital Twin v3.1 mapping. Costs 30,000/45,000/80,000 CRED ($300/$450/$800 by tier: light/standard/enterprise). " +
         'Input: JSON like {"contract_type":"token_sale","jurisdiction":"ID","token":{"name":"MyToken","symbol":"MTK"}}',
       schema: undefined,
       async _call(input: string): Promise<string> {

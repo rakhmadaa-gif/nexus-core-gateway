@@ -107,7 +107,7 @@ export class NexusClient {
     return this._callService("code_modules", params);
   }
 
-  /** Generate bilingual (EN/ID) legal contract + Solidity code + Digital Twin matrix (29,900 CRED = $299.00). */
+  /** Generate bilingual (EN/ID) legal contract + Solidity code + Digital Twin matrix (30,000/45,000/80,000 CRED = $300/$450/$800 by tier: light/standard/enterprise). */
   async legalCode(params: Record<string, any>): Promise<ServiceResponse> {
     return this._callService("legal_code", params);
   }

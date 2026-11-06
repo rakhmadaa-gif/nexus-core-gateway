@@ -1,51 +1,84 @@
 {
   "name": "nexus-gateway-sdk",
-  "version": "1.0.0",
-  "description": "TypeScript SDK for Nexus Gateway — M2M Legal-Code Services for Web3. Native tool wrappers for LangChain.js and Vercel AI SDK.",
+  "version": "2.0.2",
+  "description": "TypeScript SDK for Nexus Gateway \u2014 M2M Legal-Code Services for Web3 + Web2 Dependency Fitness Attestation (GHSA/CVE, SPDX license, CycloneDX SBOM, EIP-712 signed attestations, Merkle-anchored public proofs). Native tool wrappers for LangChain.js and Vercel AI SDK.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "nexus-gateway": "./dist/cli.js"
+  },
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./langchain": {
-      "import": "./dist/langchain.js",
-      "types": "./dist/langchain.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./client": {
-      "import": "./dist/client.js",
-      "types": "./dist/client.d.ts"
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./langchain": {
+      "types": "./dist/langchain.d.ts",
+      "default": "./dist/langchain.js"
+    },
+    "./lockfile": {
+      "types": "./dist/lockfile.d.ts",
+      "default": "./dist/lockfile.js"
+    },
+    "./fitness": {
+      "types": "./dist/fitness.d.ts",
+      "default": "./dist/fitness.js"
+    },
+    "./topup": {
+      "types": "./dist/topup.d.ts",
+      "default": "./dist/topup.js"
+    },
+    "./verify": {
+      "types": "./dist/verify.d.ts",
+      "default": "./dist/verify.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "echo 'No tests yet'",
-    "example": "npx tsx examples/langchain_example.ts"
+    "test": "node --test dist/test/*.test.js",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "nexus",
     "gateway",
+    "dependency-fitness",
+    "sbom",
+    "cyclonedx",
+    "osv",
+    "ghsa",
+    "cve",
+    "supply-chain",
+    "reachability",
+    "license-compliance",
+    "attestation",
+    "eip-712",
     "smart-contract",
     "solidity",
-    "legal-tech",
     "web3",
-    "blockchain",
     "polygon",
-    "erc20",
-    "erc721",
-    "digital-twin",
-    "bilingual",
-    "supabase",
     "m2m",
-    "api",
-    "legal-contract",
     "langchain",
     "crewai",
     "vercel-ai"
   ],
   "author": "Nexus.Legal.ContractDrafter",
   "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.13.5"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.9.3"
